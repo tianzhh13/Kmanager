@@ -1,6 +1,6 @@
 # Kafka 管理平台 - 开发进度
 
-## 已完成任务（任务 1-5）
+## 已完成任务（任务 1-6）
 
 ### ✅ 任务 1：项目初始化和基础设施
 
@@ -87,6 +87,37 @@
 - ✅ 创建验证脚本
 - ✅ 验证所有基础服务正常工作
 
+### ✅ 任务 6：集群管理服务实现（部分）
+
+**完成内容**：
+- ✅ 6.1 实现集群 CRUD 操作
+- ✅ 6.3 实现集群权限管理
+- ✅ 创建集群管理 Handler
+- ✅ 创建 JWT 认证中间件
+- ✅ 创建 CORS 中间件
+- ✅ 更新路由，连接所有 API
+- ⏳ 6.2 集群连接测试（需要 Kafka 客户端，待实现）
+
+**关键文件**：
+- `internal/service/cluster/cluster_service.go` - 集群管理服务
+- `internal/handler/auth_handler.go` - 认证 API
+- `internal/handler/cluster_handler.go` - 集群 API
+- `internal/middleware/auth.go` - JWT 认证中间件
+- `internal/middleware/cors.go` - CORS 中间件
+- `internal/router/router.go` - 完整路由配置
+
+**可用 API**：
+- ✅ POST /api/v1/auth/login - 用户登录
+- ✅ POST /api/v1/auth/refresh - 刷新 Token
+- ✅ GET /api/v1/auth/me - 获取当前用户信息
+- ✅ GET /api/v1/clusters - 获取集群列表
+- ✅ POST /api/v1/clusters - 创建集群
+- ✅ GET /api/v1/clusters/:id - 获取集群详情
+- ✅ PUT /api/v1/clusters/:id - 更新集群
+- ✅ DELETE /api/v1/clusters/:id - 删除集群
+- ✅ POST /api/v1/clusters/:id/grant - 授予集群权限
+- ✅ POST /api/v1/clusters/:id/revoke - 撤销集群权限
+
 ## 项目结构
 
 ```
@@ -153,7 +184,58 @@ kafka-management-platform/
 - [ ] 任务 30：文档和交付
 - [ ] 任务 31：最终验收
 
-## 快速开始
+## 快速测试 API
+
+### 方法 1：使用测试脚本（推荐）
+
+```bash
+# 给脚本添加执行权限
+chmod +x scripts/test_api.sh
+
+# 运行测试脚本
+./scripts/test_api.sh
+```
+
+### 方法 2：手动测试
+
+```bash
+# 1. 测试健康检查
+curl http://localhost:8080/health
+
+# 2. 登录获取 Token
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+
+# 3. 使用返回的 access_token 测试其他 API
+TOKEN="your_access_token_here"
+
+# 获取当前用户信息
+curl http://localhost:8080/api/v1/auth/me \
+  -H "Authorization: Bearer $TOKEN"
+
+# 获取集群列表
+curl http://localhost:8080/api/v1/clusters \
+  -H "Authorization: Bearer $TOKEN"
+
+# 创建集群
+curl -X POST http://localhost:8080/api/v1/clusters \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cluster_name": "测试集群",
+    "bootstrap_servers": "localhost:9092",
+    "auth_type": "plaintext",
+    "description": "测试集群"
+  }'
+```
+
+### 方法 3：使用 Postman
+
+1. 导入 API 集合（待创建）
+2. 设置环境变量 `base_url` 为 `http://localhost:8080`
+3. 先调用登录接口获取 Token
+4. 在其他请求的 Header 中添加 `Authorization: Bearer {token}`
 
 ### 1. 配置环境
 
@@ -260,6 +342,22 @@ make test-cover
 
 ---
 
-**当前进度**：5/31 任务完成（16%）
+**当前进度**：6/31 任务完成（19%）
+
+**最新更新**：
+- ✅ 认证 API 已可用（登录、刷新 Token、获取用户信息）
+- ✅ 集群管理 API 已可用（CRUD 操作、权限管理）
+- ✅ JWT 认证中间件已实现
+- ✅ CORS 中间件已实现
+- ✅ API 测试脚本已创建
+
+**立即可测试**：
+```bash
+# 启动应用
+go run cmd/server/main.go
+
+# 在另一个终端运行测试
+./scripts/test_api.sh
+```
 
 **预计完成时间**：根据开发速度，预计需要 2-4 周完成所有功能

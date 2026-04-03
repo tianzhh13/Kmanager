@@ -94,11 +94,29 @@ go run cmd/server/main.go
 
 应用将在 `http://localhost:8080` 启动。
 
-6. **健康检查**
+6. **测试 API**
 
 ```bash
+# 测试健康检查
 curl http://localhost:8080/health
+
+# 测试登录（使用默认管理员账户）
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+
+# 保存返回的 access_token，然后测试获取集群列表
+curl http://localhost:8080/api/v1/clusters \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
+
+### 默认管理员账户
+
+- **用户名**：`admin`
+- **密码**：`admin123`
+- **角色**：超级管理员
+
+⚠️ **重要**：首次登录后请立即修改默认密码！
 
 ### 开发模式
 
@@ -184,15 +202,95 @@ encryption:
 
 ## API 文档
 
-API 文档将在后续版本中提供（Swagger/OpenAPI）。
+### 认证 API
+
+#### 登录
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "password": "admin123"
+  }'
+```
+
+响应示例：
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "expires_in": 3600,
+  "user_info": {
+    "user_id": 1,
+    "username": "admin",
+    "email": "admin@example.com",
+    "role": "super_admin"
+  }
+}
+```
+
+#### 获取当前用户信息
+```bash
+curl http://localhost:8080/api/v1/auth/me \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+### 集群管理 API
+
+#### 获取集群列表
+```bash
+curl http://localhost:8080/api/v1/clusters \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+#### 创建集群
+```bash
+curl -X POST http://localhost:8080/api/v1/clusters \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cluster_name": "测试集群",
+    "bootstrap_servers": "localhost:9092",
+    "auth_type": "plaintext",
+    "prometheus_url": "http://localhost:9090",
+    "description": "开发环境测试集群"
+  }'
+```
+
+#### 获取集群详情
+```bash
+curl http://localhost:8080/api/v1/clusters/1 \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+#### 更新集群
+```bash
+curl -X PUT http://localhost:8080/api/v1/clusters/1 \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "更新后的描述"
+  }'
+```
+
+#### 删除集群
+```bash
+curl -X DELETE http://localhost:8080/api/v1/clusters/1 \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
 
 主要 API 端点：
 
 - `POST /api/v1/auth/login` - 用户登录
 - `POST /api/v1/auth/refresh` - 刷新 Token
+- `GET /api/v1/auth/me` - 获取当前用户信息
 - `GET /api/v1/clusters` - 获取集群列表
-- `POST /api/v1/topics` - 创建 Topic
-- `GET /api/v1/metrics/cluster/:id` - 获取集群监控指标
+- `POST /api/v1/clusters` - 创建集群
+- `GET /api/v1/clusters/:id` - 获取集群详情
+- `PUT /api/v1/clusters/:id` - 更新集群
+- `DELETE /api/v1/clusters/:id` - 删除集群
+- `POST /api/v1/clusters/:id/grant` - 授予用户集群权限
+- `POST /api/v1/clusters/:id/revoke` - 撤销用户集群权限
 
 ## 开发指南
 
