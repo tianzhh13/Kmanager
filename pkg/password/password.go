@@ -25,8 +25,8 @@ var (
 	ErrPasswordTooWeak = errors.New("password must contain uppercase, lowercase letters and numbers")
 )
 
-// Hash 使用 bcrypt 加密密码
-func Hash(password string) (string, error) {
+// HashPassword 使用 bcrypt 加密密码
+func HashPassword(password string) (string, error) {
 	// 验证密码长度
 	if len(password) < MinPasswordLength {
 		return "", ErrPasswordTooShort

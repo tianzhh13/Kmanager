@@ -12,7 +12,9 @@ import (
 	"kafka-management-platform/internal/config"
 	"kafka-management-platform/internal/database"
 	"kafka-management-platform/internal/logger"
+	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/internal/router"
+	"kafka-management-platform/internal/worker"
 )
 
 func main() {
@@ -42,6 +44,19 @@ func main() {
 	if err := database.AutoMigrate(db); err != nil {
 		log.Fatal("Failed to migrate database", "error", err)
 	}
+
+	// 初始化 Repository
+	clusterRepo := repository.NewClusterRepository(db)
+	topicRepo := repository.NewTopicRepository(db)
+	aclRepo := repository.NewACLRepository(db)
+	auditLogRepo := repository.NewAuditLogRepository(db)
+
+	// 初始化并启动 Sync Worker
+	syncWorker := worker.NewSyncWorker(cfg, clusterRepo, topicRepo, aclRepo, auditLogRepo)
+	if err := syncWorker.Start(); err != nil {
+		log.Error("Failed to start sync worker", "error", err)
+	}
+	defer syncWorker.Stop()
 
 	// 初始化路由
 	r := router.Setup(cfg, db)
