@@ -3,123 +3,169 @@ package user
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
+	"kafka-management-platform/pkg/password"
 
-	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
 var (
-	ErrUserNotFound       = errors.New("user not found")
-	ErrUserAlreadyExists  = errors.New("user already exists")
-	ErrInvalidPassword    = errors.New("invalid password")
-	ErrCannotDeleteSelf   = errors.New("cannot delete yourself")
+	ErrUserNotFound         = errors.New("user not found")
+	ErrUserAlreadyExists    = errors.New("user already exists")
+	ErrInvalidPassword      = errors.New("invalid password")
+	ErrUserDisabled         = errors.New("user is disabled")
+	ErrCannotDeleteSelf     = errors.New("cannot delete yourself")
+	ErrCannotDisableSelf    = errors.New("cannot disable yourself")
 )
 
-// Service 用户服务
+// Service 用户管理服务
 type Service struct {
 	userRepo repository.UserRepository
 }
 
-// NewService 创建用户服务
+// NewService 创建用户管理服务实例
 func NewService(userRepo repository.UserRepository) *Service {
 	return &Service{
 		userRepo: userRepo,
 	}
 }
 
+// CreateUserRequest 创建用户请求
+type CreateUserRequest struct {
+	Username string         `json:"username" binding:"required,min=3,max=64"`
+	Email    string         `json:"email" binding:"required,email"`
+	Password string         `json:"password" binding:"required,min=8"`
+	Role     models.UserRole `json:"role" binding:"required"`
+	Phone    string         `json:"phone"`
+}
+
+// UpdateUserRequest 更新用户请求
+type UpdateUserRequest struct {
+	Email    string          `json:"email"`
+	Role     models.UserRole `json:"role"`
+	Phone    string          `json:"phone"`
+	Status   models.UserStatus `json:"status"`
+}
+
+// UpdatePasswordRequest 更新密码请求
+type UpdatePasswordRequest struct {
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=8"`
+}
+
 // CreateUser 创建用户
-func (s *Service) CreateUser(ctx context.Context, username, email, password, role string) (*models.User, error) {
-	// 验证用户名唯一性
-	existing, err := s.userRepo.FindByUsername(ctx, username)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("failed to check username: %w", err)
-	}
-	if existing != nil {
+func (s *Service) CreateUser(ctx context.Context, req *CreateUserRequest) (*models.User, error) {
+	// 检查用户名是否已存在
+	existing, err := s.userRepo.FindByUsername(ctx, req.Username)
+	if err == nil && existing != nil {
 		return nil, ErrUserAlreadyExists
 	}
 
-	// 加密密码
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, fmt.Errorf("failed to hash password: %w", err)
+	// 验证密码复杂度
+	if err := password.ValidatePassword(req.Password); err != nil {
+		return nil, err
 	}
 
+	// 加密密码
+	hashedPassword, err := password.HashPassword(req.Password)
+	if err != nil {
+		return nil, err
+	}
+
+	// 创建用户
 	user := &models.User{
-		Username:     username,
-		Email:        email,
-		PasswordHash: string(hash),
-		Role:         models.UserRole(role),
-		Status:       models.UserStatusActive,
+		Username: req.Username,
+		Email:    req.Email,
+		Password: hashedPassword,
+		Role:     req.Role,
+		Phone:    req.Phone,
+		Status:   models.UserStatusActive,
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
-		return nil, fmt.Errorf("failed to create user: %w", err)
+		return nil, err
 	}
 
-	// 不返回密码
-	user.PasswordHash = ""
+	// 返回时不包含密码
+	user.Password = ""
 	return user, nil
 }
 
-// UpdateUser 更新用户信息
-func (s *Service) UpdateUser(ctx context.Context, userID int64, email, role string) (*models.User, error) {
+// GetUser 获取用户详情
+func (s *Service) GetUser(ctx context.Context, userID int64) (*models.User, error) {
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUserNotFound
 		}
-		return nil, fmt.Errorf("failed to get user: %w", err)
+		return nil, err
+	}
+	user.Password = ""
+	return user, nil
+}
+
+// UpdateUser 更新用户
+func (s *Service) UpdateUser(ctx context.Context, userID int64, req *UpdateUserRequest) (*models.User, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
 	}
 
-	// 更新邮箱
-	if email != "" {
-		user.Email = email
+	// 更新字段
+	if req.Email != "" {
+		user.Email = req.Email
 	}
-
-	// 更新角色
-	if role != "" {
-		user.Role = models.UserRole(role)
+	if req.Role != "" {
+		user.Role = req.Role
+	}
+	if req.Phone != "" {
+		user.Phone = req.Phone
+	}
+	if req.Status != "" {
+		user.Status = req.Status
 	}
 
 	if err := s.userRepo.Update(ctx, user); err != nil {
-		return nil, fmt.Errorf("failed to update user: %w", err)
+		return nil, err
 	}
 
-	user.PasswordHash = ""
+	user.Password = ""
 	return user, nil
 }
 
 // UpdatePassword 更新密码
-func (s *Service) UpdatePassword(ctx context.Context, userID int64, oldPassword, newPassword string) error {
+func (s *Service) UpdatePassword(ctx context.Context, userID int64, req *UpdatePasswordRequest) error {
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrUserNotFound
 		}
-		return fmt.Errorf("failed to get user: %w", err)
+		return err
 	}
 
 	// 验证旧密码
-	if !password.Verify(user.PasswordHash, oldPassword) {
+	if !password.CheckPassword(req.OldPassword, user.Password) {
 		return ErrInvalidPassword
 	}
 
+	// 验证新密码复杂度
+	if err := password.ValidatePassword(req.NewPassword); err != nil {
+		return err
+	}
+
 	// 加密新密码
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	hashedPassword, err := password.HashPassword(req.NewPassword)
 	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
+		return err
 	}
 
-	user.PasswordHash = string(hash)
-	if err := s.userRepo.Update(ctx, user); err != nil {
-		return fmt.Errorf("failed to update password: %w", err)
-	}
-
-	return nil
+	user.Password = hashedPassword
+	return s.userRepo.Update(ctx, user)
 }
 
 // DeleteUser 删除用户
@@ -129,28 +175,25 @@ func (s *Service) DeleteUser(ctx context.Context, userID, currentUserID int64) e
 		return ErrCannotDeleteSelf
 	}
 
-	_, err := s.userRepo.FindByID(ctx, userID)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrUserNotFound
-		}
-		return fmt.Errorf("failed to get user: %w", err)
-	}
-
 	return s.userRepo.Delete(ctx, userID)
 }
 
 // DisableUser 禁用用户
-func (s *Service) DisableUser(ctx context.Context, userID int64) error {
+func (s *Service) DisableUser(ctx context.Context, userID, currentUserID int64) error {
+	// 不能禁用自己
+	if userID == currentUserID {
+		return ErrCannotDisableSelf
+	}
+
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrUserNotFound
 		}
-		return fmt.Errorf("failed to get user: %w", err)
+		return err
 	}
 
-	user.Status = models.UserStatusInactive
+	user.Status = models.UserStatusDisabled
 	return s.userRepo.Update(ctx, user)
 }
 
@@ -161,7 +204,7 @@ func (s *Service) EnableUser(ctx context.Context, userID int64) error {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrUserNotFound
 		}
-		return fmt.Errorf("failed to get user: %w", err)
+		return err
 	}
 
 	user.Status = models.UserStatusActive
@@ -169,35 +212,16 @@ func (s *Service) EnableUser(ctx context.Context, userID int64) error {
 }
 
 // ListUsers 获取用户列表
-func (s *Service) ListUsers(ctx context.Context, page, pageSize int, keyword string) ([]*models.User, int64, error) {
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 {
-		pageSize = 20
-	}
-	if pageSize > 100 {
-		pageSize = 100
-	}
-
-	offset := (page - 1) * pageSize
-
-	if keyword != "" {
-		return s.userRepo.Search(ctx, keyword, offset, pageSize)
-	}
-	return s.userRepo.List(ctx, offset, pageSize)
-}
-
-// GetUser 获取用户详情
-func (s *Service) GetUser(ctx context.Context, userID int64) (*models.User, error) {
-	user, err := s.userRepo.FindByID(ctx, userID)
+func (s *Service) ListUsers(ctx context.Context, offset, limit int, keyword string) ([]*models.User, int64, error) {
+	users, total, err := s.userRepo.List(ctx, offset, limit, keyword)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrUserNotFound
-		}
-		return nil, fmt.Errorf("failed to get user: %w", err)
+		return nil, 0, err
 	}
 
-	user.PasswordHash = ""
-	return user, nil
+	// 清除密码
+	for _, user := range users {
+		user.Password = ""
+	}
+
+	return users, total, nil
 }

@@ -12,46 +12,48 @@ import (
 
 // UserHandler 用户处理器
 type UserHandler struct {
-	svc *user.Service
+	userSvc *user.Service
 }
 
-// NewUserHandler 创建用户处理器
-func NewUserHandler(svc *user.Service) *UserHandler {
-	return &UserHandler{svc: svc}
+// NewUserHandler 创建用户处理器实例
+func NewUserHandler(userSvc *user.Service) *UserHandler {
+	return &UserHandler{
+		userSvc: userSvc,
+	}
 }
 
 // CreateUser 创建用户
 func (h *UserHandler) CreateUser(c *gin.Context) {
-	var req struct {
-		Username string `json:"username" binding:"required"`
-		Email    string `json:"email" binding:"required,email"`
-		Password string `json:"password" binding:"required,min=8"`
-		Role     string `json:"role" binding:"required"`
-	}
-
+	var req user.CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
 		return
 	}
 
-	// 只有超级管理员可以创建用户
-	role := middleware.GetUserRole(c)
-	if role != "super_admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-		return
-	}
-
-	user, err := h.svc.CreateUser(req.Username, req.Email, req.Password, req.Role)
+	result, err := h.userSvc.CreateUser(c.Request.Context(), &req)
 	if err != nil {
-		if err == user.ErrUserAlreadyExists {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, user)
+	c.JSON(http.StatusCreated, result)
+}
+
+// GetUser 获取用户详情
+func (h *UserHandler) GetUser(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+
+	result, err := h.userSvc.GetUser(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 // UpdateUser 更新用户
@@ -62,81 +64,19 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Email string `json:"email" binding:"required,email"`
-		Role  string `json:"role"`
-	}
-
+	var req user.UpdateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
 		return
 	}
 
-	// 只有超级管理员可以更新用户
-	role := middleware.GetUserRole(c)
-	currentUserID := middleware.GetUserID(c)
-	if role != "super_admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-		return
-	}
-
-	updatedUser, err := h.svc.UpdateUser(userID, req.Email, req.Role)
+	result, err := h.userSvc.UpdateUser(c.Request.Context(), userID, &req)
 	if err != nil {
-		if err == user.ErrUserNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		if err == user.ErrUserAlreadyExists {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, updatedUser)
-}
-
-// UpdatePassword 更新密码
-func (h *UserHandler) UpdatePassword(c *gin.Context) {
-	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
-		return
-	}
-
-	// 用户只能修改自己的密码，除非是超级管理员
-	role := middleware.GetUserRole(c)
-	currentUserID := middleware.GetUserID(c)
-	if role != "super_admin" && userID != currentUserID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-		return
-	}
-
-	var req struct {
-		OldPassword string `json:"old_password" binding:"required"`
-		NewPassword string `json:"new_password" binding:"required,min=8"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := h.svc.UpdatePassword(userID, req.OldPassword, req.NewPassword); err != nil {
-		if err == user.ErrUserNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		if err == user.ErrInvalidPassword {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "password updated successfully"})
+	c.JSON(http.StatusOK, result)
 }
 
 // DeleteUser 删除用户
@@ -147,28 +87,36 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 		return
 	}
 
-	// 只有超级管理员可以删除用户
-	role := middleware.GetUserRole(c)
-	if role != "super_admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-		return
-	}
-
 	currentUserID := middleware.GetUserID(c)
-	if err := h.svc.DeleteUser(userID, currentUserID); err != nil {
-		if err == user.ErrUserNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		if err == user.ErrCannotDeleteSelf {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
+
+	if err := h.userSvc.DeleteUser(c.Request.Context(), userID, currentUserID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "user deleted successfully"})
+}
+
+// UpdatePassword 更新密码
+func (h *UserHandler) UpdatePassword(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+
+	var req user.UpdatePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		return
+	}
+
+	if err := h.userSvc.UpdatePassword(c.Request.Context(), userID, &req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "password updated successfully"})
 }
 
 // DisableUser 禁用用户
@@ -179,18 +127,9 @@ func (h *UserHandler) DisableUser(c *gin.Context) {
 		return
 	}
 
-	// 只有超级管理员可以禁用用户
-	role := middleware.GetUserRole(c)
-	if role != "super_admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-		return
-	}
+	currentUserID := middleware.GetUserID(c)
 
-	if err := h.svc.DisableUser(userID); err != nil {
-		if err == user.ErrUserNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
+	if err := h.userSvc.DisableUser(c.Request.Context(), userID, currentUserID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -206,18 +145,7 @@ func (h *UserHandler) EnableUser(c *gin.Context) {
 		return
 	}
 
-	// 只有超级管理员可以启用用户
-	role := middleware.GetUserRole(c)
-	if role != "super_admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-		return
-	}
-
-	if err := h.svc.EnableUser(userID); err != nil {
-		if err == user.ErrUserNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
+	if err := h.userSvc.EnableUser(c.Request.Context(), userID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -227,56 +155,23 @@ func (h *UserHandler) EnableUser(c *gin.Context) {
 
 // ListUsers 获取用户列表
 func (h *UserHandler) ListUsers(c *gin.Context) {
-	// 只有超级管理员可以查看用户列表
-	role := middleware.GetUserRole(c)
-	if role != "super_admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-		return
-	}
-
+	// 获取分页参数
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	keyword := c.Query("keyword")
 
-	users, total, err := h.svc.ListUsers(page, pageSize, keyword)
+	offset := (page - 1) * pageSize
+
+	users, total, err := h.userSvc.ListUsers(c.Request.Context(), offset, pageSize, keyword)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"data":  users,
-		"total": total,
-		"page":  page,
-		"size":  pageSize,
+		"data":      users,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
 	})
-}
-
-// GetUser 获取用户详情
-func (h *UserHandler) GetUser(c *gin.Context) {
-	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
-		return
-	}
-
-	// 只有超级管理员可以查看其他用户详情
-	role := middleware.GetUserRole(c)
-	currentUserID := middleware.GetUserID(c)
-	if role != "super_admin" && userID != currentUserID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-		return
-	}
-
-	user, err := h.svc.GetUser(userID)
-	if err != nil {
-		if err == user.ErrUserNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, user)
 }
