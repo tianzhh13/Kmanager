@@ -130,6 +130,8 @@ npm install
 npm run dev
 ```
 
+前端将在 `http://localhost:3000` 启动，并代理 API 请求到后端 `http://localhost:8080`。
+
 ## 项目结构
 
 ```
