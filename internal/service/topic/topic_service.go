@@ -126,11 +126,7 @@ func (s *Service) CreateTopic(ctx context.Context, req *CreateTopicRequest) erro
 	topicDetail := &sarama.TopicDetail{
 		NumPartitions:     req.Partitions,
 		ReplicationFactor: req.ReplicationFactor,
-<<<<<<< Updated upstream
 		ConfigEntries:     convertConfigEntries(req.Config),
-=======
-		ConfigEntries:     configEntries,
->>>>>>> Stashed changes
 	}
 
 	if err := adminClient.CreateTopic(req.TopicName, topicDetail, false); err != nil {
@@ -290,11 +286,7 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 	}
 
 	// 从数据库获取当前 Topic 列表
-<<<<<<< Updated upstream
 	dbTopics, err := s.topicRepo.ListByCluster(ctx, clusterID)
-=======
-	dbTopics, _, err := s.topicRepo.List(ctx, clusterID, 0, 10000)
->>>>>>> Stashed changes
 	if err != nil {
 		return fmt.Errorf("failed to list topics from database: %w", err)
 	}
