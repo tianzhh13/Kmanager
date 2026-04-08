@@ -42,13 +42,13 @@ func NewService(
 
 // CreateACLRequest 创建 ACL 请求
 type CreateACLRequest struct {
-	ClusterID       int64                `json:"cluster_id" binding:"required"`
-	ResourceType    models.ResourceType  `json:"resource_type" binding:"required"`
-	ResourceName    string               `json:"resource_name" binding:"required"`
-	ResourcePattern models.PatternType   `json:"resource_pattern" binding:"required"`
-	Principal       string               `json:"principal" binding:"required"`
-	Host            string               `json:"host"`
-	Operation       models.OperationType `json:"operation" binding:"required"`
+	ClusterID       int64                 `json:"cluster_id" binding:"required"`
+	ResourceType    models.ResourceType   `json:"resource_type" binding:"required"`
+	ResourceName    string                `json:"resource_name" binding:"required"`
+	ResourcePattern models.PatternType    `json:"resource_pattern" binding:"required"`
+	Principal       string                `json:"principal" binding:"required"`
+	Host            string                `json:"host"`
+	Operation       models.OperationType  `json:"operation" binding:"required"`
 	PermissionType  models.PermissionType `json:"permission_type" binding:"required"`
 }
 
@@ -214,17 +214,37 @@ func (s *Service) ListACLs(ctx context.Context, req *ListACLsRequest) (*ListACLs
 	var total int64
 	var err error
 
+<<<<<<< Updated upstream
 	// 根据过滤条件选择不同的查询方法
 	if req.ResourceName != "" {
 		acls, total, err = s.aclRepo.FilterByTopic(ctx, req.ClusterID, req.ResourceName, req.Offset, req.Limit)
 	} else if req.Principal != "" {
 		acls, total, err = s.aclRepo.FilterByPrincipal(ctx, req.ClusterID, req.Principal, req.Offset, req.Limit)
+=======
+	// 根据过滤条件选择合适的查询方法
+	if req.Principal != "" {
+		acls, total, err = s.aclRepo.FilterByPrincipal(ctx, req.ClusterID, req.Principal, req.Offset, req.Limit)
+	} else if req.ResourceName != "" {
+		acls, total, err = s.aclRepo.FilterByTopic(ctx, req.ClusterID, req.ResourceName, req.Offset, req.Limit)
+>>>>>>> Stashed changes
 	} else {
 		acls, total, err = s.aclRepo.List(ctx, req.ClusterID, req.Offset, req.Limit)
 	}
 
 	if err != nil {
 		return nil, err
+	}
+
+	// 如果有 resourceType 过滤，在内存中过滤
+	if req.ResourceType != "" {
+		filtered := make([]*models.ACL, 0)
+		for _, acl := range acls {
+			if string(acl.ResourceType) == req.ResourceType {
+				filtered = append(filtered, acl)
+			}
+		}
+		acls = filtered
+		total = int64(len(filtered))
 	}
 
 	return &ListACLsResponse{
@@ -272,7 +292,11 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 	}
 
 	// 从数据库获取当前 ACL 列表
+<<<<<<< Updated upstream
 	dbACLs, err := s.aclRepo.ListByCluster(ctx, clusterID)
+=======
+	dbACLs, _, err := s.aclRepo.List(ctx, clusterID, 0, 10000)
+>>>>>>> Stashed changes
 	if err != nil {
 		return fmt.Errorf("failed to list acls from database: %w", err)
 	}
@@ -441,8 +465,8 @@ func (s *Service) convertPermissionTypeFromSarama(pt sarama.AclPermissionType) m
 	case sarama.AclPermissionAllow:
 		return models.PermissionTypeAllow
 	case sarama.AclPermissionDeny:
-		return models.ACLPermissionDeny
+		return models.PermissionTypeDeny
 	default:
-		return models.ACLPermissionAllow
+		return models.PermissionTypeAllow
 	}
 }
