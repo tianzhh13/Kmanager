@@ -1,12 +1,10 @@
 package database
 
 import (
-	"context"
 	"fmt"
 	"time"
 
 	"kafka-management-platform/internal/config"
-	"kafka-management-platform/internal/errors"
 	"kafka-management-platform/internal/logger"
 
 	"gorm.io/driver/mysql"
@@ -68,7 +66,7 @@ func InitWithRetry(cfg *config.Config, retryCfg RetryConfig) (*gorm.DB, error) {
 		}
 	}
 
-	return nil, errors.ErrDatabaseConnection.WithError(fmt.Errorf("failed to connect to database after %d attempts: %w", retryCfg.MaxAttempts, err))
+	return nil, fmt.Errorf("failed to connect to database after %d attempts: %w", retryCfg.MaxAttempts, err)
 }
 
 // initDatabase 初始化数据库连接（内部函数）

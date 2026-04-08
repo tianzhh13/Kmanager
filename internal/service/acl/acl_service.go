@@ -42,14 +42,14 @@ func NewService(
 
 // CreateACLRequest 创建 ACL 请求
 type CreateACLRequest struct {
-	ClusterID       int64                  `json:"cluster_id" binding:"required"`
-	ResourceType    models.ACLResourceType `json:"resource_type" binding:"required"`
-	ResourceName    string                 `json:"resource_name" binding:"required"`
-	ResourcePattern models.ACLPatternType  `json:"resource_pattern" binding:"required"`
-	Principal       string                 `json:"principal" binding:"required"`
-	Host            string                 `json:"host"`
-	Operation       models.ACLOperation    `json:"operation" binding:"required"`
-	PermissionType  models.ACLPermission   `json:"permission_type" binding:"required"`
+	ClusterID       int64                `json:"cluster_id" binding:"required"`
+	ResourceType    models.ResourceType  `json:"resource_type" binding:"required"`
+	ResourceName    string               `json:"resource_name" binding:"required"`
+	ResourcePattern models.PatternType   `json:"resource_pattern" binding:"required"`
+	Principal       string               `json:"principal" binding:"required"`
+	Host            string               `json:"host"`
+	Operation       models.OperationType `json:"operation" binding:"required"`
+	PermissionType  models.PermissionType `json:"permission_type" binding:"required"`
 }
 
 // ListACLsRequest 列出 ACL 请求
@@ -323,111 +323,111 @@ func (s *Service) validateCreateACLRequest(req *CreateACLRequest) error {
 }
 
 // 类型转换辅助函数
-func (s *Service) convertResourceType(rt models.ACLResourceType) sarama.AclResourceType {
+func (s *Service) convertResourceType(rt models.ResourceType) sarama.AclResourceType {
 	switch rt {
-	case models.ACLResourceTypeTopic:
+	case models.ResourceTypeTopic:
 		return sarama.AclResourceTopic
-	case models.ACLResourceTypeGroup:
+	case models.ResourceTypeGroup:
 		return sarama.AclResourceGroup
-	case models.ACLResourceTypeCluster:
+	case models.ResourceTypeCluster:
 		return sarama.AclResourceCluster
 	default:
 		return sarama.AclResourceAny
 	}
 }
 
-func (s *Service) convertResourceTypeFromSarama(rt sarama.AclResourceType) models.ACLResourceType {
+func (s *Service) convertResourceTypeFromSarama(rt sarama.AclResourceType) models.ResourceType {
 	switch rt {
 	case sarama.AclResourceTopic:
-		return models.ACLResourceTypeTopic
+		return models.ResourceTypeTopic
 	case sarama.AclResourceGroup:
-		return models.ACLResourceTypeGroup
+		return models.ResourceTypeGroup
 	case sarama.AclResourceCluster:
-		return models.ACLResourceTypeCluster
+		return models.ResourceTypeCluster
 	default:
-		return models.ACLResourceTypeTopic
+		return models.ResourceTypeTopic
 	}
 }
 
-func (s *Service) convertPatternType(pt models.ACLPatternType) sarama.AclResourcePatternType {
+func (s *Service) convertPatternType(pt models.PatternType) sarama.AclResourcePatternType {
 	switch pt {
-	case models.ACLPatternLiteral:
+	case models.PatternTypeLiteral:
 		return sarama.AclPatternLiteral
-	case models.ACLPatternPrefixed:
+	case models.PatternTypePrefixed:
 		return sarama.AclPatternPrefixed
 	default:
 		return sarama.AclPatternLiteral
 	}
 }
 
-func (s *Service) convertPatternTypeFromSarama(pt sarama.AclResourcePatternType) models.ACLPatternType {
+func (s *Service) convertPatternTypeFromSarama(pt sarama.AclResourcePatternType) models.PatternType {
 	switch pt {
 	case sarama.AclPatternLiteral:
-		return models.ACLPatternLiteral
+		return models.PatternTypeLiteral
 	case sarama.AclPatternPrefixed:
-		return models.ACLPatternPrefixed
+		return models.PatternTypePrefixed
 	default:
-		return models.ACLPatternLiteral
+		return models.PatternTypeLiteral
 	}
 }
 
-func (s *Service) convertOperation(op models.ACLOperation) sarama.AclOperation {
+func (s *Service) convertOperation(op models.OperationType) sarama.AclOperation {
 	switch op {
-	case models.ACLOperationRead:
+	case models.OperationRead:
 		return sarama.AclOperationRead
-	case models.ACLOperationWrite:
+	case models.OperationWrite:
 		return sarama.AclOperationWrite
-	case models.ACLOperationCreate:
+	case models.OperationCreate:
 		return sarama.AclOperationCreate
-	case models.ACLOperationDelete:
+	case models.OperationDelete:
 		return sarama.AclOperationDelete
-	case models.ACLOperationAlter:
+	case models.OperationAlter:
 		return sarama.AclOperationAlter
-	case models.ACLOperationDescribe:
+	case models.OperationDescribe:
 		return sarama.AclOperationDescribe
-	case models.ACLOperationAll:
+	case models.OperationAll:
 		return sarama.AclOperationAll
 	default:
 		return sarama.AclOperationAny
 	}
 }
 
-func (s *Service) convertOperationFromSarama(op sarama.AclOperation) models.ACLOperation {
+func (s *Service) convertOperationFromSarama(op sarama.AclOperation) models.OperationType {
 	switch op {
 	case sarama.AclOperationRead:
-		return models.ACLOperationRead
+		return models.OperationRead
 	case sarama.AclOperationWrite:
-		return models.ACLOperationWrite
+		return models.OperationWrite
 	case sarama.AclOperationCreate:
-		return models.ACLOperationCreate
+		return models.OperationCreate
 	case sarama.AclOperationDelete:
-		return models.ACLOperationDelete
+		return models.OperationDelete
 	case sarama.AclOperationAlter:
-		return models.ACLOperationAlter
+		return models.OperationAlter
 	case sarama.AclOperationDescribe:
-		return models.ACLOperationDescribe
+		return models.OperationDescribe
 	case sarama.AclOperationAll:
-		return models.ACLOperationAll
+		return models.OperationAll
 	default:
-		return models.ACLOperationRead
+		return models.OperationRead
 	}
 }
 
-func (s *Service) convertPermissionType(pt models.ACLPermission) sarama.AclPermissionType {
+func (s *Service) convertPermissionType(pt models.PermissionType) sarama.AclPermissionType {
 	switch pt {
-	case models.ACLPermissionAllow:
+	case models.PermissionTypeAllow:
 		return sarama.AclPermissionAllow
-	case models.ACLPermissionDeny:
+	case models.PermissionTypeDeny:
 		return sarama.AclPermissionDeny
 	default:
 		return sarama.AclPermissionAny
 	}
 }
 
-func (s *Service) convertPermissionTypeFromSarama(pt sarama.AclPermissionType) models.ACLPermission {
+func (s *Service) convertPermissionTypeFromSarama(pt sarama.AclPermissionType) models.PermissionType {
 	switch pt {
 	case sarama.AclPermissionAllow:
-		return models.ACLPermissionAllow
+		return models.PermissionTypeAllow
 	case sarama.AclPermissionDeny:
 		return models.ACLPermissionDeny
 	default:

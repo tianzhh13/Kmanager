@@ -6,32 +6,28 @@ import (
 
 	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/models"
-
-	"github.com/IBM/sarama"
 )
 
 // AdminClientPool Kafka Admin 客户端连接池
 type AdminClientPool struct {
 	mu       sync.RWMutex
-	clients  map[int64]*AdminClient
-	factory  *ClientFactory
+	clients  map[int64]*PooledAdminClient
 	cleanup  time.Duration
 	maxConns int
 }
 
-// AdminClient 封装了 Kafka Admin 客户端
-type AdminClient struct {
-	Client   sarama.ClusterAdmin
+// PooledAdminClient 封装了 Kafka Admin 客户端（用于连接池）
+type PooledAdminClient struct {
+	Client   *AdminClient
 	Cluster  *models.Cluster
 	LastUsed time.Time
 	mu       sync.Mutex
 }
 
 // NewAdminClientPool 创建新的连接池
-func NewAdminClientPool(factory *ClientFactory, maxConns int, cleanup time.Duration) *AdminClientPool {
+func NewAdminClientPool(maxConns int, cleanup time.Duration) *AdminClientPool {
 	pool := &AdminClientPool{
-		clients:  make(map[int64]*AdminClient),
-		factory:  factory,
+		clients:  make(map[int64]*PooledAdminClient),
 		cleanup:  cleanup,
 		maxConns: maxConns,
 	}
@@ -43,9 +39,9 @@ func NewAdminClientPool(factory *ClientFactory, maxConns int, cleanup time.Durat
 }
 
 // Get 获取或创建 AdminClient
-func (p *AdminClientPool) Get(cluster *models.Cluster) (*AdminClient, error) {
+func (p *AdminClientPool) Get(cluster *models.Cluster) (*PooledAdminClient, error) {
 	p.mu.RLock()
-	client, exists := p.clients[cluster.ID]
+	client, exists := p.clients[cluster.ClusterID]
 	p.mu.RUnlock()
 
 	if exists {
@@ -56,14 +52,14 @@ func (p *AdminClientPool) Get(cluster *models.Cluster) (*AdminClient, error) {
 	}
 
 	// 创建新客户端
-	adminClient, err := p.factory.NewAdminClient(cluster)
+	adminClient, err := NewAdminClient(cluster, cluster.AuthConfig)
 	if err != nil {
 		return nil, err
 	}
 
 	p.mu.Lock()
 	// 再次检查（双重检查锁定）
-	if existing, ok := p.clients[cluster.ID]; ok {
+	if existing, ok := p.clients[cluster.ClusterID]; ok {
 		p.mu.Unlock()
 		adminClient.Close()
 		return existing, nil
@@ -77,17 +73,17 @@ func (p *AdminClientPool) Get(cluster *models.Cluster) (*AdminClient, error) {
 		return nil, ErrTooManyConnections
 	}
 
-	client = &AdminClient{
+	client = &PooledAdminClient{
 		Client:   adminClient,
 		Cluster:  cluster,
 		LastUsed: time.Now(),
 	}
-	p.clients[cluster.ID] = client
+	p.clients[cluster.ClusterID] = client
 	p.mu.Unlock()
 
 	logger.Info("Created new Kafka admin client",
-		"cluster_id", cluster.ID,
-		"cluster_name", cluster.Name,
+		"cluster_id", cluster.ClusterID,
+		"cluster_name", cluster.ClusterName,
 	)
 
 	return client, nil

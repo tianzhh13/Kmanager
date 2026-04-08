@@ -36,16 +36,16 @@ func RetryConnect(cluster *models.Cluster, authConfigJSON string, config RetryCo
 		client, err = NewAdminClient(cluster, authConfigJSON)
 		if err == nil {
 			logger.Info("Kafka connection established",
-				"cluster_id", cluster.ID,
-				"cluster_name", cluster.Name,
+				"cluster_id", cluster.ClusterID,
+				"cluster_name", cluster.ClusterName,
 				"attempts", attempt,
 			)
 			return client, nil
 		}
 
 		logger.Warn("Kafka connection failed, will retry",
-			"cluster_id", cluster.ID,
-			"cluster_name", cluster.Name,
+			"cluster_id", cluster.ClusterID,
+			"cluster_name", cluster.ClusterName,
 			"attempt", attempt,
 			"max_attempts", config.MaxAttempts,
 			"error", err.Error(),
@@ -82,16 +82,16 @@ func RetryConnectContext(ctx context.Context, cluster *models.Cluster, authConfi
 		client, err = NewAdminClient(cluster, authConfigJSON)
 		if err == nil {
 			logger.Info("Kafka connection established",
-				"cluster_id", cluster.ID,
-				"cluster_name", cluster.Name,
+				"cluster_id", cluster.ClusterID,
+				"cluster_name", cluster.ClusterName,
 				"attempts", attempt,
 			)
 			return client, nil
 		}
 
 		logger.Warn("Kafka connection failed, will retry",
-			"cluster_id", cluster.ID,
-			"cluster_name", cluster.Name,
+			"cluster_id", cluster.ClusterID,
+			"cluster_name", cluster.ClusterName,
 			"attempt", attempt,
 			"max_attempts", config.MaxAttempts,
 			"error", err.Error(),

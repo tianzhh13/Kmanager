@@ -74,3 +74,13 @@ func ValidateComplexity(password string) error {
 
 	return nil
 }
+// ValidatePassword 验证密码复杂度（ValidateComplexity 的别名）
+// 要求：至少 8 字符，包含大写字母、小写字母和数字
+func ValidatePassword(password string) error {
+	return ValidateComplexity(password)
+}
+
+// CheckPassword 验证密码是否匹配（Verify 的别名）
+func CheckPassword(hashedPassword, password string) bool {
+	return Verify(hashedPassword, password)
+}
