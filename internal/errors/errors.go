@@ -4,146 +4,190 @@ import (
 	"fmt"
 	"net/http"
 
-	"gorm.io/gorm"
+	"kafka-management-platform/internal/logger"
 )
 
-// 错误码定义
+// ErrorCode 错误码类型
+type ErrorCode string
+
+// 业务错误码定义
 const (
-	// 通用错误
-	ErrCodeSuccess           = 0
-	ErrCodeInternalError     = 10001
-	ErrCodeInvalidParam      = 10002
-	ErrCodeUnauthorized      = 10003
-	ErrCodeForbidden         = 10004
-	ErrCodeNotFound          = 10005
-	ErrCodeConflict          = 10006
+	// 通用错误码
+	ErrCodeInternalServerError ErrorCode = "ERR_INTERNAL_SERVER_ERROR"
+	ErrCodeInvalidParams       ErrorCode = "ERR_INVALID_PARAMS"
+	ErrCodeUnauthorized        ErrorCode = "ERR_UNAUTHORIZED"
+	ErrCodeForbidden           ErrorCode = "ERR_FORBIDDEN"
+	ErrCodeNotFound            ErrorCode = "ERR_NOT_FOUND"
+	ErrCodeConflict            ErrorCode = "ERR_CONFLICT"
+	ErrCodeTooManyRequests     ErrorCode = "ERR_TOO_MANY_REQUESTS"
 
-	// 认证错误
-	ErrCodeInvalidCredentials = 20001
-	ErrCodeTokenExpired       = 20002
-	ErrCodeTokenInvalid       = 20003
-	ErrCodeUserDisabled       = 20004
+	// 认证相关错误码
+	ErrCodeInvalidCredentials ErrorCode = "ERR_INVALID_CREDENTIALS"
+	ErrCodeTokenExpired       ErrorCode = "ERR_TOKEN_EXPIRED"
+	ErrCodeTokenInvalid       ErrorCode = "ERR_TOKEN_INVALID"
+	ErrCodeUserInactive       ErrorCode = "ERR_USER_INACTIVE"
 
-	// 集群错误
-	ErrCodeClusterNotFound     = 30001
-	ErrCodeClusterExists       = 30002
-	ErrCodeClusterConnection   = 30003
-	ErrCodeClusterAuthFailed   = 30004
+	// 集群相关错误码
+	ErrCodeClusterNotFound        ErrorCode = "ERR_CLUSTER_NOT_FOUND"
+	ErrCodeClusterNameExists      ErrorCode = "ERR_CLUSTER_NAME_EXISTS"
+	ErrCodeClusterConnectionFailed ErrorCode = "ERR_CLUSTER_CONNECTION_FAILED"
+	ErrCodeClusterAccessDenied    ErrorCode = "ERR_CLUSTER_ACCESS_DENIED"
 
-	// Topic错误
-	ErrCodeTopicNotFound       = 40001
-	ErrCodeTopicExists         = 40002
-	ErrCodeTopicInvalidName    = 40003
-	ErrCodeTopicInvalidConfig  = 40004
+	// Topic 相关错误码
+	ErrCodeTopicNotFound           ErrorCode = "ERR_TOPIC_NOT_FOUND"
+	ErrCodeTopicAlreadyExists      ErrorCode = "ERR_TOPIC_ALREADY_EXISTS"
+	ErrCodeInvalidTopicName        ErrorCode = "ERR_INVALID_TOPIC_NAME"
+	ErrCodeInvalidPartitions       ErrorCode = "ERR_INVALID_PARTITIONS"
+	ErrCodeInvalidReplicationFactor ErrorCode = "ERR_INVALID_REPLICATION_FACTOR"
 
-	// ACL错误
-	ErrCodeACLNotFound         = 50001
-	ErrCodeACLExists           = 50002
+	// ACL 相关错误码
+	ErrCodeACLNotFound      ErrorCode = "ERR_ACL_NOT_FOUND"
+	ErrCodeACLAlreadyExists ErrorCode = "ERR_ACL_ALREADY_EXISTS"
+	ErrCodeInvalidACLParams ErrorCode = "ERR_INVALID_ACL_PARAMS"
 
-	// 监控错误
-	ErrCodePrometheusError     = 60001
-	ErrCodeMetricsNotFound     = 60002
+	// 用户相关错误码
+	ErrCodeUserNotFound         ErrorCode = "ERR_USER_NOT_FOUND"
+	ErrCodeUsernameExists       ErrorCode = "ERR_USERNAME_EXISTS"
+	ErrCodeInvalidPassword      ErrorCode = "ERR_INVALID_PASSWORD"
+	ErrCodeCannotDisableSelf    ErrorCode = "ERR_CANNOT_DISABLE_SELF"
 
-	// 权限错误
-	ErrCodePermissionDenied    = 70001
-	ErrCodeClusterAccessDenied = 70002
+	// 监控相关错误码
+	ErrCodeNoPrometheusURL    ErrorCode = "ERR_NO_PROMETHEUS_URL"
+	ErrCodeTimeRangeExceeded  ErrorCode = "ERR_TIME_RANGE_EXCEEDED"
+	ErrCodeInvalidTimeRange   ErrorCode = "ERR_INVALID_TIME_RANGE"
+	ErrCodePrometheusQueryFailed ErrorCode = "ERR_PROMETHEUS_QUERY_FAILED"
+
+	// Kafka 相关错误码
+	ErrCodeKafkaConnectionFailed ErrorCode = "ERR_KAFKA_CONNECTION_FAILED"
+	ErrCodeKafkaOperationFailed  ErrorCode = "ERR_KAFKA_OPERATION_FAILED"
+
+	// 加密相关错误码
+	ErrCodeEncryptionFailed    ErrorCode = "ERR_ENCRYPTION_FAILED"
+	ErrCodeDecryptionFailed    ErrorCode = "ERR_DECRYPTION_FAILED"
+	ErrCodeInvalidEncryptionKey ErrorCode = "ERR_INVALID_ENCRYPTION_KEY"
+
+	// 数据库相关错误码
+	ErrCodeDatabaseError    ErrorCode = "ERR_DATABASE_ERROR"
+	ErrCodeDatabaseNotFound ErrorCode = "ERR_DATABASE_NOT_FOUND"
 )
 
-// AppError 应用错误结构
+// AppError 应用错误
 type AppError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Detail  string `json:"detail,omitempty"`
+	Code       ErrorCode   `json:"code"`
+	Message    string      `json:"message"`
+	Details    string      `json:"details,omitempty"`
+	HTTPStatus int         `json:"-"`
+	Err        error       `json:"-"`
 }
 
 // Error 实现 error 接口
 func (e *AppError) Error() string {
-	if e.Detail != "" {
-		return fmt.Sprintf("[%d] %s: %s", e.Code, e.Message, e.Detail)
+	if e.Details != "" {
+		return fmt.Sprintf("[%s] %s: %s", e.Code, e.Message, e.Details)
 	}
-	return fmt.Sprintf("[%d] %s", e.Code, e.Message)
+	return fmt.Sprintf("[%s] %s", e.Code, e.Message)
 }
 
-// WithDetail 添加详细错误信息
-func (e *AppError) WithDetail(detail string) *AppError {
-	return &AppError{
-		Code:    e.Code,
-		Message: e.Message,
-		Detail:  detail,
-	}
+// Unwrap 获取底层错误
+func (e *AppError) Unwrap() error {
+	return e.Err
+}
+
+// WithDetails 添加错误详情
+func (e *AppError) WithDetails(details string) *AppError {
+	e.Details = details
+	return e
+}
+
+// WithErr 添加底层错误
+func (e *AppError) WithErr(err error) *AppError {
+	e.Err = err
+	return e
 }
 
 // NewAppError 创建新的应用错误
-func NewAppError(code int, message string) *AppError {
+func NewAppError(code ErrorCode, message string, httpStatus int) *AppError {
 	return &AppError{
-		Code:    code,
-		Message: message,
+		Code:       code,
+		Message:    message,
+		HTTPStatus: httpStatus,
 	}
 }
 
-// HTTPStatus 返回 HTTP 状态码
-func (e *AppError) HTTPStatus() int {
-	switch e.Code {
-	case ErrCodeSuccess:
-		return http.StatusOK
-	case ErrCodeInternalError:
-		return http.StatusInternalServerError
-	case ErrCodeInvalidParam:
-		return http.StatusBadRequest
-	case ErrCodeUnauthorized:
-		return http.StatusUnauthorized
-	case ErrCodeForbidden:
-		return http.StatusForbidden
-	case ErrCodeNotFound:
-		return http.StatusNotFound
-	case ErrCodeConflict:
-		return http.StatusConflict
-	default:
-		return http.StatusInternalServerError
+// NewInternalError 创建内部服务器错误
+func NewInternalError(message string) *AppError {
+	return NewAppError(ErrCodeInternalServerError, message, http.StatusInternalServerError)
+}
+
+// NewInvalidParamsError 创建参数错误
+func NewInvalidParamsError(message string) *AppError {
+	return NewAppError(ErrCodeInvalidParams, message, http.StatusBadRequest)
+}
+
+// NewUnauthorizedError 创建未授权错误
+func NewUnauthorizedError(message string) *AppError {
+	return NewAppError(ErrCodeUnauthorized, message, http.StatusUnauthorized)
+}
+
+// NewForbiddenError 创建禁止访问错误
+func NewForbiddenError(message string) *AppError {
+	return NewAppError(ErrCodeForbidden, message, http.StatusForbidden)
+}
+
+// NewNotFoundError 创建资源不存在错误
+func NewNotFoundError(message string) *AppError {
+	return NewAppError(ErrCodeNotFound, message, http.StatusNotFound)
+}
+
+// NewConflictError 创建冲突错误
+func NewConflictError(message string) *AppError {
+	return NewAppError(ErrCodeConflict, message, http.StatusConflict)
+}
+
+// NewTooManyRequestsError 创建请求过多错误
+func NewTooManyRequestsError(message string) *AppError {
+	return NewAppError(ErrCodeTooManyRequests, message, http.StatusTooManyRequests)
+}
+
+// WrapError 包装错误
+func WrapError(err error, code ErrorCode, message string) *AppError {
+	if appErr, ok := err.(*AppError); ok {
+		return appErr
+	}
+	return &AppError{
+		Code:       code,
+		Message:    message,
+		Err:        err,
+		HTTPStatus: http.StatusInternalServerError,
 	}
 }
 
-// 预定义错误
-var (
-	ErrInternal     = NewAppError(ErrCodeInternalError, "内部错误")
-	ErrInvalidParam = NewAppError(ErrCodeInvalidParam, "参数错误")
-	ErrUnauthorized = NewAppError(ErrCodeUnauthorized, "未授权")
-	ErrForbidden    = NewAppError(ErrCodeForbidden, "禁止访问")
-	ErrNotFound     = NewAppError(ErrCodeNotFound, "资源不存在")
-	ErrConflict     = NewAppError(ErrCodeConflict, "资源冲突")
+// IsAppError 检查是否为应用错误
+func IsAppError(err error) bool {
+	_, ok := err.(*AppError)
+	return ok
+}
 
-	// 认证相关
-	ErrInvalidCredentials = NewAppError(ErrCodeInvalidCredentials, "用户名或密码错误")
-	ErrTokenExpired       = NewAppError(ErrCodeTokenExpired, "Token已过期")
-	ErrTokenInvalid       = NewAppError(ErrCodeTokenInvalid, "无效的Token")
-	ErrUserDisabled       = NewAppError(ErrCodeUserDisabled, "用户已被禁用")
+// GetHTTPStatus 获取 HTTP 状态码
+func GetHTTPStatus(err error) int {
+	if appErr, ok := err.(*AppError); ok {
+		return appErr.HTTPStatus
+	}
+	return http.StatusInternalServerError
+}
 
-	// 集群相关
-	ErrClusterNotFound   = NewAppError(ErrCodeClusterNotFound, "集群不存在")
-	ErrClusterExists     = NewAppError(ErrCodeClusterExists, "集群已存在")
-	ErrClusterConnection = NewAppError(ErrCodeClusterConnection, "集群连接失败")
-	ErrClusterAuthFailed = NewAppError(ErrCodeClusterAuthFailed, "集群认证失败")
-
-	// Topic相关
-	ErrTopicNotFound      = NewAppError(ErrCodeTopicNotFound, "Topic不存在")
-	ErrTopicExists        = NewAppError(ErrCodeTopicExists, "Topic已存在")
-	ErrTopicInvalidName   = NewAppError(ErrCodeTopicInvalidName, "Topic名称无效")
-	ErrTopicInvalidConfig = NewAppError(ErrCodeTopicInvalidConfig, "Topic配置无效")
-
-	// ACL相关
-	ErrACLNotFound = NewAppError(ErrCodeACLNotFound, "ACL不存在")
-	ErrACLExists   = NewAppError(ErrCodeACLExists, "ACL已存在")
-
-	// 监控相关
-	ErrPrometheusError = NewAppError(ErrCodePrometheusError, "Prometheus查询错误")
-	ErrMetricsNotFound = NewAppError(ErrCodeMetricsNotFound, "指标不存在")
-
-	// 权限相关
-	ErrPermissionDenied    = NewAppError(ErrCodePermissionDenied, "权限不足")
-	ErrClusterAccessDenied = NewAppError(ErrCodeClusterAccessDenied, "无集群访问权限")
-)
-
-// IsRecordNotFound 判断是否为记录未找到错误
-func IsRecordNotFound(err error) bool {
-	return gorm.ErrRecordNotFound.Error() == err.Error()
+// LogError 记录错误日志
+func LogError(err error, context string) {
+	if appErr, ok := err.(*AppError); ok {
+		logger.Error(context,
+			"code", appErr.Code,
+			"message", appErr.Message,
+			"details", appErr.Details,
+			"error", appErr.Err,
+		)
+	} else {
+		logger.Error(context,
+			"error", err,
+		)
+	}
 }
