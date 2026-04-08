@@ -210,7 +210,19 @@ func (s *Service) BatchDeleteACL(ctx context.Context, aclIDs []int64) error {
 
 // ListACLs 列出 ACL 规则
 func (s *Service) ListACLs(ctx context.Context, req *ListACLsRequest) (*ListACLsResponse, error) {
-	acls, total, err := s.aclRepo.List(ctx, req.ClusterID, req.ResourceType, req.ResourceName, req.Principal, req.Offset, req.Limit)
+	var acls []*models.ACL
+	var total int64
+	var err error
+
+	// 根据过滤条件选择不同的查询方法
+	if req.ResourceName != "" {
+		acls, total, err = s.aclRepo.FilterByTopic(ctx, req.ClusterID, req.ResourceName, req.Offset, req.Limit)
+	} else if req.Principal != "" {
+		acls, total, err = s.aclRepo.FilterByPrincipal(ctx, req.ClusterID, req.Principal, req.Offset, req.Limit)
+	} else {
+		acls, total, err = s.aclRepo.List(ctx, req.ClusterID, req.Offset, req.Limit)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +272,7 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 	}
 
 	// 从数据库获取当前 ACL 列表
-	dbACLs, _, err := s.aclRepo.List(ctx, clusterID, "", "", "", 0, 10000)
+	dbACLs, err := s.aclRepo.ListByCluster(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to list acls from database: %w", err)
 	}

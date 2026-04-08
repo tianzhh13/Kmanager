@@ -119,7 +119,7 @@ func (s *Service) CreateTopic(ctx context.Context, req *CreateTopicRequest) erro
 	topicDetail := &sarama.TopicDetail{
 		NumPartitions:     req.Partitions,
 		ReplicationFactor: req.ReplicationFactor,
-		ConfigEntries:     req.Config,
+		ConfigEntries:     convertConfigEntries(req.Config),
 	}
 
 	if err := adminClient.CreateTopic(req.TopicName, topicDetail, false); err != nil {
@@ -226,7 +226,16 @@ func (s *Service) GetTopic(ctx context.Context, clusterID int64, topicName strin
 
 // ListTopics 列出 Topic
 func (s *Service) ListTopics(ctx context.Context, req *ListTopicsRequest) (*ListTopicsResponse, error) {
-	topics, total, err := s.topicRepo.List(ctx, req.ClusterID, req.Search, req.Offset, req.Limit)
+	var topics []*models.Topic
+	var total int64
+	var err error
+
+	if req.Search != "" {
+		topics, total, err = s.topicRepo.Search(ctx, req.ClusterID, req.Search, req.Offset, req.Limit)
+	} else {
+		topics, total, err = s.topicRepo.List(ctx, req.ClusterID, req.Offset, req.Limit)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +278,7 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 	}
 
 	// 从数据库获取当前 Topic 列表
-	dbTopics, _, err := s.topicRepo.List(ctx, clusterID, "", 0, 10000)
+	dbTopics, err := s.topicRepo.ListByCluster(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to list topics from database: %w", err)
 	}
@@ -341,4 +350,17 @@ func (s *Service) validateCreateTopicRequest(req *CreateTopicRequest) error {
 		return ErrInvalidReplicationFactor
 	}
 	return nil
+}
+// convertConfigEntries 转换配置项格式
+func convertConfigEntries(config map[string]string) map[string]*string {
+	if config == nil {
+		return nil
+	}
+	result := make(map[string]*string)
+	for k, v := range config {
+		// 需要复制值，避免循环变量问题
+		value := v
+		result[k] = &value
+	}
+	return result
 }
