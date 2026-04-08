@@ -31,7 +31,7 @@ export interface UpdateClusterRequest {
   status?: string
 }
 
-export const clusterService = {
+export const clusterAPI = {
   list: async (page: number = 1, pageSize: number = 20) => {
     const response = await api.get('/clusters', {
       params: { page, page_size: pageSize },

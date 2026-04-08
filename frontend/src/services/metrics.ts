@@ -58,7 +58,7 @@ export interface QueryResult {
   data: TimeSeriesPoint[]
 }
 
-const metricsAPI = {
+export const metricsAPI = {
   // 获取集群级别指标
   getClusterMetrics: (clusterId: number, params: ClusterMetricsParams) => 
     axios.get<ClusterMetrics>(`/metrics/cluster/${clusterId}`, { params }),
@@ -79,5 +79,3 @@ const metricsAPI = {
   queryPromQL: (clusterId: number, params: ClusterMetricsParams & { query: string; step?: string }) =>
     axios.get<QueryResult>(`/metrics/query/${clusterId}`, { params })
 }
-
-export default metricsAPI

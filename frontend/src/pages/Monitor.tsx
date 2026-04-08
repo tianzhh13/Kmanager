@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Card, Row, Col, Select, DatePicker, Spin, message, Statistic, Table, Tabs } from 'antd'
+import { Card, Row, Col, Select, DatePicker, Spin, message, Statistic, Table, Tabs, Space } from 'antd'
 import { Line } from '@ant-design/charts'
 import { clusterAPI } from '../services/cluster'
 import { metricsAPI } from '../services/metrics'
 import type { ColumnsType } from 'antd/es/table'
+import dayjs from 'dayjs'
 
 const { RangePicker } = DatePicker
 
@@ -99,16 +100,16 @@ const Monitor: React.FC = () => {
       ])
 
       if (clusterRes.status === 'fulfilled') {
-        setClusterMetrics(clusterRes.value)
+        setClusterMetrics(clusterRes.value.data)
       }
       if (brokerRes.status === 'fulfilled') {
-        setBrokerMetrics(brokerRes.value || [])
+        setBrokerMetrics(brokerRes.value.data || [])
       }
       if (topicRes.status === 'fulfilled') {
-        setTopicMetrics(topicRes.value || [])
+        setTopicMetrics(topicRes.value.data || [])
       }
       if (consumerRes.status === 'fulfilled') {
-        setConsumerGroupMetrics(consumerRes.value || [])
+        setConsumerGroupMetrics(consumerRes.value.data || [])
       }
     } catch (error) {
       message.error('加载监控数据失败')
@@ -319,8 +320,5 @@ const Monitor: React.FC = () => {
     </div>
   )
 }
-
-import { Space } from 'antd'
-import dayjs from 'dayjs'
 
 export default Monitor
