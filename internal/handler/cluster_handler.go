@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"kafka-management-platform/internal/middleware"
+	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/service/cluster"
 
 	"github.com/gin-gonic/gin"
@@ -101,22 +102,22 @@ func (h *ClusterHandler) ListClusters(c *gin.Context) {
 	// 获取分页参数
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	
+
 	offset := (page - 1) * pageSize
-	
+
 	userID := middleware.GetUserID(c)
 	role := middleware.GetUserRole(c)
 
-	clusters, total, err := h.clusterSvc.ListClusters(c.Request.Context(), userID, role, offset, pageSize)
+	clusters, total, err := h.clusterSvc.ListClusters(c.Request.Context(), userID, models.UserRole(role), offset, pageSize)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(200, gin.H{
-		"data":  clusters,
-		"total": total,
-		"page":  page,
+		"data":      clusters,
+		"total":     total,
+		"page":      page,
 		"page_size": pageSize,
 	})
 }

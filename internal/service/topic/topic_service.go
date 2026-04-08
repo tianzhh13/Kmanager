@@ -28,9 +28,9 @@ var (
 
 // Service Topic 管理服务
 type Service struct {
-	topicRepo       repository.TopicRepository
-	clusterRepo     repository.ClusterRepository
-	encryptionSvc   *encryption.Service
+	topicRepo     repository.TopicRepository
+	clusterRepo   repository.ClusterRepository
+	encryptionSvc *encryption.Service
 }
 
 // NewService 创建 Topic 管理服务实例
@@ -116,10 +116,21 @@ func (s *Service) CreateTopic(ctx context.Context, req *CreateTopicRequest) erro
 	defer adminClient.Close()
 
 	// 调用 Kafka API 创建 Topic
+	// 转换 Config 类型：map[string]string -> map[string]*string
+	configEntries := make(map[string]*string)
+	for k, v := range req.Config {
+		value := v
+		configEntries[k] = &value
+	}
+
 	topicDetail := &sarama.TopicDetail{
 		NumPartitions:     req.Partitions,
 		ReplicationFactor: req.ReplicationFactor,
+<<<<<<< Updated upstream
 		ConfigEntries:     convertConfigEntries(req.Config),
+=======
+		ConfigEntries:     configEntries,
+>>>>>>> Stashed changes
 	}
 
 	if err := adminClient.CreateTopic(req.TopicName, topicDetail, false); err != nil {
@@ -230,6 +241,7 @@ func (s *Service) ListTopics(ctx context.Context, req *ListTopicsRequest) (*List
 	var total int64
 	var err error
 
+	// 根据是否有搜索条件选择合适的查询方法
 	if req.Search != "" {
 		topics, total, err = s.topicRepo.Search(ctx, req.ClusterID, req.Search, req.Offset, req.Limit)
 	} else {
@@ -278,7 +290,11 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 	}
 
 	// 从数据库获取当前 Topic 列表
+<<<<<<< Updated upstream
 	dbTopics, err := s.topicRepo.ListByCluster(ctx, clusterID)
+=======
+	dbTopics, _, err := s.topicRepo.List(ctx, clusterID, 0, 10000)
+>>>>>>> Stashed changes
 	if err != nil {
 		return fmt.Errorf("failed to list topics from database: %w", err)
 	}
@@ -351,6 +367,7 @@ func (s *Service) validateCreateTopicRequest(req *CreateTopicRequest) error {
 	}
 	return nil
 }
+
 // convertConfigEntries 转换配置项格式
 func convertConfigEntries(config map[string]string) map[string]*string {
 	if config == nil {
