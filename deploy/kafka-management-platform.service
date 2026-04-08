@@ -1,0 +1,22 @@
+[Unit]
+Description=Kafka Management Platform
+After=network.target mysql.service postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/kafka-management-platform
+ExecStart=/opt/kafka-management-platform/kafka-management-platform -config /opt/kafka-management-platform/config.yaml
+Restart=always
+RestartSec=10
+
+# 环境变量
+Environment="GIN_MODE=release"
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kafka-management-platform
+
+[Install]
+WantedBy=multi-user.target

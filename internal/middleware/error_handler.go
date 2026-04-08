@@ -2,106 +2,110 @@ package middleware
 
 import (
 	"net/http"
-	"strings"
+	"runtime/debug"
 
-	"github.com/gin-gonic/gin"
 	"kafka-management-platform/internal/errors"
 	"kafka-management-platform/internal/logger"
+
+	"github.com/gin-gonic/gin"
 )
 
-// ErrorResponse 错误响应结构
-type ErrorResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Detail  string `json:"detail,omitempty"`
-}
-
-// ErrorHandler 错误处理中间件
-func ErrorHandler() gin.HandlerFunc {
+// ErrorHandlerMiddleware 统一错误处理中间件
+func ErrorHandlerMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next()
 
 		// 检查是否有错误
 		if len(c.Errors) > 0 {
-			err := c.Errors.Last()
-			handleError(c, err.Err)
+			err := c.Errors.Last().Err
+			handleError(c, err)
 		}
+	}
+}
+
+// RecoveryMiddleware 恢复中间件，捕获 panic
+func RecoveryMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			if err := recover(); err != nil {
+				// 记录堆栈信息
+				logger.Error("Panic recovered",
+					"error", err,
+					"stack", string(debug.Stack()),
+				)
+
+				// 返回内部服务器错误
+				appErr := errors.NewInternalError("Internal server error")
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+					"code":    appErr.Code,
+					"message": appErr.Message,
+				})
+			}
+		}()
+		c.Next()
 	}
 }
 
 // handleError 处理错误
 func handleError(c *gin.Context, err error) {
+	// 避免重复响应
+	if c.Writer.Status() != http.StatusOK {
+		return
+	}
+
 	// 记录错误日志
-	logger.Error("Request error",
-		"path", c.Request.URL.Path,
-		"method", c.Request.Method,
-		"error", err.Error(),
-	)
+	errors.LogError(err, "HTTP Error")
 
-	// 判断错误类型
-	var appErr *errors.AppError
-	if errors.As(err, &appErr) {
+	// 获取 HTTP 状态码
+	httpStatus := errors.GetHTTPStatus(err)
+
+	// 如果是应用错误，返回结构化响应
+	if appErr, ok := err.(*errors.AppError); ok {
 		// 过滤敏感信息
-		detail := filterSensitiveInfo(appErr.Detail)
-		
-		c.JSON(appErr.HTTPStatus(), ErrorResponse{
-			Code:    appErr.Code,
-			Message: appErr.Message,
-			Detail:  detail,
-		})
+		response := filterSensitiveData(appErr)
+		c.AbortWithStatusJSON(httpStatus, response)
 		return
 	}
 
-	// 数据库记录未找到
-	if errors.IsRecordNotFound(err) {
-		c.JSON(http.StatusNotFound, ErrorResponse{
-			Code:    errors.ErrCodeNotFound,
-			Message: "资源不存在",
-		})
-		return
-	}
-
-	// 其他内部错误
-	c.JSON(http.StatusInternalServerError, ErrorResponse{
-		Code:    errors.ErrCodeInternalError,
-		Message: "内部错误",
+	// 其他错误返回通用响应
+	c.AbortWithStatusJSON(httpStatus, gin.H{
+		"code":    errors.ErrCodeInternalServerError,
+		"message": "Internal server error",
 	})
 }
 
-// filterSensitiveInfo 过滤敏感信息
-func filterSensitiveInfo(detail string) string {
-	if detail == "" {
-		return ""
+// filterSensitiveData 过滤敏感信息
+func filterSensitiveData(err *errors.AppError) gin.H {
+	response := gin.H{
+		"code":    err.Code,
+		"message": err.Message,
 	}
 
-	// 过滤密码、密钥等敏感信息
-	sensitiveKeys := []string{"password", "secret", "token", "key", "credential"}
-	filtered := detail
-
-	for _, key := range sensitiveKeys {
-		// 替换 password=xxx 为 password=***
-		filtered = strings.ReplaceAll(filtered, key+"=", key+"=***")
+	// 不在生产环境显示详细信息
+	if err.Details != "" {
+		response["details"] = err.Details
 	}
 
-	return filtered
+	return response
 }
 
-// RecoveryWithErrorHandler 带错误恢复的中间件
-func RecoveryWithErrorHandler() gin.HandlerFunc {
+// NotFoundHandler 404 处理
+func NotFoundHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		defer func() {
-			if err := recover(); err != nil {
-				logger.Error("Panic recovered",
-					"path", c.Request.URL.Path,
-					"error", err,
-				)
-				c.JSON(http.StatusInternalServerError, ErrorResponse{
-					Code:    errors.ErrCodeInternalError,
-					Message: "系统内部错误",
-				})
-				c.Abort()
-			}
-		}()
-		c.Next()
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    errors.ErrCodeNotFound,
+			"message": "Resource not found",
+			"path":    c.Request.URL.Path,
+		})
+	}
+}
+
+// MethodNotAllowedHandler 405 处理
+func MethodNotAllowedHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.JSON(http.StatusMethodNotAllowed, gin.H{
+			"code":    errors.ErrCodeInvalidParams,
+			"message": "Method not allowed",
+		})
 	}
 }
