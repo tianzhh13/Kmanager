@@ -1,5 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
-import { clusterService, Cluster, CreateClusterRequest } from '../../services/cluster'
+import { clusterAPI, Cluster, CreateClusterRequest } from '../../services/cluster'
 
 interface ClusterState {
   clusters: Cluster[]
@@ -21,7 +21,7 @@ export const fetchClusters = createAsyncThunk(
   'clusters/fetchClusters',
   async (params: { page: number; pageSize: number }, { rejectWithValue }) => {
     try {
-      const response = await clusterService.list(params.page, params.pageSize)
+      const response = await clusterAPI.list(params.page, params.pageSize)
       return response
     } catch (error: any) {
       return rejectWithValue(error.response?.data?.error || '获取集群列表失败')
@@ -33,7 +33,7 @@ export const createCluster = createAsyncThunk(
   'clusters/createCluster',
   async (data: CreateClusterRequest, { rejectWithValue }) => {
     try {
-      const response = await clusterService.create(data)
+      const response = await clusterAPI.create(data)
       return response
     } catch (error: any) {
       return rejectWithValue(error.response?.data?.error || '创建集群失败')
@@ -45,7 +45,7 @@ export const testClusterConnection = createAsyncThunk(
   'clusters/testConnection',
   async (clusterId: number, { rejectWithValue }) => {
     try {
-      await clusterService.testConnection(clusterId)
+      await clusterAPI.testConnection(clusterId)
       return { clusterId, success: true }
     } catch (error: any) {
       return rejectWithValue(error.response?.data?.error || '连接测试失败')

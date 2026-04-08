@@ -3,7 +3,7 @@ import { Table, Button, Space, Modal, Form, Input, Select, InputNumber, message,
 import { PlusOutlined, DeleteOutlined, SyncOutlined } from '@ant-design/icons'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchTopics, createTopic, deleteTopic } from '../store/slices/topicSlice'
-import { clusterService } from '../services/cluster'
+import { clusterAPI } from '../services/cluster'
 
 const TopicList: React.FC = () => {
   const dispatch = useAppDispatch()
@@ -16,7 +16,7 @@ const TopicList: React.FC = () => {
 
   useEffect(() => {
     dispatch(fetchTopics({ page, pageSize }))
-    clusterService.list(1, 100).then(res => setClusters(res.data || []))
+    clusterAPI.list(1, 100).then(res => setClusters(res.data || []))
   }, [dispatch, page, pageSize])
 
   const handleCreate = async () => {
