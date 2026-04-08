@@ -214,19 +214,11 @@ func (s *Service) ListACLs(ctx context.Context, req *ListACLsRequest) (*ListACLs
 	var total int64
 	var err error
 
-<<<<<<< Updated upstream
 	// 根据过滤条件选择不同的查询方法
 	if req.ResourceName != "" {
 		acls, total, err = s.aclRepo.FilterByTopic(ctx, req.ClusterID, req.ResourceName, req.Offset, req.Limit)
 	} else if req.Principal != "" {
 		acls, total, err = s.aclRepo.FilterByPrincipal(ctx, req.ClusterID, req.Principal, req.Offset, req.Limit)
-=======
-	// 根据过滤条件选择合适的查询方法
-	if req.Principal != "" {
-		acls, total, err = s.aclRepo.FilterByPrincipal(ctx, req.ClusterID, req.Principal, req.Offset, req.Limit)
-	} else if req.ResourceName != "" {
-		acls, total, err = s.aclRepo.FilterByTopic(ctx, req.ClusterID, req.ResourceName, req.Offset, req.Limit)
->>>>>>> Stashed changes
 	} else {
 		acls, total, err = s.aclRepo.List(ctx, req.ClusterID, req.Offset, req.Limit)
 	}
@@ -292,11 +284,7 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 	}
 
 	// 从数据库获取当前 ACL 列表
-<<<<<<< Updated upstream
 	dbACLs, err := s.aclRepo.ListByCluster(ctx, clusterID)
-=======
-	dbACLs, _, err := s.aclRepo.List(ctx, clusterID, 0, 10000)
->>>>>>> Stashed changes
 	if err != nil {
 		return fmt.Errorf("failed to list acls from database: %w", err)
 	}
