@@ -39,7 +39,7 @@ export interface ExportParams extends AuditLogParams {
   format: 'csv' | 'json'
 }
 
-const auditLogAPI = {
+export const auditLogAPI = {
   // 获取审计日志列表
   list: (params: AuditLogParams) => 
     axios.get<AuditLogResponse>('/audit-logs', { params }),
@@ -56,5 +56,3 @@ const auditLogAPI = {
   clean: (days: number) => 
     axios.post('/audit-logs/clean', null, { params: { days } })
 }
-
-export default auditLogAPI
