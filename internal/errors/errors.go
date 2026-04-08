@@ -71,6 +71,12 @@ const (
 	ErrCodeDatabaseNotFound ErrorCode = "ERR_DATABASE_NOT_FOUND"
 )
 
+// 预定义的错误变量
+var (
+	// ErrDatabaseConnection 数据库连接错误
+	ErrDatabaseConnection = NewAppError(ErrCodeDatabaseError, "database connection failed", http.StatusInternalServerError)
+)
+
 // AppError 应用错误
 type AppError struct {
 	Code       ErrorCode   `json:"code"`
@@ -190,4 +196,27 @@ func LogError(err error, context string) {
 			"error", err,
 		)
 	}
+}
+
+// IsRetryable 检查错误是否可重试
+func IsRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	// 检查是否为 AppError
+	if appErr, ok := err.(*AppError); ok {
+		switch appErr.Code {
+		case ErrCodeKafkaConnectionFailed,
+			ErrCodeClusterConnectionFailed,
+			ErrCodeDatabaseError,
+			ErrCodePrometheusQueryFailed:
+			return true
+		default:
+			return false
+		}
+	}
+	
+	// 对于其他错误类型，默认不可重试
+	return false
 }

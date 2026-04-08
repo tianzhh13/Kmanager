@@ -1,8 +1,8 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
+	"strconv"
 
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/service/auth"
@@ -11,22 +11,21 @@ import (
 )
 
 // PermissionMiddleware 权限验证中间件
-func PermissionMiddleware(authSvc *auth.Service, requiredRole ...models.UserRole) gin.HandlerFunc {
+func PermissionMiddleware(permissionSvc *auth.PermissionService, requiredRole ...models.UserRole) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userRole := GetUserRole(c)
-		userID := GetUserID(c)
 
 		// 检查用户角色权限
 		hasPermission := false
 		for _, role := range requiredRole {
-			if auth.CheckPermission(userRole, role) {
+			if userRole == string(role) {
 				hasPermission = true
 				break
 			}
 		}
 
 		// 超级管理员拥有所有权限
-		if userRole == string(models.UserRoleSuperAdmin) {
+		if userRole == string(models.RoleSuperAdmin) {
 			hasPermission = true
 		}
 
@@ -43,26 +42,25 @@ func PermissionMiddleware(authSvc *auth.Service, requiredRole ...models.UserRole
 }
 
 // ClusterPermissionMiddleware 集群级别权限检查中间件
-func ClusterPermissionMiddleware(authSvc *auth.Service, requiredPermission string) gin.HandlerFunc {
+func ClusterPermissionMiddleware(permissionSvc *auth.PermissionService, requiredPermission string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := GetUserID(c)
 		userRole := GetUserRole(c)
-		clusterID := c.Param("id")
+		clusterIDStr := c.Param("id")
 
-		if clusterID == "" {
+		if clusterIDStr == "" {
 			c.Next()
 			return
 		}
 
 		// 超级管理员拥有所有权限
-		if userRole == string(models.UserRoleSuperAdmin) {
+		if userRole == string(models.RoleSuperAdmin) {
 			c.Next()
 			return
 		}
 
 		// 解析集群ID
-		var clusterIDInt int64
-		_, err := fmt.Sscanf(clusterID, "%d", &clusterIDInt)
+		clusterID, err := strconv.ParseInt(clusterIDStr, 10, 64)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
 			c.Abort()
@@ -70,7 +68,7 @@ func ClusterPermissionMiddleware(authSvc *auth.Service, requiredPermission strin
 		}
 
 		// 检查集群权限
-		hasPermission, err := authSvc.CheckClusterPermission(c.Request.Context(), userID, clusterIDInt, requiredPermission)
+		hasPermission, err := permissionSvc.CheckClusterPermission(c.Request.Context(), userID, clusterID)
 		if err != nil || !hasPermission {
 			c.JSON(http.StatusForbidden, gin.H{
 				"error": "no permission for this cluster",

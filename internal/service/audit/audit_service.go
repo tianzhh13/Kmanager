@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -66,6 +67,20 @@ var ValidStatuses = map[string]bool{
 	"failed":  true,
 }
 
+// LogRequest 审计日志请求
+type LogRequest struct {
+	UserID       int64                  `json:"user_id"`
+	Username     string                 `json:"username"`
+	Action       string                 `json:"action"`
+	ResourceType string                 `json:"resource_type"`
+	ResourceID   string                 `json:"resource_id"`
+	ClusterID    *int64                 `json:"cluster_id,omitempty"`
+	Details      interface{}            `json:"details,omitempty"`
+	IPAddress    string                 `json:"ip_address"`
+	UserAgent    string                 `json:"user_agent"`
+	Status       string                 `json:"status"`
+}
+
 // Service 审计服务
 type Service struct {
 	auditLogRepo repository.AuditLogRepository
@@ -78,8 +93,39 @@ func NewService(auditLogRepo repository.AuditLogRepository) *Service {
 	}
 }
 
-// Log 记录审计日志
-func (s *Service) Log(ctx *gin.Context, operation string, resourceType string, resourceID string, details string) error {
+// Log 记录审计日志（支持 context.Context 和 LogRequest）
+func (s *Service) Log(ctx context.Context, req *LogRequest) error {
+	// 验证字段完整性
+	if err := s.validateAuditLogFields(req.UserID, req.Username, req.Action, req.ResourceType, req.Status); err != nil {
+		return err
+	}
+
+	// 将 details 转换为 JSON 字符串
+	var detailsStr string
+	if req.Details != nil {
+		if b, err := json.Marshal(req.Details); err == nil {
+			detailsStr = string(b)
+		}
+	}
+
+	auditLog := &models.AuditLog{
+		UserID:     req.UserID,
+		Username:   req.Username,
+		Action:     req.Action,
+		Resource:   req.ResourceType,
+		ResourceID: req.ResourceID,
+		ClusterID:  req.ClusterID,
+		Details:    detailsStr,
+		IPAddress:  req.IPAddress,
+		UserAgent:  req.UserAgent,
+		Status:     models.AuditStatus(req.Status),
+	}
+
+	return s.auditLogRepo.Create(nil, auditLog)
+}
+
+// LogGin 记录审计日志（使用 gin.Context）
+func (s *Service) LogGin(ctx *gin.Context, operation string, resourceType string, resourceID string, details string) error {
 	// 验证字段完整性
 	if err := s.validateAuditLogFields(0, "", operation, resourceType, "success"); err != nil {
 		return err

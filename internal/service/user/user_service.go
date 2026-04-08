@@ -12,12 +12,12 @@ import (
 )
 
 var (
-	ErrUserNotFound         = errors.New("user not found")
-	ErrUserAlreadyExists    = errors.New("user already exists")
-	ErrInvalidPassword      = errors.New("invalid password")
-	ErrUserDisabled         = errors.New("user is disabled")
-	ErrCannotDeleteSelf     = errors.New("cannot delete yourself")
-	ErrCannotDisableSelf    = errors.New("cannot disable yourself")
+	ErrUserNotFound      = errors.New("user not found")
+	ErrUserAlreadyExists = errors.New("user already exists")
+	ErrInvalidPassword   = errors.New("invalid password")
+	ErrUserDisabled      = errors.New("user is disabled")
+	ErrCannotDeleteSelf  = errors.New("cannot delete yourself")
+	ErrCannotDisableSelf = errors.New("cannot disable yourself")
 )
 
 // Service 用户管理服务
@@ -38,15 +38,13 @@ type CreateUserRequest struct {
 	Email    string         `json:"email" binding:"required,email"`
 	Password string         `json:"password" binding:"required,min=8"`
 	Role     models.UserRole `json:"role" binding:"required"`
-	Phone    string         `json:"phone"`
 }
 
 // UpdateUserRequest 更新用户请求
 type UpdateUserRequest struct {
-	Email    string          `json:"email"`
-	Role     models.UserRole `json:"role"`
-	Phone    string          `json:"phone"`
-	Status   models.UserStatus `json:"status"`
+	Email  string            `json:"email"`
+	Role   models.UserRole   `json:"role"`
+	Status models.UserStatus `json:"status"`
 }
 
 // UpdatePasswordRequest 更新密码请求
@@ -76,12 +74,11 @@ func (s *Service) CreateUser(ctx context.Context, req *CreateUserRequest) (*mode
 
 	// 创建用户
 	user := &models.User{
-		Username: req.Username,
-		Email:    req.Email,
-		Password: hashedPassword,
-		Role:     req.Role,
-		Phone:    req.Phone,
-		Status:   models.UserStatusActive,
+		Username:     req.Username,
+		Email:        req.Email,
+		PasswordHash: hashedPassword,
+		Role:         req.Role,
+		Status:       models.UserStatusActive,
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
@@ -89,7 +86,7 @@ func (s *Service) CreateUser(ctx context.Context, req *CreateUserRequest) (*mode
 	}
 
 	// 返回时不包含密码
-	user.Password = ""
+	user.PasswordHash = ""
 	return user, nil
 }
 
@@ -102,7 +99,7 @@ func (s *Service) GetUser(ctx context.Context, userID int64) (*models.User, erro
 		}
 		return nil, err
 	}
-	user.Password = ""
+	user.PasswordHash = ""
 	return user, nil
 }
 
@@ -123,9 +120,6 @@ func (s *Service) UpdateUser(ctx context.Context, userID int64, req *UpdateUserR
 	if req.Role != "" {
 		user.Role = req.Role
 	}
-	if req.Phone != "" {
-		user.Phone = req.Phone
-	}
 	if req.Status != "" {
 		user.Status = req.Status
 	}
@@ -134,7 +128,7 @@ func (s *Service) UpdateUser(ctx context.Context, userID int64, req *UpdateUserR
 		return nil, err
 	}
 
-	user.Password = ""
+	user.PasswordHash = ""
 	return user, nil
 }
 
@@ -149,7 +143,7 @@ func (s *Service) UpdatePassword(ctx context.Context, userID int64, req *UpdateP
 	}
 
 	// 验证旧密码
-	if !password.CheckPassword(req.OldPassword, user.Password) {
+	if !password.CheckPassword(user.PasswordHash, req.OldPassword) {
 		return ErrInvalidPassword
 	}
 
@@ -164,7 +158,7 @@ func (s *Service) UpdatePassword(ctx context.Context, userID int64, req *UpdateP
 		return err
 	}
 
-	user.Password = hashedPassword
+	user.PasswordHash = hashedPassword
 	return s.userRepo.Update(ctx, user)
 }
 
@@ -193,7 +187,7 @@ func (s *Service) DisableUser(ctx context.Context, userID, currentUserID int64) 
 		return err
 	}
 
-	user.Status = models.UserStatusDisabled
+	user.Status = models.UserStatusInactive
 	return s.userRepo.Update(ctx, user)
 }
 
@@ -213,14 +207,23 @@ func (s *Service) EnableUser(ctx context.Context, userID int64) error {
 
 // ListUsers 获取用户列表
 func (s *Service) ListUsers(ctx context.Context, offset, limit int, keyword string) ([]*models.User, int64, error) {
-	users, total, err := s.userRepo.List(ctx, offset, limit, keyword)
+	var users []*models.User
+	var total int64
+	var err error
+
+	if keyword != "" {
+		users, total, err = s.userRepo.Search(ctx, keyword, offset, limit)
+	} else {
+		users, total, err = s.userRepo.List(ctx, offset, limit)
+	}
+
 	if err != nil {
 		return nil, 0, err
 	}
 
 	// 清除密码
 	for _, user := range users {
-		user.Password = ""
+		user.PasswordHash = ""
 	}
 
 	return users, total, nil

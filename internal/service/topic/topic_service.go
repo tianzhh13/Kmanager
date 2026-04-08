@@ -84,7 +84,7 @@ func (s *Service) CreateTopic(ctx context.Context, req *CreateTopicRequest) erro
 	}
 
 	// 检查 Topic 是否已存在
-	exists, err := s.topicRepo.ExistsByName(ctx, req.ClusterID, req.TopicName)
+	exists, err := s.topicRepo.Exists(ctx, req.ClusterID, req.TopicName)
 	if err != nil {
 		return fmt.Errorf("failed to check topic existence: %w", err)
 	}
@@ -173,7 +173,11 @@ func (s *Service) DeleteTopic(ctx context.Context, clusterID int64, topicName st
 	}
 
 	// 从数据库删除 Topic
-	if err := s.topicRepo.DeleteByName(ctx, clusterID, topicName); err != nil {
+	topic, err := s.topicRepo.FindByName(ctx, clusterID, topicName)
+	if err != nil {
+		return fmt.Errorf("failed to find topic: %w", err)
+	}
+	if err := s.topicRepo.Delete(ctx, topic.TopicID); err != nil {
 		return fmt.Errorf("failed to delete topic from database: %w", err)
 	}
 
