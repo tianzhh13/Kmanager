@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Card, Row, Col, Statistic } from 'antd'
 import { ClusterOutlined, FileTextOutlined, UserOutlined, LineChartOutlined } from '@ant-design/icons'
-import { clusterService } from '../services/cluster'
+import { clusterAPI } from '../services/cluster'
 
 const Dashboard: React.FC = () => {
   const [stats, setStats] = useState({
@@ -13,7 +13,7 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const clusterRes = await clusterService.list(1, 1)
+        const clusterRes = await clusterAPI.list(1, 1)
         setStats({
           clusterCount: clusterRes.total || 0,
           topicCount: 0,
