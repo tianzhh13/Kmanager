@@ -7,10 +7,11 @@
 - 🔐 **用户认证授权**：基于 JWT 的认证，支持超级管理员、集群管理员、只读用户三种角色
 - 🌐 **多集群管理**：统一管理多个 Kafka 集群，支持 PLAINTEXT、SCRAM、Kerberos 认证
 - 📊 **Topic 管理**：可视化创建、删除、配置 Topic，自动同步集群数据
-- 🔒 **ACL 管理**：管理 Kafka 访问控制规则
-- 📈 **监控展示**：集成 Prometheus，展示集群、Broker、Topic 级别监控指标
+- 🔒 **ACL 管理**：管理 Kafka 访问控制规则，支持批量操作
+- 📈 **监控展示**：集成 Prometheus，展示集群、Broker、Topic、消费组级别监控指标
 - 📝 **操作审计**：完整记录所有关键操作，支持查询和导出
-- 🔐 **敏感信息加密**：使用 AES-256 加密存储集群认证信息
+- 🔐 **敏感信息加密**：使用 AES-256-CFB 加密存储集群认证信息
+- ⏰ **数据同步**：后台 Worker 每 5 分钟自动同步 Topic 和 ACL 数据
 
 ## 技术栈
 
@@ -43,6 +44,8 @@
 - Go 1.21+
 - MySQL 8.0+ 或 PostgreSQL 14+
 - Node.js 18+（前端开发）
+- Kafka 集群（用于测试）
+- Prometheus（可选，用于监控功能）
 
 ### 安装步骤
 
@@ -73,7 +76,8 @@ openssl rand -base64 32
 3. **安装依赖**
 
 ```bash
-go mod download
+go mod tidy
+go mod vendor
 ```
 
 4. **初始化数据库**
@@ -86,7 +90,7 @@ CREATE DATABASE kafka_management CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_c
 
 运行数据库迁移（应用启动时自动执行）。
 
-5. **运行应用**
+5. **运行后端应用**
 
 ```bash
 go run cmd/server/main.go
@@ -94,21 +98,19 @@ go run cmd/server/main.go
 
 应用将在 `http://localhost:8080` 启动。
 
-6. **测试 API**
+6. **运行前端应用**
 
 ```bash
-# 测试健康检查
-curl http://localhost:8080/health
-
-# 测试登录（使用默认管理员账户）
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}'
-
-# 保存返回的 access_token，然后测试获取集群列表
-curl http://localhost:8080/api/v1/clusters \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+cd frontend
+npm install
+npm run dev
 ```
+
+前端将在 `http://localhost:5173` 启动，并代理 API 请求到后端 `http://localhost:8080`。
+
+7. **访问 Web UI**
+
+打开浏览器访问 `http://localhost:5173`，使用默认管理员账户登录。
 
 ### 默认管理员账户
 
@@ -117,20 +119,6 @@ curl http://localhost:8080/api/v1/clusters \
 - **角色**：超级管理员
 
 ⚠️ **重要**：首次登录后请立即修改默认密码！
-
-### 开发模式
-
-```bash
-# 启动后端（带热重载）
-go run cmd/server/main.go
-
-# 启动前端（在 frontend 目录）
-cd frontend
-npm install
-npm run dev
-```
-
-前端将在 `http://localhost:3000` 启动，并代理 API 请求到后端 `http://localhost:8080`。
 
 ## 项目结构
 
@@ -259,40 +247,205 @@ curl -X POST http://localhost:8080/api/v1/clusters \
   }'
 ```
 
-#### 获取集群详情
+#### 测试集群连接
 ```bash
-curl http://localhost:8080/api/v1/clusters/1 \
+curl -X POST http://localhost:8080/api/v1/clusters/1/test \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
-#### 更新集群
+#### 授予用户集群权限
 ```bash
-curl -X PUT http://localhost:8080/api/v1/clusters/1 \
+curl -X POST http://localhost:8080/api/v1/clusters/1/grant \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": 2}'
+```
+
+### Topic 管理 API
+
+#### 获取 Topic 列表
+```bash
+curl "http://localhost:8080/api/v1/topics?cluster_id=1" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+#### 创建 Topic
+```bash
+curl -X POST http://localhost:8080/api/v1/topics \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "description": "更新后的描述"
+    "cluster_id": 1,
+    "topic_name": "test-topic",
+    "partitions": 3,
+    "replication_factor": 1
   }'
 ```
 
-#### 删除集群
+#### 同步 Topic 数据
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/clusters/1 \
+curl -X POST http://localhost:8080/api/v1/topics/sync/1 \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+### ACL 管理 API
+
+#### 获取 ACL 列表
+```bash
+curl "http://localhost:8080/api/v1/acls?cluster_id=1" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+#### 创建 ACL 规则
+```bash
+curl -X POST http://localhost:8080/api/v1/acls \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cluster_id": 1,
+    "resource_type": "topic",
+    "resource_name": "test-topic",
+    "resource_pattern": "literal",
+    "principal": "User:test-user",
+    "host": "*",
+    "operation": "read",
+    "permission_type": "allow"
+  }'
+```
+
+#### 批量删除 ACL
+```bash
+curl -X POST http://localhost:8080/api/v1/acls/batch-delete \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"acl_ids": [1, 2, 3]}'
+```
+
+### 监控 API
+
+#### 获取集群监控指标
+```bash
+curl "http://localhost:8080/api/v1/metrics/cluster/1?start=2024-01-01T00:00:00Z&end=2024-01-01T01:00:00Z" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+#### 获取 Topic 监控指标
+```bash
+curl "http://localhost:8080/api/v1/metrics/topic/1?topic=test-topic" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+### 审计日志 API
+
+#### 查询审计日志
+```bash
+curl "http://localhost:8080/api/v1/audit-logs?page=1&page_size=20" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
 主要 API 端点：
 
+**认证**：
 - `POST /api/v1/auth/login` - 用户登录
 - `POST /api/v1/auth/refresh` - 刷新 Token
 - `GET /api/v1/auth/me` - 获取当前用户信息
+
+**用户管理**（需要超级管理员权限）：
+- `GET /api/v1/users` - 获取用户列表
+- `POST /api/v1/users` - 创建用户
+- `GET /api/v1/users/:id` - 获取用户详情
+- `PUT /api/v1/users/:id` - 更新用户
+- `DELETE /api/v1/users/:id` - 删除用户
+- `PUT /api/v1/users/:id/password` - 修改密码
+- `POST /api/v1/users/:id/disable` - 禁用用户
+- `POST /api/v1/users/:id/enable` - 启用用户
+
+**集群管理**：
 - `GET /api/v1/clusters` - 获取集群列表
 - `POST /api/v1/clusters` - 创建集群
 - `GET /api/v1/clusters/:id` - 获取集群详情
 - `PUT /api/v1/clusters/:id` - 更新集群
 - `DELETE /api/v1/clusters/:id` - 删除集群
-- `POST /api/v1/clusters/:id/grant` - 授予用户集群权限
-- `POST /api/v1/clusters/:id/revoke` - 撤销用户集群权限
+- `POST /api/v1/clusters/:id/test` - 测试连接
+- `POST /api/v1/clusters/:id/grant` - 授予用户权限
+- `POST /api/v1/clusters/:id/revoke` - 撤销用户权限
+- `GET /api/v1/clusters/:id/users` - 获取授权用户列表
+
+**Topic 管理**：
+- `GET /api/v1/topics` - 获取 Topic 列表
+- `POST /api/v1/topics` - 创建 Topic
+- `GET /api/v1/topics/:name` - 获取 Topic 详情
+- `DELETE /api/v1/topics/:name` - 删除 Topic
+- `PUT /api/v1/topics/:name/config` - 更新 Topic 配置
+- `POST /api/v1/topics/sync/:id` - 同步 Topic 数据
+
+**ACL 管理**：
+- `GET /api/v1/acls` - 获取 ACL 列表
+- `POST /api/v1/acls` - 创建 ACL
+- `DELETE /api/v1/acls/:id` - 删除 ACL
+- `POST /api/v1/acls/batch-delete` - 批量删除 ACL
+- `POST /api/v1/acls/sync/:id` - 同步 ACL 数据
+
+**监控**：
+- `GET /api/v1/metrics/cluster/:id` - 获取集群指标
+- `GET /api/v1/metrics/broker/:id` - 获取 Broker 指标
+- `GET /api/v1/metrics/topic/:id` - 获取 Topic 指标
+- `GET /api/v1/metrics/consumer-group/:id` - 获取消费组指标
+- `GET /api/v1/metrics/query/:id` - 自定义 PromQL 查询
+
+**审计日志**：
+- `GET /api/v1/audit-logs` - 查询审计日志
+- `GET /api/v1/audit-logs/export` - 导出审计日志
+
+## Web UI 使用指南
+
+### 访问前端
+
+1. 启动后端服务：
+```bash
+go run cmd/server/main.go
+```
+
+2. 启动前端开发服务器：
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+3. 打开浏览器访问 `http://localhost:5173`
+
+### 页面功能
+
+| 页面 | 路径 | 功能说明 |
+|------|------|----------|
+| 登录 | `/login` | 用户登录认证 |
+| 仪表盘 | `/dashboard` | 系统概览，显示关键指标 |
+| 集群管理 | `/clusters` | 集群列表、创建、编辑、删除、连接测试 |
+| Topic 管理 | `/topics` | Topic 列表、创建、删除、配置修改 |
+| ACL 管理 | `/acls` | ACL 规则列表、创建、删除、批量操作 |
+| 监控 | `/monitor` | 集群、Broker、Topic、消费组监控指标 |
+| 审计日志 | `/audit-logs` | 操作日志查询、过滤、导出 |
+| 用户管理 | `/users` | 用户列表、创建、编辑、禁用（需要超级管理员权限） |
+
+### 前端技术栈
+
+- **框架**：React 18 + TypeScript
+- **UI 组件**：Ant Design 5
+- **状态管理**：Redux Toolkit
+- **路由**：React Router 6
+- **HTTP 客户端**：Axios
+- **图表**：ECharts
+- **构建工具**：Vite
+
+### 前端构建
+
+```bash
+cd frontend
+npm run build
+```
+
+构建产物将输出到 `frontend/dist` 目录，可以部署到任何静态文件服务器。
 
 ## 开发指南
 
@@ -325,14 +478,43 @@ go test -cover ./...
 
 ## 部署
 
+### 环境要求
+
+- 操作系统：Linux / Windows / macOS
+- 数据库：MySQL 8.0+ 或 PostgreSQL 14+
+- Kafka 集群：2.8+（需要启用 Admin API）
+- Prometheus：2.40+（可选，用于监控功能）
+
 ### 二进制部署
 
 ```bash
-# 编译
+# 编译后端
 go build -o kafka-management-platform cmd/server/main.go
 
-# 运行
+# 编译前端
+cd frontend
+npm run build
+
+# 运行后端
 ./kafka-management-platform
+
+# 使用 Nginx 托管前端静态文件
+# nginx.conf 示例：
+# server {
+#   listen 80;
+#   server_name your-domain.com;
+#   
+#   location / {
+#     root /path/to/frontend/dist;
+#     try_files $uri $uri/ /index.html;
+#   }
+#   
+#   location /api {
+#     proxy_pass http://localhost:8080;
+#     proxy_set_header Host $host;
+#     proxy_set_header X-Real-IP $remote_addr;
+#   }
+# }
 ```
 
 ### Docker 部署
@@ -344,7 +526,12 @@ docker build -t kafka-management-platform .
 # 运行容器
 docker run -d -p 8080:8080 \
   -v $(pwd)/configs:/app/configs \
+  -e DATABASE_HOST=your-db-host \
+  -e DATABASE_PASSWORD=your-db-password \
   kafka-management-platform
+
+# 使用 docker-compose
+docker-compose up -d
 ```
 
 ### systemd 服务
@@ -354,7 +541,7 @@ docker run -d -p 8080:8080 \
 ```ini
 [Unit]
 Description=Kafka Management Platform
-After=network.target
+After=network.target mysql.service
 
 [Service]
 Type=simple
@@ -362,6 +549,7 @@ User=kafka
 WorkingDirectory=/opt/kafka-management-platform
 ExecStart=/opt/kafka-management-platform/kafka-management-platform
 Restart=on-failure
+RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
@@ -374,6 +562,24 @@ sudo systemctl daemon-reload
 sudo systemctl enable kafka-management-platform
 sudo systemctl start kafka-management-platform
 ```
+
+### 生产环境配置建议
+
+1. **安全配置**：
+   - 修改 `server.mode` 为 `release`
+   - 使用强密码和密钥
+   - 启用 HTTPS
+   - 配置防火墙规则
+
+2. **性能配置**：
+   - 调整数据库连接池大小
+   - 配置 Redis 缓存（可选）
+   - 启用 GZIP 压缩
+
+3. **监控配置**：
+   - 配置 Prometheus URL
+   - 启用日志收集
+   - 配置告警规则
 
 ## 故障排查
 
@@ -420,9 +626,30 @@ journalctl -u kafka-management-platform -f
 
 ## 更新日志
 
-### v0.1.0 (开发中)
+### v0.3.0 (当前版本)
 
-- 初始项目结构
-- 基础配置和日志模块
-- 数据库连接池
-- 路由框架
+**已完成功能**：
+- ✅ 用户认证授权（JWT + bcrypt + RBAC）
+- ✅ 多集群管理（支持 PLAINTEXT、SCRAM、Kerberos 认证）
+- ✅ Topic 管理（CRUD + 同步）
+- ✅ ACL 管理（CRUD + 批量操作 + 同步）
+- ✅ 监控服务（Prometheus 集成）
+- ✅ 审计日志（记录 + 查询 + 清理）
+- ✅ 数据同步 Worker（定时同步 Topic 和 ACL）
+- ✅ 用户管理（CRUD + 禁用/启用）
+- ✅ 前端 Web UI（React + Ant Design）
+- ✅ 敏感信息加密（AES-256-CFB）
+- ✅ API 限流和安全中间件
+
+**待完善功能**：
+- ⏳ 前端构建产物（需要 Node.js 环境）
+- ⏳ 集成测试
+- ⏳ 性能测试
+- ⏳ API 文档（Swagger）
+
+### v0.1.0 (初始版本)
+
+- ✅ 初始项目结构
+- ✅ 基础配置和日志模块
+- ✅ 数据库连接池
+- ✅ 路由框架
