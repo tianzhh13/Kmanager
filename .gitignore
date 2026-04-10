@@ -45,9 +45,10 @@ temp/
 
 # Frontend
 frontend/node_modules/
-frontend/dist/
 frontend/.env.local
 frontend/.env.production
+
+# Note: frontend/dist/ is NOT ignored - we include pre-built frontend in Git
 
 # Database
 *.db
