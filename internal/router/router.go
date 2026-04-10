@@ -162,7 +162,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				metrics.GET("/cluster/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetClusterMetrics)
 				// Broker 级别指标
 				metrics.GET("/broker/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetBrokerMetrics)
-				// Topic 级别指标
+				// Topic ��别指标
 				metrics.GET("/topic/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetTopicMetrics)
 				// 消费组指标
 				metrics.GET("/consumer-group/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetConsumerGroupMetrics)
@@ -179,6 +179,49 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			}
 		}
 	}
+
+	// 静态资源服务 - 服务前端构建产物
+	// 配置前端构建产物的目录路径
+	frontendDistPath := "./frontend/dist"
+	
+	// 静态资源目录（JS、CSS 等）
+	r.Static("/assets", frontendDistPath+"/assets")
+	
+	// 其他静态资源文件
+	r.StaticFile("/vite.svg", frontendDistPath+"/vite.svg")
+	
+	// SPA fallback - 所有非 API 路由返回 index.html
+	// 这支持前端路由（如 /clusters, /topics 等）在刷新时能正常工作
+	r.NoRoute(func(c *gin.Context) {
+		path := c.Request.URL.Path
+		// 如果是 API 请求但路由不存在，返回 404 JSON 响应
+		if len(path) >= 4 && path[:4] == "/api" {
+			c.JSON(404, gin.H{
+				"code":    404,
+				"message": "API endpoint not found",
+			})
+			return
+		}
+		// 如果请求的是静态资源文件（有扩展名），返回 404
+		// 这样可以避免对不存在的静态资源返回 index.html
+		if len(path) > 1 {
+			for i := len(path) - 1; i >= 0; i-- {
+				if path[i] == '.' {
+					// 有文件扩展名，可能是静态资源请求
+					c.JSON(404, gin.H{
+						"code":    404,
+						"message": "resource not found",
+					})
+					return
+				}
+				if path[i] == '/' {
+					break
+				}
+			}
+		}
+		// 其他请求返回 index.html（SPA 路由）
+		c.File(frontendDistPath + "/index.html")
+	})
 
 	return r
 }

@@ -40,7 +40,7 @@ export const login = createAsyncThunk<LoginResponse, LoginRequest>(
 
 export const refreshToken = createAsyncThunk(
   'auth/refreshToken',
-  async (_, { getState, rejectWithValue }) => {
+  async (_, { rejectWithValue }) => {
     try {
       const refresh_token = localStorage.getItem('refresh_token')
       if (!refresh_token) {

@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Form, Input, Button, Card, message } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
@@ -9,7 +8,7 @@ const Login: React.FC = () => {
   const [form] = Form.useForm()
   const navigate = useNavigate()
   const dispatch = useAppDispatch()
-  const { loading, error } = useAppSelector((state) => state.auth)
+  const { loading } = useAppSelector((state) => state.auth)
 
   const handleSubmit = async (values: { username: string; password: string }) => {
     dispatch(clearError())

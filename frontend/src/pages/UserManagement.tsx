@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Table, Button, Space, Modal, Form, Input, Select, Tag, message } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, StopOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, StopOutlined } from '@ant-design/icons'
 
 const UserManagement: React.FC = () => {
   const [loading] = useState(false)

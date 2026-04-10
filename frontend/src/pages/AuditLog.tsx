@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Card, Table, Select, Input, DatePicker, Button, Space, Tag, message, Modal } from 'antd'
-import { DownloadOutlined, SearchOutlined, EyeOutlined } from '@ant-design/icons'
+import { DownloadOutlined, EyeOutlined } from '@ant-design/icons'
 import { auditLogAPI } from '../services/auditLog'
 import type { ColumnsType } from 'antd/es/table'
 
@@ -62,8 +62,8 @@ const AuditLogPage: React.FC = () => {
       }
 
       const res = await auditLogAPI.list(params)
-      setLogs(res.data || [])
-      setTotal(res.total || 0)
+      setLogs(res.data.data || [])
+      setTotal(res.data.total || 0)
     } catch (error) {
       message.error('加载审计日志失败')
     } finally {
