@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"kafka-management-platform/internal/models"
 	"kafka-management-platform/pkg/jwt"
 
 	"github.com/gin-gonic/gin"
@@ -75,7 +76,14 @@ func GetUsername(c *gin.Context) string {
 // GetUserRole 获取当前用户角色
 func GetUserRole(c *gin.Context) string {
 	if v, exists := c.Get(ContextKeyUserRole); exists {
-		return v.(string)
+		// 处理 models.UserRole 类型
+		if role, ok := v.(models.UserRole); ok {
+			return string(role)
+		}
+		// 兼容 string 类型
+		if role, ok := v.(string); ok {
+			return role
+		}
 	}
 	return ""
 }

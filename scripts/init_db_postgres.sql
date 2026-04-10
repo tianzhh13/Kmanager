@@ -27,8 +27,10 @@ CREATE TABLE IF NOT EXISTS cluster (
     cluster_id BIGSERIAL PRIMARY KEY,
     cluster_name VARCHAR(128) NOT NULL,
     bootstrap_servers TEXT NOT NULL,
-    auth_type VARCHAR(32) NOT NULL,
+    auth_type VARCHAR(32) NOT NULL DEFAULT 'none',
     auth_config TEXT,
+    jmx_host VARCHAR(128),
+    jmx_port INTEGER,
     prometheus_url VARCHAR(256),
     status VARCHAR(32) NOT NULL DEFAULT 'active',
     description TEXT,
@@ -139,8 +141,8 @@ CREATE TRIGGER update_topic_updated_at BEFORE UPDATE ON topic
 
 -- 插入默认超级管理员用户
 -- 密码: admin123 (使用 bcrypt 加密，cost=12)
-INSERT INTO "user" (username, password_hash, email, role, status)
-VALUES ('admin', '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYIpSVeu1Iu', 'admin@example.com', 'super_admin', 'active')
+INSERT INTO "user" (username, password_hash, email, role, status, created_at, updated_at)
+VALUES ('admin', '$2a$12$gwA7cH9WHrSvaY37au5KaOuqgi5gLCo258.eqmq4tRyHQL7eT.T7q', 'admin@example.com', 'super_admin', 'active', NOW(), NOW())
 ON CONFLICT (username) DO NOTHING;
 
 -- 完成

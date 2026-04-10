@@ -1,20 +1,78 @@
-import { useState } from 'react'
-import { Table, Button, Space, Modal, Form, Input, Select, Tag, message } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, StopOutlined } from '@ant-design/icons'
+import { useState, useEffect } from 'react'
+import { Table, Button, Space, Modal, Form, Input, Select, Tag, message, Popconfirm } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, StopOutlined, CheckOutlined } from '@ant-design/icons'
+import api from '../services/api'
+
+interface User {
+  id: number
+  username: string
+  email: string
+  role: string
+  status: string
+  created_at: string
+}
 
 const UserManagement: React.FC = () => {
-  const [loading] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [isModalVisible, setIsModalVisible] = useState(false)
+  const [users, setUsers] = useState<User[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const [form] = Form.useForm()
+
+  useEffect(() => {
+    fetchUsers()
+  }, [page, pageSize])
+
+  const fetchUsers = async () => {
+    setLoading(true)
+    try {
+      const response = await api.get('/users', { params: { page, page_size: pageSize } })
+      setUsers(response.data.data || [])
+      setTotal(response.data.total || 0)
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '获取用户列表失败')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const handleCreate = async () => {
     try {
-      await form.validateFields()
+      const values = await form.validateFields()
+      await api.post('/users', values)
       message.success('创建成功')
       setIsModalVisible(false)
       form.resetFields()
-    } catch (error) {
-      // validation failed
+      fetchUsers()
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '创建失败')
+    }
+  }
+
+  const handleDelete = async (userId: number) => {
+    try {
+      await api.delete(`/users/${userId}`)
+      message.success('删除成功')
+      fetchUsers()
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '删除失败')
+    }
+  }
+
+  const handleToggleStatus = async (userId: number, currentStatus: string) => {
+    try {
+      if (currentStatus === 'active') {
+        await api.put(`/users/${userId}/disable`)
+        message.success('已禁用用户')
+      } else {
+        await api.put(`/users/${userId}/enable`)
+        message.success('已启用用户')
+      }
+      fetchUsers()
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '操作失败')
     }
   }
 
