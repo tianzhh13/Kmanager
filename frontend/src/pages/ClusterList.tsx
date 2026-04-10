@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Table, Button, Space, Modal, Form, Input, Select, message, Tag } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, SyncOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchClusters, createCluster, testClusterConnection } from '../store/slices/clusterSlice'
 

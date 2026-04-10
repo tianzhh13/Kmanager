@@ -57,7 +57,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       label: user?.username || '用户',
     },
     {
-      type: 'divider',
+      key: 'divider',
+      type: 'divider' as const,
     },
     {
       key: 'logout',

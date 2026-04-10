@@ -6,7 +6,7 @@ import { getACLs, createACL, deleteACL } from '../services/acl'
 const ACLList: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [acls, setAcls] = useState<any[]>([])
-  const [clusters, setClusters] = useState<any[]>([])
+  const [clusters] = useState<any[]>([])
   const [modalVisible, setModalVisible] = useState(false)
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [form] = Form.useForm()

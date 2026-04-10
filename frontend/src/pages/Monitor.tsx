@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import { Card, Row, Col, Select, DatePicker, Spin, message, Statistic, Table, Tabs, Space } from 'antd'
-import { Line } from '@ant-design/charts'
 import { clusterAPI } from '../services/cluster'
 import { metricsAPI } from '../services/metrics'
 import type { ColumnsType } from 'antd/es/table'
@@ -94,22 +93,22 @@ const Monitor: React.FC = () => {
       // 并行加载各类指标
       const [clusterRes, brokerRes, topicRes, consumerRes] = await Promise.allSettled([
         metricsAPI.getClusterMetrics(selectedCluster, params),
-        metricsAPI.getBrokerMetrics(selectedCluster, params),
-        metricsAPI.getTopicMetrics(selectedCluster, params),
-        metricsAPI.getConsumerGroupMetrics(selectedCluster, params)
+        metricsAPI.getBrokerMetrics(selectedCluster, { ...params, host: '' }),
+        metricsAPI.getTopicMetrics(selectedCluster, { ...params, topic: '' }),
+        metricsAPI.getConsumerGroupMetrics(selectedCluster, { ...params, group: '' })
       ])
 
       if (clusterRes.status === 'fulfilled') {
         setClusterMetrics(clusterRes.value.data)
       }
       if (brokerRes.status === 'fulfilled') {
-        setBrokerMetrics(brokerRes.value.data || [])
+        setBrokerMetrics([brokerRes.value.data])
       }
       if (topicRes.status === 'fulfilled') {
-        setTopicMetrics(topicRes.value.data || [])
+        setTopicMetrics([topicRes.value.data])
       }
       if (consumerRes.status === 'fulfilled') {
-        setConsumerGroupMetrics(consumerRes.value.data || [])
+        setConsumerGroupMetrics([consumerRes.value.data])
       }
     } catch (error) {
       message.error('加载监控数据失败')

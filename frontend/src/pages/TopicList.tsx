@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Space, Modal, Form, Input, Select, InputNumber, message, Tag } from 'antd'
+import { Table, Button, Space, Modal, Form, Input, Select, InputNumber, message } from 'antd'
 import { PlusOutlined, DeleteOutlined, SyncOutlined } from '@ant-design/icons'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchTopics, createTopic, deleteTopic } from '../store/slices/topicSlice'

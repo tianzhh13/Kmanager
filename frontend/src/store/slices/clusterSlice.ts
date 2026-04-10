@@ -82,7 +82,7 @@ const clusterSlice = createSlice({
         state.clusters.unshift(action.payload)
         state.total += 1
       })
-      .addCase(testClusterConnection.fulfilled, (state) => {
+      .addCase(testClusterConnection.fulfilled, () => {
         // Connection test passed
       })
   },
