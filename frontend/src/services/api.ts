@@ -1,7 +1,12 @@
 import axios from 'axios'
 
+// 简单的baseURL配置
+// 开发环境：Vite代理到 localhost:18080
+// 生产环境：前端和后端在同一域名下，使用相对路径
+const baseURL = import.meta.env.DEV ? '/api/v1' : '/api/v1'
+
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL,
   timeout: 30000,
 })
 

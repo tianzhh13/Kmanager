@@ -15,6 +15,8 @@ import (
 var (
 	// ErrClusterNameExists 集群名称已存在
 	ErrClusterNameExists = errors.New("cluster name already exists")
+	// ErrConnectionTestFailed 连接测试失败
+	ErrConnectionTestFailed = errors.New("connection test failed")
 )
 
 // Service 集群管理服务
@@ -60,6 +62,7 @@ type UpdateClusterRequest struct {
 }
 
 // CreateCluster 创建集群
+// 在创建前会先测试 Kafka 集群连接，只有连接成功才会保存集群配置
 func (s *Service) CreateCluster(ctx context.Context, req *CreateClusterRequest) (*models.Cluster, error) {
 	// 检查集群名称是否已存在
 	existing, err := s.clusterRepo.FindByName(ctx, req.ClusterName)
@@ -67,16 +70,33 @@ func (s *Service) CreateCluster(ctx context.Context, req *CreateClusterRequest) 
 		return nil, ErrClusterNameExists
 	}
 
-	// 加密认证配置
-	var authConfigEncrypted string
+	// 准备认证配置 JSON
+	var authConfigJSON string
 	if req.AuthConfig != nil && len(req.AuthConfig) > 0 {
-		authConfigJSON, err := json.Marshal(req.AuthConfig)
+		jsonBytes, err := json.Marshal(req.AuthConfig)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to marshal auth config: %w", err)
 		}
-		authConfigEncrypted, err = s.encryptionSvc.EncryptString(string(authConfigJSON))
+		authConfigJSON = string(jsonBytes)
+	}
+
+	// 创建临时集群对象用于测试连接
+	tempCluster := &models.Cluster{
+		BootstrapServers: req.BootstrapServers,
+		AuthType:         req.AuthType,
+	}
+
+	// 测试 Kafka 集群连接
+	if err := s.testKafkaConnection(tempCluster, authConfigJSON); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrConnectionTestFailed, err)
+	}
+
+	// 连接测试成功，加密认证配置
+	var authConfigEncrypted string
+	if authConfigJSON != "" {
+		authConfigEncrypted, err = s.encryptionSvc.EncryptString(authConfigJSON)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to encrypt auth config: %w", err)
 		}
 	}
 
@@ -100,6 +120,7 @@ func (s *Service) CreateCluster(ctx context.Context, req *CreateClusterRequest) 
 }
 
 // UpdateCluster 更新集群
+// 在更新前会先测试 Kafka 集群连接，只有连接成功才会更新集群配置
 func (s *Service) UpdateCluster(ctx context.Context, clusterID int64, req *UpdateClusterRequest) error {
 	// 获取现有集群
 	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
@@ -127,15 +148,33 @@ func (s *Service) UpdateCluster(ctx context.Context, clusterID int64, req *Updat
 		cluster.Status = req.Status
 	}
 
-	// 如果有新的认证配置，重新加密
+	// 准备认证配置用于测试连接
+	var authConfigJSON string
 	if req.AuthConfig != nil && len(req.AuthConfig) > 0 {
-		authConfigJSON, err := json.Marshal(req.AuthConfig)
+		authConfigBytes, err := json.Marshal(req.AuthConfig)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to marshal auth config: %w", err)
 		}
-		authConfigEncrypted, err := s.encryptionSvc.EncryptString(string(authConfigJSON))
+		authConfigJSON = string(authConfigBytes)
+	} else if cluster.AuthConfig != "" {
+		// 使用现有的认证配置
+		decrypted, err := s.encryptionSvc.DecryptString(cluster.AuthConfig)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to decrypt auth config: %w", err)
+		}
+		authConfigJSON = decrypted
+	}
+
+	// 测试 Kafka 集群连接
+	if err := s.testKafkaConnection(cluster, authConfigJSON); err != nil {
+		return fmt.Errorf("%w: %v", ErrConnectionTestFailed, err)
+	}
+
+	// 连接测试成功，加密认证配置
+	if req.AuthConfig != nil && len(req.AuthConfig) > 0 {
+		authConfigEncrypted, err := s.encryptionSvc.EncryptString(authConfigJSON)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt auth config: %w", err)
 		}
 		cluster.AuthConfig = authConfigEncrypted
 	}
@@ -211,17 +250,59 @@ func (s *Service) TestConnection(ctx context.Context, clusterID int64) error {
 		authConfigJSON = decrypted
 	}
 	
+	return s.testKafkaConnection(cluster, authConfigJSON)
+}
+
+// TestConnectionForCreate 在创建集群前测试连接配置
+// 用于前端在提交创建请求前验证连接
+func (s *Service) TestConnectionForCreate(ctx context.Context, req *CreateClusterRequest) error {
+	// 调试日志：打印请求参数
+	fmt.Printf("[DEBUG] TestConnectionForCreate - ClusterName: %s\n", req.ClusterName)
+	fmt.Printf("[DEBUG] TestConnectionForCreate - BootstrapServers: %s\n", req.BootstrapServers)
+	fmt.Printf("[DEBUG] TestConnectionForCreate - AuthType: %s\n", req.AuthType)
+	fmt.Printf("[DEBUG] TestConnectionForCreate - AuthConfig: %+v\n", req.AuthConfig)
+	
+	// 准备认证配置 JSON
+	var authConfigJSON string
+	if req.AuthConfig != nil && len(req.AuthConfig) > 0 {
+		jsonBytes, err := json.Marshal(req.AuthConfig)
+		if err != nil {
+			return fmt.Errorf("failed to marshal auth config: %w", err)
+		}
+		authConfigJSON = string(jsonBytes)
+		fmt.Printf("[DEBUG] TestConnectionForCreate - AuthConfigJSON: %s\n", authConfigJSON)
+	}
+
+	// 创建临时集群对象用于测试连接
+	tempCluster := &models.Cluster{
+		BootstrapServers: req.BootstrapServers,
+		AuthType:         req.AuthType,
+	}
+
+	return s.testKafkaConnection(tempCluster, authConfigJSON)
+}
+
+// testKafkaConnection 测试 Kafka 集群连接的内部方法
+func (s *Service) testKafkaConnection(cluster *models.Cluster, authConfigJSON string) error {
+	// 调试日志：打印连接参数
+	fmt.Printf("[DEBUG] testKafkaConnection - BootstrapServers: %s\n", cluster.BootstrapServers)
+	fmt.Printf("[DEBUG] testKafkaConnection - AuthType: %s\n", cluster.AuthType)
+	fmt.Printf("[DEBUG] testKafkaConnection - AuthConfigJSON: %s\n", authConfigJSON)
+	
 	// 创建 Kafka Admin 客户端
 	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
 	if err != nil {
+		fmt.Printf("[DEBUG] Failed to create kafka admin client: %v\n", err)
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
 	defer adminClient.Close()
 	
 	// 测试连接
 	if err := adminClient.TestConnection(); err != nil {
+		fmt.Printf("[DEBUG] Connection test failed: %v\n", err)
 		return fmt.Errorf("connection test failed: %w", err)
 	}
 	
+	fmt.Printf("[DEBUG] Connection test successful\n")
 	return nil
 }

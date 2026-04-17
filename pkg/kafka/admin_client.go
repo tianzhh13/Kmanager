@@ -30,24 +30,24 @@ type AdminClient struct {
 func NewAdminClient(cluster *models.Cluster, authConfigJSON string) (*AdminClient, error) {
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_8_0_0
-	
+
 	// 配置认证方式
 	if err := configureAuth(config, cluster.AuthType, authConfigJSON); err != nil {
 		return nil, fmt.Errorf("failed to configure auth: %w", err)
 	}
-	
+
 	// 解析 Bootstrap Servers
 	brokers := strings.Split(cluster.BootstrapServers, ",")
 	for i, broker := range brokers {
 		brokers[i] = strings.TrimSpace(broker)
 	}
-	
+
 	// 创建 Admin 客户端
 	admin, err := sarama.NewClusterAdmin(brokers, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cluster admin: %w", err)
 	}
-	
+
 	return &AdminClient{admin: admin}, nil
 }
 
@@ -97,19 +97,128 @@ func (c *AdminClient) Close() error {
 	return c.admin.Close()
 }
 
+// CreateUser 创建 SCRAM 用户
+func (c *AdminClient) CreateUser(username, password string, mechanism string) error {
+	var iterations int32 = 8192
+	var salt []byte = nil // 让 Kafka 自动生成 salt
+
+	var scramMechanism sarama.ScramMechanismType
+	switch mechanism {
+	case "SCRAM-SHA-256":
+		scramMechanism = sarama.SCRAM_MECHANISM_SHA_256
+	case "SCRAM-SHA-512":
+		scramMechanism = sarama.SCRAM_MECHANISM_SHA_512
+	default:
+		scramMechanism = sarama.SCRAM_MECHANISM_SHA_256
+	}
+
+	upsert := []sarama.AlterUserScramCredentialsUpsert{
+		{
+			Name:       username,
+			Iterations: iterations,
+			Salt:       salt,
+			Password:   []byte(password),
+			Mechanism:  scramMechanism,
+		},
+	}
+
+	results, err := c.admin.UpsertUserScramCredentials(upsert)
+	if err != nil {
+		return err
+	}
+
+	if len(results) > 0 && results[0].ErrorCode != 0 {
+		errMsg := "unknown error"
+		if results[0].ErrorMessage != nil {
+			errMsg = *results[0].ErrorMessage
+		}
+		return fmt.Errorf("failed to create user: %s", errMsg)
+	}
+
+	return nil
+}
+
+// DeleteUser 删除 SCRAM 用户
+func (c *AdminClient) DeleteUser(username string, mechanism string) error {
+	var scramMechanism sarama.ScramMechanismType
+	switch mechanism {
+	case "SCRAM-SHA-256":
+		scramMechanism = sarama.SCRAM_MECHANISM_SHA_256
+	case "SCRAM-SHA-512":
+		scramMechanism = sarama.SCRAM_MECHANISM_SHA_512
+	default:
+		scramMechanism = sarama.SCRAM_MECHANISM_SHA_256
+	}
+
+	deletions := []sarama.AlterUserScramCredentialsDelete{
+		{
+			Name:      username,
+			Mechanism: scramMechanism,
+		},
+	}
+
+	results, err := c.admin.DeleteUserScramCredentials(deletions)
+	if err != nil {
+		return err
+	}
+
+	if len(results) > 0 && results[0].ErrorCode != 0 {
+		errMsg := "unknown error"
+		if results[0].ErrorMessage != nil {
+			errMsg = *results[0].ErrorMessage
+		}
+		return fmt.Errorf("failed to delete user: %s", errMsg)
+	}
+
+	return nil
+}
+
+// ListUsers 列出所有 SCRAM 用户
+func (c *AdminClient) ListUsers() ([]*sarama.DescribeUserScramCredentialsResult, error) {
+	// 传入空数组表示列出所有用户
+	results, err := c.admin.DescribeUserScramCredentials(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+// DescribeUser 获取用户详情
+func (c *AdminClient) DescribeUser(username string) (*sarama.DescribeUserScramCredentialsResult, error) {
+	results, err := c.admin.DescribeUserScramCredentials([]string{username})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(results) == 0 {
+		return nil, fmt.Errorf("user not found: %s", username)
+	}
+
+	if results[0].ErrorCode != 0 {
+		errMsg := "unknown error"
+		if results[0].ErrorMessage != nil {
+			errMsg = *results[0].ErrorMessage
+		}
+		return nil, fmt.Errorf("error describing user: %s", errMsg)
+	}
+
+	return results[0], nil
+}
+
 // configureAuth 配置 Kafka 认证方式
 func configureAuth(config *sarama.Config, authType models.AuthType, authConfigJSON string) error {
 	switch authType {
 	case models.AuthTypePlaintext:
 		// PLAINTEXT 无需额外配置
 		return nil
-		
+
 	case models.AuthTypeSCRAM:
 		return configureSCRAM(config, authConfigJSON)
-		
+
 	case models.AuthTypeKerberos:
 		return configureKerberos(config, authConfigJSON)
-		
+
 	default:
 		return ErrUnsupportedAuthType
 	}
@@ -120,31 +229,38 @@ func configureSCRAM(config *sarama.Config, authConfigJSON string) error {
 	if authConfigJSON == "" {
 		return ErrInvalidAuthConfig
 	}
-	
+
 	var authConfig map[string]interface{}
 	if err := json.Unmarshal([]byte(authConfigJSON), &authConfig); err != nil {
 		return fmt.Errorf("failed to parse auth config: %w", err)
 	}
-	
+
 	username, ok := authConfig["username"].(string)
 	if !ok || username == "" {
 		return fmt.Errorf("%w: missing username", ErrInvalidAuthConfig)
 	}
-	
+
 	password, ok := authConfig["password"].(string)
 	if !ok || password == "" {
 		return fmt.Errorf("%w: missing password", ErrInvalidAuthConfig)
 	}
-	
+
 	mechanism := "SCRAM-SHA-256"
 	if m, ok := authConfig["mechanism"].(string); ok && m != "" {
 		mechanism = m
 	}
-	
+
+	// 安全协议，默认为 SASL_SSL
+	// 支持: SASL_SSL, SASL_PLAINTEXT, SSL, PLAINTEXT
+	securityProtocol := "SASL_SSL"
+	if sp, ok := authConfig["security_protocol"].(string); ok && sp != "" {
+		securityProtocol = strings.ToUpper(sp)
+	}
+
 	config.Net.SASL.Enable = true
 	config.Net.SASL.User = username
 	config.Net.SASL.Password = password
-	
+
 	switch mechanism {
 	case "SCRAM-SHA-256":
 		config.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA256
@@ -159,13 +275,36 @@ func configureSCRAM(config *sarama.Config, authConfigJSON string) error {
 	default:
 		return fmt.Errorf("%w: unsupported SCRAM mechanism: %s", ErrInvalidAuthConfig, mechanism)
 	}
-	
-	// 启用 TLS（SCRAM 通常需要 TLS）
-	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tls.Config{
-		InsecureSkipVerify: false,
+
+	// 根据安全协议配置 TLS
+	switch securityProtocol {
+	case "SASL_SSL":
+		// SASL over TLS
+		config.Net.TLS.Enable = true
+		config.Net.TLS.Config = &tls.Config{
+			InsecureSkipVerify: false,
+		}
+	case "SASL_PLAINTEXT":
+		// SASL over 明文传输（不启用 TLS）
+		config.Net.TLS.Enable = false
+	case "SSL":
+		// 仅 TLS（无 SASL）
+		config.Net.TLS.Enable = true
+		config.Net.TLS.Config = &tls.Config{
+			InsecureSkipVerify: false,
+		}
+	case "PLAINTEXT":
+		// 明文传输（无 TLS，无 SASL）
+		config.Net.TLS.Enable = false
+		config.Net.SASL.Enable = false
+	default:
+		// 默认使用 SASL_SSL
+		config.Net.TLS.Enable = true
+		config.Net.TLS.Config = &tls.Config{
+			InsecureSkipVerify: false,
+		}
 	}
-	
+
 	return nil
 }
 
@@ -174,32 +313,32 @@ func configureKerberos(config *sarama.Config, authConfigJSON string) error {
 	if authConfigJSON == "" {
 		return ErrInvalidAuthConfig
 	}
-	
+
 	var authConfig map[string]interface{}
 	if err := json.Unmarshal([]byte(authConfigJSON), &authConfig); err != nil {
 		return fmt.Errorf("failed to parse auth config: %w", err)
 	}
-	
+
 	principal, ok := authConfig["principal"].(string)
 	if !ok || principal == "" {
 		return fmt.Errorf("%w: missing principal", ErrInvalidAuthConfig)
 	}
-	
+
 	keytab, ok := authConfig["keytab"].(string)
 	if !ok || keytab == "" {
 		return fmt.Errorf("%w: missing keytab", ErrInvalidAuthConfig)
 	}
-	
+
 	realm, ok := authConfig["realm"].(string)
 	if !ok || realm == "" {
 		return fmt.Errorf("%w: missing realm", ErrInvalidAuthConfig)
 	}
-	
+
 	serviceName := "kafka"
 	if sn, ok := authConfig["service_name"].(string); ok && sn != "" {
 		serviceName = sn
 	}
-	
+
 	config.Net.SASL.Enable = true
 	config.Net.SASL.Mechanism = sarama.SASLTypeGSSAPI
 	config.Net.SASL.GSSAPI.ServiceName = serviceName
@@ -208,7 +347,7 @@ func configureKerberos(config *sarama.Config, authConfigJSON string) error {
 	config.Net.SASL.GSSAPI.Username = principal
 	config.Net.SASL.GSSAPI.AuthType = sarama.KRB5_KEYTAB_AUTH
 	config.Net.SASL.GSSAPI.KeyTabPath = keytab
-	
+
 	return nil
 }
 

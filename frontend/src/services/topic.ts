@@ -37,12 +37,15 @@ export const topicService = {
   },
 
   create: async (data: CreateTopicRequest): Promise<Topic> => {
+    console.log('=== DEBUG: topicService.create called with ===', JSON.stringify(data, null, 2))
     const response = await api.post('/topics', data)
     return response.data
   },
 
-  delete: async (topicName: string): Promise<void> => {
-    await api.delete(`/topics/${encodeURIComponent(topicName)}`)
+  delete: async (topicName: string, clusterId: number): Promise<void> => {
+    await api.delete(`/topics/${encodeURIComponent(topicName)}`, {
+      params: { cluster_id: clusterId }
+    })
   },
 
   updateConfig: async (topicName: string, data: UpdateTopicConfigRequest): Promise<void> => {
@@ -50,6 +53,9 @@ export const topicService = {
   },
 
   sync: async (clusterId: number): Promise<void> => {
-    await api.post(`/topics/sync/${clusterId}`)
+    console.log('=== DEBUG: topicService.sync called, clusterId ===', clusterId)
+    const response = await api.post(`/topics/sync/${clusterId}`)
+    console.log('=== DEBUG: sync response ===', response)
+    return response.data
   },
 }

@@ -104,11 +104,23 @@ const UserManagement: React.FC = () => {
     },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at' },
     { title: '操作', key: 'action', width: 200,
-      render: () => (
+      render: (_: any, record: User) => (
         <Space>
           <Button type="link" icon={<EditOutlined />}>编辑</Button>
-          <Button type="link" icon={<StopOutlined />}>禁用</Button>
-          <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+          <Popconfirm
+            title={record.status === 'active' ? '确定要禁用该用户吗？' : '确定要启用该用户吗？'}
+            onConfirm={() => handleToggleStatus(record.id, record.status)}
+          >
+            <Button type="link" icon={record.status === 'active' ? <StopOutlined /> : <CheckOutlined />}>
+              {record.status === 'active' ? '禁用' : '启用'}
+            </Button>
+          </Popconfirm>
+          <Popconfirm
+            title="确定要删除该用户吗？"
+            onConfirm={() => handleDelete(record.id)}
+          >
+            <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+          </Popconfirm>
         </Space>
       )
     },
@@ -125,10 +137,15 @@ const UserManagement: React.FC = () => {
 
       <Table
         columns={columns}
-        dataSource={[]}
+        dataSource={users}
         rowKey="id"
         loading={loading}
-        pagination={{ pageSize: 20 }}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          onChange: (p, ps) => { setPage(p); setPageSize(ps) },
+        }}
         locale={{ emptyText: '暂无用户数据' }}
       />
 

@@ -202,3 +202,19 @@ func (h *ClusterHandler) TestConnection(c *gin.Context) {
 
 	c.JSON(200, gin.H{"message": "connection test successful"})
 }
+
+// TestConnectionForCreate 在创建集群前测试连接配置
+func (h *ClusterHandler) TestConnectionForCreate(c *gin.Context) {
+	var req cluster.CreateClusterRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid request: " + err.Error()})
+		return
+	}
+
+	if err := h.clusterSvc.TestConnectionForCreate(c.Request.Context(), &req); err != nil {
+		c.JSON(400, gin.H{"error": "connection test failed", "details": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "connection test successful"})
+}

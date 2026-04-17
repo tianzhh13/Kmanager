@@ -120,6 +120,21 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_cluster_id ON audit_log(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_status ON audit_log(status);
 
+-- SCRAM 用户表
+CREATE TABLE IF NOT EXISTS scram_users (
+    user_id BIGSERIAL PRIMARY KEY,
+    cluster_id BIGINT NOT NULL,
+    username VARCHAR(256) NOT NULL,
+    mechanism VARCHAR(32) NOT NULL DEFAULT 'SCRAM-SHA-256',
+    sync_status VARCHAR(32) DEFAULT 'synced',
+    last_sync_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (cluster_id, username)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scram_users_cluster_id ON scram_users(cluster_id);
+
 -- 创建更新时间触发器函数
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -137,6 +152,9 @@ CREATE TRIGGER update_cluster_updated_at BEFORE UPDATE ON cluster
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_topic_updated_at BEFORE UPDATE ON topic
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_scram_users_updated_at BEFORE UPDATE ON scram_users
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- 插入默认超级管理员用户

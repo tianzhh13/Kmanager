@@ -1,6 +1,9 @@
 package middleware
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"sync"
@@ -56,8 +59,17 @@ func (c *ClusterPermissionMiddlewareWrapper) RequireClusterAccess() gin.HandlerF
 	return func(ctx *gin.Context) {
 		userID := GetUserID(ctx)
 		userRole := GetUserRole(ctx)
-		clusterIDStr := ctx.Param("id")
+		var clusterIDStr string
 
+		// 1. 先从 URL 路径参数获取
+		clusterIDStr = ctx.Param("id")
+
+		// 2. 尝试从查询参数获取
+		if clusterIDStr == "" {
+			clusterIDStr = ctx.Query("cluster_id")
+		}
+
+		// 如果没有 cluster_id，直接放行（由 handler 处理）
 		if clusterIDStr == "" {
 			ctx.Next()
 			return
@@ -96,11 +108,32 @@ func (c *ClusterPermissionMiddlewareWrapper) RequireClusterWriteAccess() gin.Han
 	return func(ctx *gin.Context) {
 		userID := GetUserID(ctx)
 		userRole := GetUserRole(ctx)
-		clusterIDStr := ctx.Param("id")
+		var clusterIDStr string
 
+		// 1. 先从 URL 路径参数获取
+		clusterIDStr = ctx.Param("id")
+
+		// 2. 尝试从查询参数获取
 		if clusterIDStr == "" {
-			// 尝试从查询参数获取 cluster_id
 			clusterIDStr = ctx.Query("cluster_id")
+		}
+
+		// 3. 尝试从请求体获取 cluster_id
+		if clusterIDStr == "" && ctx.Request.Body != nil {
+			// 读取请求体
+			bodyBytes, err := io.ReadAll(ctx.Request.Body)
+			if err == nil && len(bodyBytes) > 0 {
+				// 恢复请求体供后续使用
+				ctx.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+				// 解析 JSON 获取 cluster_id
+				var body struct {
+					ClusterID int64 `json:"cluster_id"`
+				}
+				if err := json.Unmarshal(bodyBytes, &body); err == nil && body.ClusterID > 0 {
+					clusterIDStr = strconv.FormatInt(body.ClusterID, 10)
+				}
+			}
 		}
 
 		if clusterIDStr == "" {
