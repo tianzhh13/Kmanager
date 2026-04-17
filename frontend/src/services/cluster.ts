@@ -1,10 +1,11 @@
 import api from './api'
 
 export interface Cluster {
-  id: number
+  cluster_id: number
   cluster_name: string
   bootstrap_servers: string
   auth_type: string
+  auth_config?: string
   prometheus_url: string
   description: string
   status: string
@@ -60,6 +61,10 @@ export const clusterAPI = {
 
   testConnection: async (id: number): Promise<void> => {
     await api.post(`/clusters/${id}/test`)
+  },
+
+  testConnectionForCreate: async (data: CreateClusterRequest): Promise<void> => {
+    await api.post('/clusters/test-connection', data)
   },
 
   grantAccess: async (id: number, userId: number): Promise<void> => {

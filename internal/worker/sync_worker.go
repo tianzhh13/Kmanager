@@ -395,11 +395,6 @@ func (w *SyncWorker) StartLogCleanup(retentionDays int) (int64, error) {
 
 // getAdminClient 获取或创建 Admin Client
 func (w *SyncWorker) getAdminClient(cluster *models.Cluster) (*kafka.AdminClient, error) {
-	// 先从池中获取
-	if client, exists := w.adminClientPool.Load(cluster.ClusterID); exists {
-		return client.(*kafka.AdminClient), nil
-	}
-
 	// 解密认证配置
 	authConfigJSON := cluster.AuthConfig
 	if w.encryptSvc != nil && authConfigJSON != "" {
@@ -409,6 +404,19 @@ func (w *SyncWorker) getAdminClient(cluster *models.Cluster) (*kafka.AdminClient
 		} else {
 			authConfigJSON = string(decrypted)
 		}
+	}
+
+	// 先从池中获取
+	if client, exists := w.adminClientPool.Load(cluster.ClusterID); exists {
+		adminClient := client.(*kafka.AdminClient)
+		// 测试连接是否有效
+		if err := adminClient.TestConnection(); err == nil {
+			return adminClient, nil
+		}
+		// 连接失效，关闭旧连接并从池中移除
+		log.Printf("Admin client for cluster %d is stale, recreating...", cluster.ClusterID)
+		adminClient.Close()
+		w.adminClientPool.Delete(cluster.ClusterID)
 	}
 
 	// 创建新的 Admin Client

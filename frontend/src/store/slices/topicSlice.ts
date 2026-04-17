@@ -43,10 +43,10 @@ export const createTopic = createAsyncThunk(
 
 export const deleteTopic = createAsyncThunk(
   'topics/deleteTopic',
-  async (topicName: string, { rejectWithValue }) => {
+  async (params: { topicName: string; clusterId: number }, { rejectWithValue }) => {
     try {
-      await topicService.delete(topicName)
-      return topicName
+      await topicService.delete(params.topicName, params.clusterId)
+      return params.topicName
     } catch (error: any) {
       return rejectWithValue(error.response?.data?.error || '删除 Topic 失败')
     }
@@ -78,9 +78,8 @@ const topicSlice = createSlice({
         state.loading = false
         state.error = action.payload as string
       })
-      .addCase(createTopic.fulfilled, (state, action) => {
-        state.topics.unshift(action.payload)
-        state.total += 1
+      .addCase(createTopic.fulfilled, (_state) => {
+        // 创建成功后由页面重新获取列表，这里不需要处理
       })
       .addCase(deleteTopic.fulfilled, (state, action) => {
         state.topics = state.topics.filter(t => t.topic_name !== action.payload)

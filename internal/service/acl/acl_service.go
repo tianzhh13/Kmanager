@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
@@ -45,11 +46,13 @@ type CreateACLRequest struct {
 	ClusterID       int64                 `json:"cluster_id" binding:"required"`
 	ResourceType    models.ResourceType   `json:"resource_type" binding:"required"`
 	ResourceName    string                `json:"resource_name" binding:"required"`
-	ResourcePattern models.PatternType    `json:"resource_pattern" binding:"required"`
+	ResourcePattern models.PatternType    `json:"resource_pattern"`
 	Principal       string                `json:"principal" binding:"required"`
 	Host            string                `json:"host"`
 	Operation       models.OperationType  `json:"operation" binding:"required"`
 	PermissionType  models.PermissionType `json:"permission_type" binding:"required"`
+	// 兼容前端字段
+	Permission string `json:"permission"`
 }
 
 // ListACLsRequest 列出 ACL 请求
@@ -64,12 +67,27 @@ type ListACLsRequest struct {
 
 // ListACLsResponse 列出 ACL 响应
 type ListACLsResponse struct {
-	ACLs  []*models.ACL `json:"acls"`
+	Data  []*models.ACL `json:"data"`
 	Total int64         `json:"total"`
 }
 
 // CreateACL 创建 ACL 规则
 func (s *Service) CreateACL(ctx context.Context, req *CreateACLRequest) error {
+	log.Printf("[CreateACL] Starting create ACL, request: %+v", req)
+
+	// 兼容前端 permission 字段
+	if req.PermissionType == "" && req.Permission != "" {
+		req.PermissionType = models.PermissionType(req.Permission)
+	}
+
+	// 设置默认值
+	if req.ResourcePattern == "" {
+		req.ResourcePattern = models.PatternTypeLiteral
+	}
+	if req.Host == "" {
+		req.Host = "*"
+	}
+
 	// 验证请求参数
 	if err := s.validateCreateACLRequest(req); err != nil {
 		return err
@@ -80,6 +98,7 @@ func (s *Service) CreateACL(ctx context.Context, req *CreateACLRequest) error {
 	if err != nil {
 		return fmt.Errorf("failed to get cluster: %w", err)
 	}
+	log.Printf("[CreateACL] Cluster found: %s", cluster.ClusterName)
 
 	// 解密认证配置
 	var authConfigJSON string
@@ -105,17 +124,14 @@ func (s *Service) CreateACL(ctx context.Context, req *CreateACLRequest) error {
 		ResourcePatternType: s.convertPatternType(req.ResourcePattern),
 	}
 
-	host := req.Host
-	if host == "" {
-		host = "*"
-	}
-
 	acl := sarama.Acl{
 		Principal:      req.Principal,
-		Host:           host,
+		Host:           req.Host,
 		Operation:      s.convertOperation(req.Operation),
 		PermissionType: s.convertPermissionType(req.PermissionType),
 	}
+
+	log.Printf("[CreateACL] Creating ACL in Kafka: resource=%+v, acl=%+v", resource, acl)
 
 	// 调用 Kafka API 创建 ACL
 	if err := adminClient.CreateACL(resource, acl); err != nil {
@@ -129,7 +145,7 @@ func (s *Service) CreateACL(ctx context.Context, req *CreateACLRequest) error {
 		ResourceName:    req.ResourceName,
 		ResourcePattern: req.ResourcePattern,
 		Principal:       req.Principal,
-		Host:            host,
+		Host:            req.Host,
 		Operation:       req.Operation,
 		PermissionType:  req.PermissionType,
 		SyncStatus:      "synced",
@@ -139,6 +155,7 @@ func (s *Service) CreateACL(ctx context.Context, req *CreateACLRequest) error {
 		return fmt.Errorf("failed to save acl to database: %w", err)
 	}
 
+	log.Printf("[CreateACL] ACL created successfully")
 	return nil
 }
 
@@ -210,6 +227,9 @@ func (s *Service) BatchDeleteACL(ctx context.Context, aclIDs []int64) error {
 
 // ListACLs 列出 ACL 规则
 func (s *Service) ListACLs(ctx context.Context, req *ListACLsRequest) (*ListACLsResponse, error) {
+	log.Printf("[ListACLs] Request: cluster_id=%d, resource_type=%s, resource_name=%s, principal=%s",
+		req.ClusterID, req.ResourceType, req.ResourceName, req.Principal)
+
 	var acls []*models.ACL
 	var total int64
 	var err error
@@ -224,6 +244,7 @@ func (s *Service) ListACLs(ctx context.Context, req *ListACLsRequest) (*ListACLs
 	}
 
 	if err != nil {
+		log.Printf("[ListACLs] Error: %v", err)
 		return nil, err
 	}
 
@@ -239,19 +260,23 @@ func (s *Service) ListACLs(ctx context.Context, req *ListACLsRequest) (*ListACLs
 		total = int64(len(filtered))
 	}
 
+	log.Printf("[ListACLs] Found %d ACLs", len(acls))
 	return &ListACLsResponse{
-		ACLs:  acls,
+		Data:  acls,
 		Total: total,
 	}, nil
 }
 
 // SyncACLs 同步集群的所有 ACL 数据
 func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
+	log.Printf("[SyncACLs] Starting sync for cluster %d", clusterID)
+
 	// 获取集群配置
 	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster: %w", err)
 	}
+	log.Printf("[SyncACLs] Cluster found: %s, bootstrap: %s", cluster.ClusterName, cluster.BootstrapServers)
 
 	// 解密认证配置
 	var authConfigJSON string
@@ -269,6 +294,7 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
 	defer adminClient.Close()
+	log.Printf("[SyncACLs] Kafka admin client created successfully")
 
 	// 从 Kafka 获取所有 ACL 列表
 	filter := sarama.AclFilter{
@@ -282,12 +308,14 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to list acls from kafka: %w", err)
 	}
+	log.Printf("[SyncACLs] Found %d resource ACLs from Kafka", len(kafkaACLs))
 
 	// 从数据库获取当前 ACL 列表
 	dbACLs, err := s.aclRepo.ListByCluster(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to list acls from database: %w", err)
 	}
+	log.Printf("[SyncACLs] Found %d ACLs in database", len(dbACLs))
 
 	// 构建 ACL 映射
 	dbACLMap := make(map[string]*models.ACL)
@@ -298,7 +326,10 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 	}
 
 	// 处理新增的 ACL
+	newCount := 0
 	for _, resourceACL := range kafkaACLs {
+		log.Printf("[SyncACLs] Processing resource: type=%d, name=%s, pattern=%d",
+			resourceACL.ResourceType, resourceACL.ResourceName, resourceACL.ResourcePatternType)
 		for _, acl := range resourceACL.Acls {
 			key := fmt.Sprintf("%s-%s-%s-%s-%s-%s",
 				s.convertResourceTypeFromSarama(resourceACL.ResourceType),
@@ -322,13 +353,15 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 					SyncStatus:      "synced",
 				}
 				if err := s.aclRepo.Create(ctx, newACL); err != nil {
-					// 记录错误但继续处理其他 ACL
+					log.Printf("[SyncACLs] Failed to create ACL: %v", err)
 					continue
 				}
+				newCount++
 			}
 		}
 	}
 
+	log.Printf("[SyncACLs] Sync completed for cluster %d: new=%d", clusterID, newCount)
 	return nil
 }
 

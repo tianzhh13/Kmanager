@@ -113,6 +113,20 @@ CREATE TABLE IF NOT EXISTS `audit_log` (
     INDEX `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- SCRAM 用户表
+CREATE TABLE IF NOT EXISTS `scram_users` (
+    `user_id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+    `cluster_id` BIGINT NOT NULL,
+    `username` VARCHAR(256) NOT NULL,
+    `mechanism` VARCHAR(32) NOT NULL DEFAULT 'SCRAM-SHA-256',
+    `sync_status` VARCHAR(32) DEFAULT 'synced',
+    `last_sync_at` TIMESTAMP NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_cluster_id` (`cluster_id`),
+    UNIQUE INDEX `uk_cluster_username` (`cluster_id`, `username`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 插入默认超级管理员用户
 -- 密码: admin123 (使用 bcrypt 加密，cost=12)
 INSERT INTO `user` (`username`, `password_hash`, `email`, `role`, `status`, `created_at`, `updated_at`)

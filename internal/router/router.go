@@ -10,6 +10,7 @@ import (
 	"kafka-management-platform/internal/service/auth"
 	"kafka-management-platform/internal/service/cluster"
 	"kafka-management-platform/internal/service/monitor"
+	"kafka-management-platform/internal/service/scram"
 	"kafka-management-platform/internal/service/topic"
 	"kafka-management-platform/internal/service/user"
 	"kafka-management-platform/pkg/encryption"
@@ -55,6 +56,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	topicRepo := repository.NewTopicRepository(db)
 	aclRepo := repository.NewACLRepository(db)
 	auditLogRepo := repository.NewAuditLogRepository(db)
+	scramUserRepo := repository.NewScramUserRepository(db)
 
 	// 初始化 Service
 	authSvc := auth.NewService(userRepo, jwtSvc)
@@ -65,6 +67,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	auditSvc := audit.NewService(auditLogRepo)
 	monitorSvc := monitor.NewService(clusterRepo)
 	userSvc := user.NewService(userRepo)
+	scramSvc := scram.NewService(scramUserRepo, clusterRepo, encryptionSvc)
 
 	// 初始化 Handler
 	authHandler := handler.NewAuthHandler(authSvc)
@@ -74,6 +77,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	userHandler := handler.NewUserHandler(userSvc)
 	auditLogHandler := audit.NewHandler(auditSvc)
 	monitorHandler := monitor.NewHandler(monitorSvc)
+	scramUserHandler := handler.NewScramUserHandler(scramSvc)
 
 	// 初始化中间件
 	permissionMiddleware := middleware.NewPermissionMiddleware(permissionSvc)
@@ -129,6 +133,8 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				clusters.PUT("/:id", permissionMiddleware.RequireSuperAdmin(), clusterHandler.UpdateCluster)
 				clusters.DELETE("/:id", permissionMiddleware.RequireSuperAdmin(), clusterHandler.DeleteCluster)
 				clusters.POST("/:id/test", clusterPermissionMiddleware.RequireClusterAccess(), clusterHandler.TestConnection)
+				// 创建前测试连接（无需集群 ID）
+				clusters.POST("/test-connection", permissionMiddleware.RequireSuperAdmin(), clusterHandler.TestConnectionForCreate)
 				clusters.POST("/:id/grant", permissionMiddleware.RequireSuperAdmin(), clusterHandler.GrantAccess)
 				clusters.POST("/:id/revoke", permissionMiddleware.RequireSuperAdmin(), clusterHandler.RevokeAccess)
 				clusters.GET("/:id/users", permissionMiddleware.RequireSuperAdmin(), clusterHandler.ListClusterUsers)
@@ -153,6 +159,15 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				acls.DELETE("/:id", clusterPermissionMiddleware.RequireClusterWriteAccess(), aclHandler.DeleteACL)
 				acls.POST("/batch-delete", clusterPermissionMiddleware.RequireClusterWriteAccess(), aclHandler.BatchDeleteACL)
 				acls.POST("/sync/:id", clusterPermissionMiddleware.RequireClusterWriteAccess(), aclHandler.SyncACLs)
+			}
+
+			// SCRAM 用户路由
+			scramUsers := authenticated.Group("/scram-users")
+			{
+				scramUsers.GET("", clusterPermissionMiddleware.RequireClusterAccess(), scramUserHandler.ListUsers)
+				scramUsers.POST("", clusterPermissionMiddleware.RequireClusterWriteAccess(), scramUserHandler.CreateUser)
+				scramUsers.DELETE("/:username", clusterPermissionMiddleware.RequireClusterWriteAccess(), scramUserHandler.DeleteUser)
+				scramUsers.POST("/sync/:id", clusterPermissionMiddleware.RequireClusterWriteAccess(), scramUserHandler.SyncUsers)
 			}
 
 			// 监控路由
@@ -183,13 +198,13 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	// 静态资源服务 - 服务前端构建产物
 	// 配置前端构建产物的目录路径
 	frontendDistPath := "./frontend/dist"
-	
+
 	// 静态资源目录（JS、CSS 等）
 	r.Static("/assets", frontendDistPath+"/assets")
-	
+
 	// 其他静态资源文件
 	r.StaticFile("/vite.svg", frontendDistPath+"/vite.svg")
-	
+
 	// SPA fallback - 所有非 API 路由返回 index.html
 	// 这支持前端路由（如 /clusters, /topics 等）在刷新时能正常工作
 	r.NoRoute(func(c *gin.Context) {

@@ -4,6 +4,12 @@ import { PlusOutlined, DeleteOutlined, SyncOutlined } from '@ant-design/icons'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchTopics, createTopic, deleteTopic } from '../store/slices/topicSlice'
 import { clusterAPI } from '../services/cluster'
+import { topicService } from '../services/topic'
+
+interface Cluster {
+  cluster_id: number
+  cluster_name: string
+}
 
 const TopicList: React.FC = () => {
   const dispatch = useAppDispatch()
@@ -12,39 +18,156 @@ const TopicList: React.FC = () => {
   const [form] = Form.useForm()
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
-  const [clusters, setClusters] = useState<any[]>([])
+  const [clusters, setClusters] = useState<Cluster[]>([])
+  const [clustersLoading, setClustersLoading] = useState(false)
+  const [selectedClusterId, setSelectedClusterId] = useState<number | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
+  // 加载集群列表
   useEffect(() => {
-    dispatch(fetchTopics({ page, pageSize }))
-    clusterAPI.list(1, 100).then(res => setClusters(res.data || []))
-  }, [dispatch, page, pageSize])
+    const loadClusters = async () => {
+      setClustersLoading(true)
+      try {
+        const res = await clusterAPI.list(1, 100)
+        console.log('=== DEBUG: Cluster API response ===', res)
+        const clusterList = res.data || []
+        console.log('=== DEBUG: Cluster list ===', clusterList)
+        console.log('=== DEBUG: First cluster ===', clusterList[0])
+        setClusters(clusterList)
+        // 默认选择第一个集群
+        if (clusterList.length > 0) {
+          console.log('=== DEBUG: Setting selectedClusterId to ===', clusterList[0].cluster_id)
+          setSelectedClusterId(clusterList[0].cluster_id)
+        }
+      } catch (err) {
+        console.error('Failed to load clusters:', err)
+      } finally {
+        setClustersLoading(false)
+      }
+    }
+    loadClusters()
+  }, [])
 
+  // 当集群选择变化时，加载该集群的 Topic
+  useEffect(() => {
+    if (selectedClusterId) {
+      dispatch(fetchTopics({ page, pageSize, clusterId: selectedClusterId }))
+    }
+  }, [dispatch, page, pageSize, selectedClusterId])
+
+  // 打开创建弹窗
+  const handleOpenModal = () => {
+    if (!selectedClusterId) {
+      message.warning('请先选择集群')
+      return
+    }
+    setIsModalVisible(true)
+  }
+
+  // Modal 打开后设置表单值
+  useEffect(() => {
+    if (isModalVisible && selectedClusterId) {
+      console.log('=== DEBUG: Setting form values, selectedClusterId ===', selectedClusterId)
+      form.setFieldsValue({
+        cluster_id: selectedClusterId,
+        partitions: 1,
+        replication_factor: 1,
+      })
+      // 验证设置是否成功
+      setTimeout(() => {
+        const allValues = form.getFieldsValue()
+        console.log('=== DEBUG: Form values after setFieldsValue ===', allValues)
+      }, 100)
+    }
+  }, [isModalVisible, selectedClusterId, form])
+
+  // 创建 Topic
   const handleCreate = async () => {
     try {
       const values = await form.validateFields()
-      await dispatch(createTopic(values)).unwrap()
+      console.log('=== DEBUG: Form values ===', values)
+      console.log('=== DEBUG: selectedClusterId ===', selectedClusterId)
+      console.log('=== DEBUG: typeof cluster_id ===', typeof values.cluster_id)
+      
+      const clusterId = Number(values.cluster_id)
+      console.log('=== DEBUG: clusterId after Number() ===', clusterId)
+      console.log('=== DEBUG: isNaN(clusterId) ===', isNaN(clusterId))
+      
+      if (isNaN(clusterId) || clusterId <= 0) {
+        message.error('请选择有效的集群')
+        return
+      }
+      
+      const payload = {
+        cluster_id: clusterId,
+        topic_name: values.topic_name,
+        partitions: Number(values.partitions),
+        replication_factor: Number(values.replication_factor),
+      }
+      console.log('=== DEBUG: Final payload ===', JSON.stringify(payload, null, 2))
+      
+      await dispatch(createTopic(payload)).unwrap()
       message.success('创建成功')
       setIsModalVisible(false)
       form.resetFields()
-      dispatch(fetchTopics({ page, pageSize }))
+      // 刷新列表
+      if (selectedClusterId) {
+        dispatch(fetchTopics({ page, pageSize, clusterId: selectedClusterId }))
+      }
     } catch (error: any) {
-      message.error(error || '创建失败')
+      console.error('=== DEBUG: Create topic error ===', error)
+      const errorMsg = typeof error === 'string' 
+        ? error 
+        : (error?.message || error?.error || '创建失败')
+      message.error(errorMsg)
     }
   }
 
+  // 删除 Topic
   const handleDelete = async (topicName: string) => {
+    if (!selectedClusterId) {
+      message.warning('请先选择集群')
+      return
+    }
     Modal.confirm({
       title: '确认删除',
       content: `确定要删除 Topic "${topicName}" 吗？此操作不可恢复。`,
       onOk: async () => {
         try {
-          await dispatch(deleteTopic(topicName)).unwrap()
+          await dispatch(deleteTopic({ topicName, clusterId: selectedClusterId })).unwrap()
           message.success('删除成功')
         } catch (error: any) {
-          message.error(error || '删除失败')
+          const errorMsg = typeof error === 'string' 
+            ? error 
+            : (error?.message || error?.error || '删除失败')
+          message.error(errorMsg)
         }
       },
     })
+  }
+
+  // 同步 Topic
+  const handleSync = async () => {
+    console.log('=== DEBUG: handleSync called, selectedClusterId ===', selectedClusterId)
+    if (!selectedClusterId) {
+      message.warning('请先选择集群')
+      return
+    }
+    setSyncing(true)
+    try {
+      console.log('=== DEBUG: Calling topicService.sync ===')
+      await topicService.sync(selectedClusterId)
+      console.log('=== DEBUG: sync completed ===')
+      message.success('同步成功')
+      // 刷新列表
+      dispatch(fetchTopics({ page, pageSize, clusterId: selectedClusterId }))
+    } catch (error: any) {
+      console.error('=== DEBUG: sync error ===', error)
+      const errorMsg = error?.response?.data?.error || error?.message || '同步失败'
+      message.error(errorMsg)
+    } finally {
+      setSyncing(false)
+    }
   }
 
   const columns = [
@@ -68,8 +191,31 @@ const TopicList: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <h1>Topic 管理</h1>
         <Space>
-          <Button icon={<SyncOutlined />}>同步</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)}>
+          <Select
+            placeholder="选择集群"
+            value={selectedClusterId}
+            onChange={(value) => { setSelectedClusterId(value); setPage(1) }}
+            style={{ width: 200 }}
+            loading={clustersLoading}
+          >
+            {clusters.map(c => (
+              <Select.Option key={c.cluster_id} value={c.cluster_id}>{c.cluster_name}</Select.Option>
+            ))}
+          </Select>
+          <Button 
+            icon={<SyncOutlined spin={syncing} />} 
+            onClick={handleSync}
+            loading={syncing}
+            disabled={!selectedClusterId}
+          >
+            同步
+          </Button>
+          <Button 
+            type="primary" 
+            icon={<PlusOutlined />} 
+            onClick={handleOpenModal}
+            disabled={!selectedClusterId}
+          >
             创建 Topic
           </Button>
         </Space>
@@ -86,6 +232,7 @@ const TopicList: React.FC = () => {
           total,
           onChange: (p, ps) => { setPage(p); setPageSize(ps) },
         }}
+        locale={{ emptyText: selectedClusterId ? '暂无 Topic 数据' : '请先选择集群' }}
       />
 
       <Modal
@@ -93,24 +240,28 @@ const TopicList: React.FC = () => {
         open={isModalVisible}
         onOk={handleCreate}
         onCancel={() => { setIsModalVisible(false); form.resetFields() }}
+        destroyOnClose
         width={600}
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="cluster_id" label="所属集群" rules={[{ required: true }]}>
-            <Select placeholder="选择集群">
+          <Form.Item name="cluster_id" label="所属集群" rules={[{ required: true, message: '请选择集群' }]}>
+            <Select 
+              placeholder="请选择集群" 
+              disabled
+            >
               {clusters.map(c => (
-                <Select.Option key={c.id} value={c.id}>{c.cluster_name}</Select.Option>
+                <Select.Option key={c.cluster_id} value={c.cluster_id}>{c.cluster_name}</Select.Option>
               ))}
             </Select>
           </Form.Item>
-          <Form.Item name="topic_name" label="Topic 名称" rules={[{ required: true }]}>
+          <Form.Item name="topic_name" label="Topic 名称" rules={[{ required: true, message: '请输入 Topic 名称' }]}>
             <Input placeholder="请输入 Topic 名称" />
           </Form.Item>
-          <Form.Item name="partitions" label="分区数" rules={[{ required: true }]}>
-            <InputNumber min={1} max={100} defaultValue={1} style={{ width: '100%' }} />
+          <Form.Item name="partitions" label="分区数" rules={[{ required: true, message: '请输入分区数' }]} initialValue={1}>
+            <InputNumber min={1} max={100} style={{ width: '100%' }} placeholder="请输入分区数" />
           </Form.Item>
-          <Form.Item name="replication_factor" label="副本数" rules={[{ required: true }]}>
-            <InputNumber min={1} max={10} defaultValue={1} style={{ width: '100%' }} />
+          <Form.Item name="replication_factor" label="副本数" rules={[{ required: true, message: '请输入副本数' }]} initialValue={1}>
+            <InputNumber min={1} max={10} style={{ width: '100%' }} placeholder="请输入副本数" />
           </Form.Item>
         </Form>
       </Modal>
