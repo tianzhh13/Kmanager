@@ -55,6 +55,7 @@ frontend/.env.production
 *.db
 *.sqlite
 *.sqlite3
+scripts\upgrade_add_sasl_mechanism.sql
 
 # Build
 build/
