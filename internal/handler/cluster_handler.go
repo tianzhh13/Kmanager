@@ -22,6 +22,43 @@ func NewClusterHandler(clusterSvc *cluster.Service) *ClusterHandler {
 	}
 }
 
+// UploadKeytab 上传 Keytab 文件
+// 返回临时文件 ID，用于创建/更新集群时引用
+func (h *ClusterHandler) UploadKeytab(c *gin.Context) {
+	file, err := c.FormFile("keytab")
+	if err != nil {
+		c.JSON(400, gin.H{"error": "no keytab file provided"})
+		return
+	}
+
+	// 读取文件内容
+	f, err := file.Open()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to open keytab file"})
+		return
+	}
+	defer f.Close()
+
+	// 读取文件数据
+	data := make([]byte, file.Size)
+	if _, err := f.Read(data); err != nil {
+		c.JSON(500, gin.H{"error": "failed to read keytab file"})
+		return
+	}
+
+	// 保存到临时目录
+	tempID, err := h.clusterSvc.SaveTempKeytab(c.Request.Context(), data)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"temp_id": tempID,
+		"message": "keytab uploaded successfully",
+	})
+}
+
 // CreateCluster 创建集群
 func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 	var req cluster.CreateClusterRequest

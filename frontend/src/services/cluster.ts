@@ -5,8 +5,9 @@ export interface Cluster {
   cluster_name: string
   bootstrap_servers: string
   auth_type: string
+  sasl_mechanism?: string
   auth_config?: string
-  prometheus_url: string
+  jmx_exporter_url: string
   description: string
   status: string
   created_at: string
@@ -18,7 +19,7 @@ export interface CreateClusterRequest {
   bootstrap_servers: string
   auth_type: string
   auth_config?: Record<string, any>
-  prometheus_url?: string
+  jmx_exporter_url?: string
   description?: string
 }
 
@@ -27,7 +28,7 @@ export interface UpdateClusterRequest {
   bootstrap_servers?: string
   auth_type?: string
   auth_config?: Record<string, any>
-  prometheus_url?: string
+  jmx_exporter_url?: string
   description?: string
   status?: string
 }
@@ -65,6 +66,17 @@ export const clusterAPI = {
 
   testConnectionForCreate: async (data: CreateClusterRequest): Promise<void> => {
     await api.post('/clusters/test-connection', data)
+  },
+
+  uploadKeytab: async (file: File): Promise<string> => {
+    const formData = new FormData()
+    formData.append('keytab', file)
+    const response = await api.post('/clusters/upload-keytab', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return response.data.temp_id
   },
 
   grantAccess: async (id: number, userId: number): Promise<void> => {

@@ -18,6 +18,7 @@ type ScramUserRepository interface {
 	List(ctx context.Context, clusterID int64, offset, limit int) ([]*models.ScramUser, int64, error)
 	ListByCluster(ctx context.Context, clusterID int64) ([]*models.ScramUser, error)
 	Exists(ctx context.Context, clusterID int64, username string) (bool, error)
+	Count(ctx context.Context) (int64, error)
 }
 
 // scramUserRepository SCRAM 用户仓库实现
@@ -87,4 +88,10 @@ func (r *scramUserRepository) Exists(ctx context.Context, clusterID int64, usern
 	var count int64
 	err := r.db.WithContext(ctx).Model(&models.ScramUser{}).Where("cluster_id = ? AND username = ?", clusterID, username).Count(&count).Error
 	return count > 0, err
+}
+
+func (r *scramUserRepository) Count(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&models.ScramUser{}).Count(&count).Error
+	return count, err
 }

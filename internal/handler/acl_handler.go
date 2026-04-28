@@ -127,3 +127,66 @@ func (h *ACLHandler) SyncACLs(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "acls synced successfully"})
 }
+
+// ListUserACLsFromKafka 从 Kafka 直接查询用户的 ACL
+func (h *ACLHandler) ListUserACLsFromKafka(c *gin.Context) {
+	clusterIDStr := c.Query("cluster_id")
+	if clusterIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster_id is required"})
+		return
+	}
+	clusterID, err := strconv.ParseInt(clusterIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster_id"})
+		return
+	}
+
+	principal := c.Query("principal")
+	if principal == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "principal is required"})
+		return
+	}
+
+	acls, err := h.aclSvc.ListUserACLsFromKafka(c.Request.Context(), clusterID, principal)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": acls})
+}
+
+// DeleteACLFromKafka 从 Kafka 删除 ACL（无需数据库记录）
+func (h *ACLHandler) DeleteACLFromKafka(c *gin.Context) {
+	clusterIDStr := c.Query("cluster_id")
+	if clusterIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster_id is required"})
+		return
+	}
+	clusterID, err := strconv.ParseInt(clusterIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster_id"})
+		return
+	}
+
+	var req acl.DeleteACLFromKafkaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 设置默认值
+	if req.ResourcePattern == "" {
+		req.ResourcePattern = "LITERAL"
+	}
+	if req.Host == "" {
+		req.Host = "*"
+	}
+
+	if err := h.aclSvc.DeleteACLFromKafka(c.Request.Context(), clusterID, &req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "acl deleted successfully"})
+}

@@ -21,6 +21,7 @@ type TopicRepository interface {
 	Search(ctx context.Context, clusterID int64, keyword string, offset, limit int) ([]*models.Topic, int64, error)
 	ListByCluster(ctx context.Context, clusterID int64) ([]*models.Topic, error)
 	DeleteByCluster(ctx context.Context, clusterID int64) error
+	Count(ctx context.Context) (int64, error)
 }
 
 type topicRepository struct {
@@ -151,4 +152,11 @@ func (r *topicRepository) DeleteByCluster(ctx context.Context, clusterID int64) 
 	return r.db.WithContext(ctx).
 		Where("cluster_id = ?", clusterID).
 		Delete(&models.Topic{}).Error
+}
+
+// Count 统计所有 Topic 数量
+func (r *topicRepository) Count(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&models.Topic{}).Count(&count).Error
+	return count, err
 }

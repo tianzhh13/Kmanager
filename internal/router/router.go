@@ -15,6 +15,8 @@ import (
 	"kafka-management-platform/internal/service/user"
 	"kafka-management-platform/pkg/encryption"
 	"kafka-management-platform/pkg/jwt"
+	"kafka-management-platform/pkg/kerberos"
+	"kafka-management-platform/pkg/victoriametrics"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -58,16 +60,27 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	auditLogRepo := repository.NewAuditLogRepository(db)
 	scramUserRepo := repository.NewScramUserRepository(db)
 
+	// 初始化 VictoriaMetrics 客户端
+	vmClient := victoriametrics.NewClient(
+		cfg.VictoriaMetrics.WriteURL,
+		cfg.VictoriaMetrics.QueryURL,
+		cfg.VictoriaMetrics.Enabled,
+	)
+
+	// 初始化 Kerberos Manager
+	kerberosMgr := kerberos.NewManager("./kerberos")
+	kerberosBaseDir := "./kerberos"
+
 	// 初始化 Service
 	authSvc := auth.NewService(userRepo, jwtSvc)
 	permissionSvc := auth.NewPermissionService(userRepo, clusterUserRepo)
-	clusterSvc := cluster.NewService(clusterRepo, clusterUserRepo, encryptionSvc)
-	topicSvc := topic.NewService(topicRepo, clusterRepo, encryptionSvc)
-	aclSvc := acl.NewService(aclRepo, clusterRepo, encryptionSvc)
+	clusterSvc := cluster.NewService(clusterRepo, clusterUserRepo, encryptionSvc, kerberosMgr)
+	topicSvc := topic.NewService(topicRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
+	aclSvc := acl.NewService(aclRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
 	auditSvc := audit.NewService(auditLogRepo)
-	monitorSvc := monitor.NewService(clusterRepo)
+	monitorSvc := monitor.NewService(clusterRepo, encryptionSvc, vmClient, kerberosBaseDir)
 	userSvc := user.NewService(userRepo)
-	scramSvc := scram.NewService(scramUserRepo, clusterRepo, encryptionSvc)
+	scramSvc := scram.NewService(scramUserRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
 
 	// 初始化 Handler
 	authHandler := handler.NewAuthHandler(authSvc)
@@ -78,6 +91,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	auditLogHandler := audit.NewHandler(auditSvc)
 	monitorHandler := monitor.NewHandler(monitorSvc)
 	scramUserHandler := handler.NewScramUserHandler(scramSvc)
+	dashboardHandler := handler.NewDashboardHandler(clusterRepo, topicRepo, scramUserRepo)
 
 	// 初始化中间件
 	permissionMiddleware := middleware.NewPermissionMiddleware(permissionSvc)
@@ -110,6 +124,9 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			// 当前用户信息
 			authenticated.GET("/auth/me", authHandler.GetCurrentUser)
 
+			// 仪表盘统计
+			authenticated.GET("/dashboard/stats", dashboardHandler.GetStats)
+
 			// 用户路由 - 需要超级管理员权限
 			users := authenticated.Group("/users")
 			users.Use(permissionMiddleware.RequireSuperAdmin())
@@ -135,6 +152,8 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				clusters.POST("/:id/test", clusterPermissionMiddleware.RequireClusterAccess(), clusterHandler.TestConnection)
 				// 创建前测试连接（无需集群 ID）
 				clusters.POST("/test-connection", permissionMiddleware.RequireSuperAdmin(), clusterHandler.TestConnectionForCreate)
+				// Keytab 文件上传
+				clusters.POST("/upload-keytab", permissionMiddleware.RequireSuperAdmin(), clusterHandler.UploadKeytab)
 				clusters.POST("/:id/grant", permissionMiddleware.RequireSuperAdmin(), clusterHandler.GrantAccess)
 				clusters.POST("/:id/revoke", permissionMiddleware.RequireSuperAdmin(), clusterHandler.RevokeAccess)
 				clusters.GET("/:id/users", permissionMiddleware.RequireSuperAdmin(), clusterHandler.ListClusterUsers)
@@ -155,8 +174,10 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			acls := authenticated.Group("/acls")
 			{
 				acls.GET("", clusterPermissionMiddleware.RequireClusterAccess(), aclHandler.ListACLs)
+				acls.GET("/user", clusterPermissionMiddleware.RequireClusterAccess(), aclHandler.ListUserACLsFromKafka)
 				acls.POST("", clusterPermissionMiddleware.RequireClusterWriteAccess(), aclHandler.CreateACL)
 				acls.DELETE("/:id", clusterPermissionMiddleware.RequireClusterWriteAccess(), aclHandler.DeleteACL)
+				acls.DELETE("/kafka", clusterPermissionMiddleware.RequireClusterWriteAccess(), aclHandler.DeleteACLFromKafka)
 				acls.POST("/batch-delete", clusterPermissionMiddleware.RequireClusterWriteAccess(), aclHandler.BatchDeleteACL)
 				acls.POST("/sync/:id", clusterPermissionMiddleware.RequireClusterWriteAccess(), aclHandler.SyncACLs)
 			}
@@ -173,16 +194,16 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			// 监控路由
 			metrics := authenticated.Group("/metrics")
 			{
-				// 集群级别指标
+				// 集群级别指标（整合 JMX + Kafka Exporter）
 				metrics.GET("/cluster/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetClusterMetrics)
-				// Broker 级别指标
+				// Broker 级别指标（来自 JMX Exporter）
 				metrics.GET("/broker/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetBrokerMetrics)
-				// Topic ��别指标
-				metrics.GET("/topic/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetTopicMetrics)
-				// 消费组指标
-				metrics.GET("/consumer-group/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetConsumerGroupMetrics)
-				// 自定义 PromQL 查询
-				metrics.GET("/query/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.QueryPrometheus)
+				// 消费者组 Lag（来自内置 Kafka Exporter）
+				metrics.GET("/consumer-groups/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetConsumerGroupLags)
+				// 单个消费者组详情
+				metrics.GET("/consumer-group/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetConsumerGroupInfo)
+				// 历史指标（代理 VictoriaMetrics 查询）
+				metrics.GET("/history", monitorHandler.GetMetricsHistory)
 			}
 
 			// 审计日志路由
