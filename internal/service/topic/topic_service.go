@@ -29,9 +29,10 @@ var (
 
 // Service Topic 管理服务
 type Service struct {
-	topicRepo     repository.TopicRepository
-	clusterRepo   repository.ClusterRepository
-	encryptionSvc *encryption.Service
+	topicRepo       repository.TopicRepository
+	clusterRepo     repository.ClusterRepository
+	encryptionSvc   *encryption.Service
+	kerberosBaseDir string
 }
 
 // NewService 创建 Topic 管理服务实例
@@ -39,11 +40,13 @@ func NewService(
 	topicRepo repository.TopicRepository,
 	clusterRepo repository.ClusterRepository,
 	encryptionSvc *encryption.Service,
+	kerberosBaseDir string,
 ) *Service {
 	return &Service{
-		topicRepo:     topicRepo,
-		clusterRepo:   clusterRepo,
-		encryptionSvc: encryptionSvc,
+		topicRepo:       topicRepo,
+		clusterRepo:     clusterRepo,
+		encryptionSvc:   encryptionSvc,
+		kerberosBaseDir: kerberosBaseDir,
 	}
 }
 
@@ -109,8 +112,8 @@ func (s *Service) CreateTopic(ctx context.Context, req *CreateTopicRequest) erro
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
@@ -168,8 +171,8 @@ func (s *Service) DeleteTopic(ctx context.Context, clusterID int64, topicName st
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
@@ -210,8 +213,8 @@ func (s *Service) UpdateTopicConfig(ctx context.Context, req *UpdateTopicConfigR
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
@@ -276,8 +279,8 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}

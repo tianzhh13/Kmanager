@@ -28,10 +28,9 @@ CREATE TABLE IF NOT EXISTS cluster (
     cluster_name VARCHAR(128) NOT NULL,
     bootstrap_servers TEXT NOT NULL,
     auth_type VARCHAR(32) NOT NULL DEFAULT 'none',
+    sasl_mechanism VARCHAR(32),
     auth_config TEXT,
-    jmx_host VARCHAR(128),
-    jmx_port INTEGER,
-    prometheus_url VARCHAR(256),
+    jmx_exporter_url VARCHAR(256),
     status VARCHAR(32) NOT NULL DEFAULT 'active',
     description TEXT,
     created_by BIGINT NOT NULL,
@@ -42,6 +41,7 @@ CREATE TABLE IF NOT EXISTS cluster (
 
 CREATE INDEX IF NOT EXISTS idx_cluster_name ON cluster(cluster_name);
 CREATE INDEX IF NOT EXISTS idx_cluster_status ON cluster(status);
+CREATE INDEX IF NOT EXISTS idx_cluster_sasl_mechanism ON cluster(sasl_mechanism);
 
 -- 集群用户关联表
 CREATE TABLE IF NOT EXISTS cluster_user_relation (

@@ -26,10 +26,9 @@ CREATE TABLE IF NOT EXISTS `cluster` (
     `cluster_name` VARCHAR(128) NOT NULL,
     `bootstrap_servers` TEXT NOT NULL,
     `auth_type` VARCHAR(32) NOT NULL DEFAULT 'none',
+    `sasl_mechanism` VARCHAR(32) COMMENT 'SASL 机制：PLAIN/SCRAM-SHA-256/SCRAM-SHA-512',
     `auth_config` TEXT,
-    `jmx_host` VARCHAR(128),
-    `jmx_port` INT,
-    `prometheus_url` VARCHAR(256),
+    `jmx_exporter_url` VARCHAR(256) COMMENT 'JMX Exporter HTTP 地址（如 http://broker1:7071）',
     `status` VARCHAR(32) NOT NULL DEFAULT 'active',
     `description` TEXT,
     `created_by` BIGINT NOT NULL,
@@ -37,7 +36,8 @@ CREATE TABLE IF NOT EXISTS `cluster` (
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (`created_by`) REFERENCES `user`(`user_id`),
     INDEX `idx_cluster_name` (`cluster_name`),
-    INDEX `idx_status` (`status`)
+    INDEX `idx_status` (`status`),
+    INDEX `idx_sasl_mechanism` (`sasl_mechanism`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 集群用户关联表

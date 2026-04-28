@@ -22,9 +22,10 @@ var (
 
 // Service SCRAM 用户管理服务
 type Service struct {
-	userRepo    repository.ScramUserRepository
-	clusterRepo repository.ClusterRepository
-	encryptSvc  *encryption.Service
+	userRepo        repository.ScramUserRepository
+	clusterRepo     repository.ClusterRepository
+	encryptSvc      *encryption.Service
+	kerberosBaseDir string
 }
 
 // NewService 创建 SCRAM 用户管理服务实例
@@ -32,11 +33,13 @@ func NewService(
 	userRepo repository.ScramUserRepository,
 	clusterRepo repository.ClusterRepository,
 	encryptSvc *encryption.Service,
+	kerberosBaseDir string,
 ) *Service {
 	return &Service{
-		userRepo:    userRepo,
-		clusterRepo: clusterRepo,
-		encryptSvc:  encryptSvc,
+		userRepo:        userRepo,
+		clusterRepo:     clusterRepo,
+		encryptSvc:      encryptSvc,
+		kerberosBaseDir: kerberosBaseDir,
 	}
 }
 
@@ -91,8 +94,8 @@ func (s *Service) CreateUser(ctx context.Context, req *CreateUserRequest) error 
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
@@ -153,8 +156,8 @@ func (s *Service) DeleteUser(ctx context.Context, clusterID int64, username stri
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
@@ -214,8 +217,8 @@ func (s *Service) SyncUsers(ctx context.Context, clusterID int64) error {
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}

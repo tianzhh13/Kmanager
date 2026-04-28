@@ -3,11 +3,43 @@ import { Table, Button, Space, Card, Modal, Form, Select, Input, message, Tag } 
 import { PlusOutlined, DeleteOutlined, SyncOutlined, KeyOutlined, EyeOutlined } from '@ant-design/icons'
 import { scramUserService, ScramUser } from '../services/scramUser'
 import { clusterAPI } from '../services/cluster'
-import { createACL, getACLs, deleteACL, ACL } from '../services/acl'
+import { createACL, getUserACLsFromKafka, deleteACLFromKafka, UserACLInfo } from '../services/acl'
 
 interface Cluster {
   cluster_id: number
   cluster_name: string
+  auth_type: string
+  sasl_mechanism?: string
+}
+
+// 资源类型对应的可用操作
+const RESOURCE_OPERATIONS: Record<string, { value: string; label: string }[]> = {
+  Topic: [
+    { value: 'Read', label: 'Read - 消费消息' },
+    { value: 'Write', label: 'Write - 生产消息' },
+    { value: 'Create', label: 'Create - 创建（部分场景）' },
+    { value: 'Delete', label: 'Delete - 删除 Topic' },
+    { value: 'Alter', label: 'Alter - 修改配置' },
+    { value: 'Describe', label: 'Describe - 查看元数据' },
+    { value: 'DescribeConfigs', label: 'DescribeConfigs - 查看配置' },
+    { value: 'AlterConfigs', label: 'AlterConfigs - 修改配置' },
+  ],
+  Group: [
+    { value: 'Read', label: 'Read - 加入消费组/提交偏移量' },
+    { value: 'Delete', label: 'Delete - 删除消费组' },
+    { value: 'Describe', label: 'Describe - 查看消费组信息' },
+    { value: 'Alter', label: 'Alter - 修改消费组状态' },
+  ],
+  Cluster: [
+    { value: 'Create', label: 'Create - 创建 Topic' },
+    { value: 'Delete', label: 'Delete - 删除 Topic' },
+    { value: 'Alter', label: 'Alter - 修改集群配置' },
+    { value: 'Describe', label: 'Describe - 查看集群信息' },
+    { value: 'DescribeConfigs', label: 'DescribeConfigs - 查看配置' },
+    { value: 'AlterConfigs', label: 'AlterConfigs - 修改配置' },
+    { value: 'ClusterAction', label: 'ClusterAction - 集群操作（Leader选举等）' },
+    { value: 'IdempotentWrite', label: 'IdempotentWrite - 幂等写入' },
+  ],
 }
 
 const ACLList: React.FC = () => {
@@ -25,11 +57,12 @@ const ACLList: React.FC = () => {
   const [aclModalVisible, setAclModalVisible] = useState(false)
   const [aclForm] = Form.useForm()
   const [selectedUsername, setSelectedUsername] = useState<string>('')
+  const [selectedResourceType, setSelectedResourceType] = useState<string>('')
   
   // 查看权限弹窗
   const [viewAclVisible, setViewAclVisible] = useState(false)
   const [viewAclUsername, setViewAclUsername] = useState<string>('')
-  const [userAcls, setUserAcls] = useState<ACL[]>([])
+  const [userAcls, setUserAcls] = useState<UserACLInfo[]>([])
   const [viewAclLoading, setViewAclLoading] = useState(false)
   
   const columns = [
@@ -71,16 +104,20 @@ const ACLList: React.FC = () => {
     },
   ]
 
-  // 加载集群列表
+  // 加载集群列表（只加载 SCRAM-SHA-256/512 集群）
   useEffect(() => {
     const loadClusters = async () => {
       try {
         const res = await clusterAPI.list(1, 100)
         console.log('=== DEBUG: Cluster list ===', res)
         const clusterList = res.data || []
-        setClusters(clusterList)
-        if (clusterList.length > 0) {
-          setSelectedClusterId(clusterList[0].cluster_id)
+        // 只过滤 SCRAM-SHA-256/512 集群（支持动态用户和 ACL 管理）
+        const scramClusters = clusterList.filter((c: Cluster) => 
+          c.sasl_mechanism === 'SCRAM-SHA-256' || c.sasl_mechanism === 'SCRAM-SHA-512'
+        )
+        setClusters(scramClusters)
+        if (scramClusters.length > 0) {
+          setSelectedClusterId(scramClusters[0].cluster_id)
         }
       } catch (err) {
         console.error('Failed to load clusters:', err)
@@ -196,11 +233,18 @@ const ACLList: React.FC = () => {
       return
     }
     setSelectedUsername(username)
+    setSelectedResourceType('')
     aclForm.setFieldsValue({
       cluster_id: selectedClusterId,
       principal: `User:${username}`,
     })
     setAclModalVisible(true)
+  }
+
+  // 资源类型变化时清空操作选择
+  const handleResourceTypeChange = (value: string) => {
+    setSelectedResourceType(value)
+    aclForm.setFieldsValue({ operation: undefined })
   }
 
   // 查看用户权限
@@ -214,7 +258,7 @@ const ACLList: React.FC = () => {
     setViewAclVisible(true)
     try {
       const principal = `User:${username}`
-      const acls = await getACLs({ cluster_id: selectedClusterId!, principal })
+      const acls = await getUserACLsFromKafka(selectedClusterId!, principal)
       setUserAcls(acls)
     } catch (error: any) {
       console.error('=== DEBUG: View ACLs error ===', error)
@@ -226,17 +270,25 @@ const ACLList: React.FC = () => {
   }
 
   // 删除单条 ACL
-  const handleDeleteAcl = async (acl: ACL) => {
+  const handleDeleteAcl = async (acl: UserACLInfo) => {
     Modal.confirm({
       title: '确认删除',
       content: `确定要删除该权限规则吗？`,
       onOk: async () => {
         try {
-          await deleteACL(acl.id, selectedClusterId!)
+          await deleteACLFromKafka(selectedClusterId!, {
+            resource_type: acl.resource_type,
+            resource_name: acl.resource_name,
+            resource_pattern: acl.resource_pattern || 'LITERAL',
+            principal: acl.principal,
+            host: acl.host || '*',
+            operation: acl.operation,
+            permission_type: acl.permission_type,
+          })
           message.success('删除成功')
           // 刷新权限列表
           const principal = `User:${viewAclUsername}`
-          const acls = await getACLs({ cluster_id: selectedClusterId!, principal })
+          const acls = await getUserACLsFromKafka(selectedClusterId!, principal)
           setUserAcls(acls)
         } catch (error: any) {
           console.error('=== DEBUG: Delete ACL error ===', error)
@@ -312,16 +364,28 @@ const ACLList: React.FC = () => {
           </Button>
         </Space>
       </div>
-      <Card>
-        <Table
-          columns={columns}
-          dataSource={users}
-          rowKey="user_id"
-          loading={loading}
-          pagination={{ pageSize: 20 }}
-          locale={{ emptyText: selectedClusterId ? '暂无用户数据' : '请先选择集群' }}
-        />
-      </Card>
+      
+      {clusters.length === 0 && (
+        <Card>
+          <div style={{ textAlign: 'center', padding: '40px 0', color: '#666' }}>
+            暂无支持 SCRAM 用户管理的集群<br/>
+            <span style={{ fontSize: 12 }}>仅支持 SASL 机制为 SCRAM-SHA-256 或 SCRAM-SHA-512 的集群</span>
+          </div>
+        </Card>
+      )}
+      
+      {clusters.length > 0 && (
+        <Card>
+          <Table
+            columns={columns}
+            dataSource={users}
+            rowKey="user_id"
+            loading={loading}
+            pagination={{ pageSize: 20 }}
+            locale={{ emptyText: selectedClusterId ? '暂无用户数据' : '请先选择集群' }}
+          />
+        </Card>
+      )}
 
       {/* 创建用户弹窗 */}
       <Modal
@@ -373,7 +437,7 @@ const ACLList: React.FC = () => {
       >
         <Table
           dataSource={userAcls}
-          rowKey="id"
+          rowKey={(record, index) => `${record.resource_type}-${record.resource_name}-${record.operation}-${index}`}
           loading={viewAclLoading}
           size="small"
           pagination={false}
@@ -384,12 +448,12 @@ const ACLList: React.FC = () => {
             { title: '操作', dataIndex: 'operation', key: 'operation', width: 100 },
             { 
               title: '权限', 
-              dataIndex: 'permission', 
-              key: 'permission', 
+              dataIndex: 'permission_type', 
+              key: 'permission_type', 
               width: 80,
-              render: (permission: string) => (
-                <Tag color={permission === 'Allow' ? 'green' : 'red'}>
-                  {permission}
+              render: (permission_type: string) => (
+                <Tag color={permission_type === 'Allow' ? 'green' : 'red'}>
+                  {permission_type}
                 </Tag>
               )
             },
@@ -398,7 +462,7 @@ const ACLList: React.FC = () => {
               title: '操作',
               key: 'action',
               width: 80,
-              render: (_: any, record: ACL) => (
+              render: (_: any, record: UserACLInfo) => (
                 <Button 
                   type="link" 
                   danger 
@@ -429,24 +493,24 @@ const ACLList: React.FC = () => {
             <Input disabled />
           </Form.Item>
           <Form.Item name="resource_type" label="资源类型" rules={[{ required: true, message: '请选择资源类型' }]}>
-            <Select placeholder="选择资源类型">
-              <Select.Option value="Topic">Topic</Select.Option>
-              <Select.Option value="Group">Consumer Group</Select.Option>
-              <Select.Option value="Cluster">Cluster</Select.Option>
+            <Select placeholder="选择资源类型" onChange={handleResourceTypeChange}>
+              <Select.Option value="Topic">Topic（主题）</Select.Option>
+              <Select.Option value="Group">Group（消费组）</Select.Option>
+              <Select.Option value="Cluster">Cluster（集群）</Select.Option>
             </Select>
           </Form.Item>
           <Form.Item name="resource_name" label="资源名称" rules={[{ required: true, message: '请输入资源名称' }]}>
-            <Input placeholder="资源名称（如 test-topic 或 * 表示所有）" />
+            <Input placeholder={selectedResourceType === 'Cluster' ? '集群资源通常填 kafka-cluster 或 *' : '资源名称（如 test-topic 或 * 表示所有）'} />
           </Form.Item>
           <Form.Item name="operation" label="操作" rules={[{ required: true, message: '请选择操作' }]}>
-            <Select placeholder="选择操作" mode="multiple">
-              <Select.Option value="Read">Read</Select.Option>
-              <Select.Option value="Write">Write</Select.Option>
-              <Select.Option value="Create">Create</Select.Option>
-              <Select.Option value="Delete">Delete</Select.Option>
-              <Select.Option value="Alter">Alter</Select.Option>
-              <Select.Option value="Describe">Describe</Select.Option>
-              <Select.Option value="All">All</Select.Option>
+            <Select 
+              placeholder={selectedResourceType ? '选择操作' : '请先选择资源类型'} 
+              mode="multiple"
+              disabled={!selectedResourceType}
+            >
+              {(RESOURCE_OPERATIONS[selectedResourceType] || []).map(op => (
+                <Select.Option key={op.value} value={op.value}>{op.label}</Select.Option>
+              ))}
             </Select>
           </Form.Item>
           <Form.Item name="permission" label="权限类型" rules={[{ required: true, message: '请选择权限类型' }]}>
@@ -455,6 +519,11 @@ const ACLList: React.FC = () => {
               <Select.Option value="Deny">Deny（拒绝）</Select.Option>
             </Select>
           </Form.Item>
+          {selectedResourceType && (
+            <div style={{ color: '#666', fontSize: 12, marginTop: -8, marginBottom: 16 }}>
+              提示：已根据资源类型 <b>{selectedResourceType}</b> 过滤可用操作
+            </div>
+          )}
         </Form>
       </Modal>
     </div>

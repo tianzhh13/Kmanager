@@ -4,14 +4,14 @@ import "time"
 
 // ClusterMetrics 集群级别指标
 type ClusterMetrics struct {
-	ClusterID     int64     `json:"cluster_id"`
-	BrokerCount   int       `json:"broker_count"`
-	TopicCount    int       `json:"topic_count"`
-	MessageRate   float64   `json:"message_rate"`   // 每秒消息数
-	BytesInRate   float64   `json:"bytes_in_rate"`  // 字节流入速率
-	BytesOutRate  float64   `json:"bytes_out_rate"` // 字节流出速率
-	StartTime     time.Time `json:"start_time"`
-	EndTime       time.Time `json:"end_time"`
+	ClusterID    int64     `json:"cluster_id"`
+	BrokerCount  int       `json:"broker_count"`
+	TopicCount   int       `json:"topic_count"`
+	MessageRate  float64   `json:"message_rate"`   // 每秒消息数
+	BytesInRate  float64   `json:"bytes_in_rate"`  // 字节流入速率
+	BytesOutRate float64   `json:"bytes_out_rate"` // 字节流出速率
+	StartTime    time.Time `json:"start_time"`
+	EndTime      time.Time `json:"end_time"`
 }
 
 // BrokerMetrics Broker 级别指标
@@ -44,9 +44,9 @@ type TopicMetrics struct {
 type ConsumerGroupMetrics struct {
 	ClusterID     int64     `json:"cluster_id"`
 	ConsumerGroup string    `json:"consumer_group"`
-	Lag           float64   `json:"lag"`           // 消费延迟
-	ConsumeRate   float64   `json:"consume_rate"`  // 消费速率
-	MemberCount   int       `json:"member_count"`  // 成员数量
+	Lag           float64   `json:"lag"`          // 消费延迟
+	ConsumeRate   float64   `json:"consume_rate"` // 消费速率
+	MemberCount   int       `json:"member_count"` // 成员数量
 	StartTime     time.Time `json:"start_time"`
 	EndTime       time.Time `json:"end_time"`
 }

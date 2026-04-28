@@ -1,81 +1,95 @@
 import axios from './api'
 
-export interface ClusterMetricsParams {
-  start: string
-  end: string
-}
-
-export interface ClusterMetrics {
-  cluster_id: number
-  broker_count: number
-  topic_count: number
-  message_rate: number
-  bytes_in_rate: number
-  bytes_out_rate: number
-  start_time: string
-  end_time: string
-}
+// ============================================================
+// Broker 指标（来自 JMX Exporter）
+// ============================================================
 
 export interface BrokerMetrics {
-  cluster_id: number
-  broker_host: string
-  cpu_usage: number
-  memory_usage: number
-  network_in_rate: number
-  network_out_rate: number
-  start_time: string
-  end_time: string
+  bytes_in_per_sec: number
+  bytes_out_per_sec: number
+  messages_in_per_sec: number
+  total_log_size_bytes: number
+  under_replicated_partitions: number
+  offline_partitions_count: number
+  active_controller_count: number
 }
 
-export interface TopicMetrics {
-  cluster_id: number
-  topic_name: string
-  message_rate_in: number
-  bytes_rate_in: number
-  bytes_rate_out: number
-  partition_count: number
-  start_time: string
-  end_time: string
-}
+// ============================================================
+// 消费者组信息（来自内置 Kafka Exporter）
+// ============================================================
 
-export interface ConsumerGroupMetrics {
-  cluster_id: number
-  consumer_group: string
+export interface TopicLag {
+  topic: string
+  partition: number
   lag: number
-  consume_rate: number
+  log_end_offset: number
+  consumer_offset: number
+}
+
+export interface ConsumerGroupInfo {
+  group_id: string
+  state: string
   member_count: number
-  start_time: string
-  end_time: string
+  total_lag: number
+  topics: TopicLag[]
 }
 
-export interface TimeSeriesPoint {
+// ============================================================
+// 集群指标响应（整合 JMX + Kafka Exporter）
+// ============================================================
+
+export interface ClusterMetricsResponse {
+  cluster_id: number
+  broker_metrics: BrokerMetrics | null
+  consumer_groups: ConsumerGroupInfo[]
+  broker_count: number
+  topic_count: number
+  jmx_exporter_available: boolean
+  kafka_exporter_available: boolean
+}
+
+// ============================================================
+// 历史指标（用于折线图）
+// ============================================================
+
+export interface MetricsHistoryItem {
+  id: number
+  cluster_id: number
   timestamp: string
-  value: number
+  messages_in_per_sec: number
+  bytes_in_per_sec: number
+  bytes_out_per_sec: number
+  total_log_size_bytes: number
+  under_replicated_partitions: number
+  offline_partitions_count: number
+  total_lag: number
+  consumer_group_count: number
+  broker_count: number
+  topic_count: number
 }
 
-export interface QueryResult {
-  query: string
-  data: TimeSeriesPoint[]
-}
+// ============================================================
+// API
+// ============================================================
 
 export const metricsAPI = {
-  // 获取集群级别指标
-  getClusterMetrics: (clusterId: number, params: ClusterMetricsParams) => 
-    axios.get<ClusterMetrics>(`/metrics/cluster/${clusterId}`, { params }),
-  
-  // 获取 Broker 级别指标
-  getBrokerMetrics: (clusterId: number, params: ClusterMetricsParams & { host: string }) =>
-    axios.get<BrokerMetrics>(`/metrics/broker/${clusterId}`, { params }),
-  
-  // 获取 Topic 级别指标
-  getTopicMetrics: (clusterId: number, params: ClusterMetricsParams & { topic: string }) =>
-    axios.get<TopicMetrics>(`/metrics/topic/${clusterId}`, { params }),
-  
-  // 获取消费组指标
-  getConsumerGroupMetrics: (clusterId: number, params: ClusterMetricsParams & { group: string }) =>
-    axios.get<ConsumerGroupMetrics>(`/metrics/consumer-group/${clusterId}`, { params }),
-  
-  // 自定义 PromQL 查询
-  queryPromQL: (clusterId: number, params: ClusterMetricsParams & { query: string; step?: string }) =>
-    axios.get<QueryResult>(`/metrics/query/${clusterId}`, { params })
+  // 获取集群指标（整合所有数据）
+  getClusterMetrics: (clusterId: number) =>
+    axios.get<ClusterMetricsResponse>(`/metrics/cluster/${clusterId}`),
+
+  // 获取 Broker 指标（JMX Exporter）
+  getBrokerMetrics: (clusterId: number) =>
+    axios.get<BrokerMetrics>(`/metrics/broker/${clusterId}`),
+
+  // 获取消费者组 Lag 列表（内置 Kafka Exporter）
+  getConsumerGroupLags: (clusterId: number) =>
+    axios.get<{ data: ConsumerGroupInfo[] }>(`/metrics/consumer-groups/${clusterId}`),
+
+  // 获取单个消费者组详情
+  getConsumerGroupInfo: (clusterId: number, groupId: string) =>
+    axios.get<ConsumerGroupInfo>(`/metrics/consumer-group/${clusterId}`, { params: { group: groupId } }),
+
+  // 获取历史指标（用于折线图）
+  getMetricsHistory: (clusterId: number, duration: string = '1h') =>
+    axios.get<MetricsHistoryItem[]>(`/metrics/history/${clusterId}`, { params: { duration } }),
 }

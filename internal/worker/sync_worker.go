@@ -4,21 +4,24 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
 	"kafka-management-platform/internal/config"
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
+	"kafka-management-platform/internal/service/monitor"
 	"kafka-management-platform/pkg/encryption"
 	"kafka-management-platform/pkg/kafka"
+	"kafka-management-platform/pkg/victoriametrics"
 
 	"github.com/IBM/sarama"
 )
 
 const (
-	// 默认同步间隔 5 分钟
-	defaultSyncInterval = 5 * time.Minute
+	// 默认同步间隔 30 秒（用于监控指标采集）
+	defaultSyncInterval = 30 * time.Second
 	// 最大重试次数
 	maxRetries = 3
 	// 重试间隔
@@ -33,13 +36,22 @@ type SyncWorker struct {
 	aclRepo         repository.ACLRepository
 	auditLogRepo    repository.AuditLogRepository
 	encryptSvc      *encryption.Service
+	monitorSvc      *monitor.Service
+	vmClient        *victoriametrics.Client
 	adminClientPool sync.Map // map[int64]*kafka.AdminClient
+	kerberosBaseDir string
 	stopCh          chan struct{}
 	wg              sync.WaitGroup
 }
 
 // NewSyncWorker 创建数据同步 Worker
-func NewSyncWorker(cfg *config.Config, clusterRepo repository.ClusterRepository, topicRepo repository.TopicRepository, aclRepo repository.ACLRepository, auditLogRepo repository.AuditLogRepository) *SyncWorker {
+func NewSyncWorker(
+	cfg *config.Config,
+	clusterRepo repository.ClusterRepository,
+	topicRepo repository.TopicRepository,
+	aclRepo repository.ACLRepository,
+	auditLogRepo repository.AuditLogRepository,
+) *SyncWorker {
 	var encryptSvc *encryption.Service
 	if cfg.Encryption.Key != "" {
 		var err error
@@ -50,14 +62,30 @@ func NewSyncWorker(cfg *config.Config, clusterRepo repository.ClusterRepository,
 		}
 	}
 
+	// 创建 VictoriaMetrics 客户端
+	vmClient := victoriametrics.NewClient(
+		cfg.VictoriaMetrics.WriteURL,
+		cfg.VictoriaMetrics.QueryURL,
+		cfg.VictoriaMetrics.Enabled,
+	)
+
+	// Kerberos 文件基础目录
+	kerberosBaseDir := "./kerberos"
+
+	// 创建监控服务
+	monitorSvc := monitor.NewService(clusterRepo, encryptSvc, vmClient, kerberosBaseDir)
+
 	return &SyncWorker{
-		cfg:          cfg,
-		clusterRepo:  clusterRepo,
-		topicRepo:    topicRepo,
-		aclRepo:      aclRepo,
-		auditLogRepo: auditLogRepo,
-		encryptSvc:   encryptSvc,
-		stopCh:       make(chan struct{}),
+		cfg:             cfg,
+		clusterRepo:     clusterRepo,
+		topicRepo:       topicRepo,
+		aclRepo:         aclRepo,
+		auditLogRepo:    auditLogRepo,
+		encryptSvc:      encryptSvc,
+		monitorSvc:      monitorSvc,
+		vmClient:        vmClient,
+		kerberosBaseDir: kerberosBaseDir,
+		stopCh:          make(chan struct{}),
 	}
 }
 
@@ -121,11 +149,13 @@ func (w *SyncWorker) runScheduledSync() {
 func (w *SyncWorker) syncAllClustersWithRetry() {
 	ctx := context.Background()
 
-	clusters, _, err := w.clusterRepo.List(ctx, 1, 1000)
+	clusters, _, err := w.clusterRepo.List(ctx, 0, 1000)
 	if err != nil {
 		log.Printf("Failed to list clusters: %v", err)
 		return
 	}
+
+	log.Printf("Found %d clusters to sync", len(clusters))
 
 	for _, cluster := range clusters {
 		w.syncClusterWithRetry(ctx, cluster.ClusterID)
@@ -211,6 +241,13 @@ func (w *SyncWorker) SyncCluster(ctx context.Context, clusterID int64) error {
 		log.Printf("Failed to sync ACLs for cluster %d: %v", clusterID, err)
 	}
 
+	// 采集指标并写入 VictoriaMetrics
+	if w.vmClient != nil && w.vmClient.IsEnabled() {
+		if err := w.collectAndWriteMetrics(ctx, cluster); err != nil {
+			log.Printf("Failed to collect metrics for cluster %d: %v", clusterID, err)
+		}
+	}
+
 	log.Printf("Cluster %d synced successfully", clusterID)
 	return nil
 }
@@ -291,8 +328,14 @@ func (w *SyncWorker) syncTopics(ctx context.Context, adminClient *kafka.AdminCli
 
 // syncACLs 同步 ACLs
 func (w *SyncWorker) syncACLs(ctx context.Context, adminClient *kafka.AdminClient, clusterID int64) error {
-	// 从 Kafka 获取 ACLs（使用空 filter 获取所有 ACL）
-	kafkaACLs, err := adminClient.ListACLs(sarama.AclFilter{})
+	// 从 Kafka 获取 ACLs（使用 Any 过滤器获取所有 ACL）
+	// 注意：不能使用空的 AclFilter{}，因为零值是 Unknown 类型，某些 Kafka 版本不支持
+	kafkaACLs, err := adminClient.ListACLs(sarama.AclFilter{
+		ResourceType:              sarama.AclResourceAny,
+		ResourcePatternTypeFilter: sarama.AclPatternAny,
+		Operation:                 sarama.AclOperationAny,
+		PermissionType:            sarama.AclPermissionAny,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to list acls from kafka: %w", err)
 	}
@@ -419,8 +462,8 @@ func (w *SyncWorker) getAdminClient(cluster *models.Cluster) (*kafka.AdminClient
 		w.adminClientPool.Delete(cluster.ClusterID)
 	}
 
-	// 创建新的 Admin Client
-	client, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建新的 Admin Client（支持 Kerberos）
+	client, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, w.kerberosBaseDir)
 	if err != nil {
 		return nil, err
 	}
@@ -448,5 +491,58 @@ func (w *SyncWorker) ManualSync(clusterID int64) error {
 // TriggerSync 触发指定集群的同步（带重试）
 func (w *SyncWorker) TriggerSync(ctx context.Context, clusterID int64) error {
 	w.syncClusterWithRetry(ctx, clusterID)
+	return nil
+}
+
+// collectAndWriteMetrics 采集指标并写入 VictoriaMetrics
+func (w *SyncWorker) collectAndWriteMetrics(ctx context.Context, cluster *models.Cluster) error {
+	// 获取集群指标
+	metrics, err := w.monitorSvc.GetClusterMetrics(ctx, cluster.ClusterID)
+	if err != nil {
+		return fmt.Errorf("failed to get cluster metrics: %w", err)
+	}
+
+	// 构建标签
+	labels := map[string]string{
+		"cluster_id":   strconv.FormatInt(cluster.ClusterID, 10),
+		"cluster_name": cluster.ClusterName,
+	}
+
+	var vmMetrics []victoriametrics.Metric
+
+	// 写入 Broker 指标
+	if metrics.BrokerMetrics != nil {
+		vmMetrics = append(vmMetrics,
+			victoriametrics.Metric{Name: "kafka_messages_in_per_sec", Value: metrics.BrokerMetrics.MessagesInPerSec, Labels: labels},
+			victoriametrics.Metric{Name: "kafka_bytes_in_per_sec", Value: metrics.BrokerMetrics.BytesInPerSec, Labels: labels},
+			victoriametrics.Metric{Name: "kafka_bytes_out_per_sec", Value: metrics.BrokerMetrics.BytesOutPerSec, Labels: labels},
+			victoriametrics.Metric{Name: "kafka_under_replicated_partitions", Value: metrics.BrokerMetrics.UnderReplicatedPartitions, Labels: labels},
+			victoriametrics.Metric{Name: "kafka_offline_partitions_count", Value: metrics.BrokerMetrics.OfflinePartitionsCount, Labels: labels},
+			victoriametrics.Metric{Name: "kafka_active_controller_count", Value: metrics.BrokerMetrics.ActiveControllerCount, Labels: labels},
+		)
+	}
+
+	// 写入元数据指标
+	vmMetrics = append(vmMetrics,
+		victoriametrics.Metric{Name: "kafka_broker_count", Value: float64(metrics.BrokerCount), Labels: labels},
+		victoriametrics.Metric{Name: "kafka_topic_count", Value: float64(metrics.TopicCount), Labels: labels},
+		victoriametrics.Metric{Name: "kafka_consumer_group_count", Value: float64(len(metrics.ConsumerGroups)), Labels: labels},
+	)
+
+	// 计算总延迟
+	var totalLag int64
+	for _, cg := range metrics.ConsumerGroups {
+		totalLag += cg.TotalLag
+	}
+	vmMetrics = append(vmMetrics,
+		victoriametrics.Metric{Name: "kafka_total_lag", Value: float64(totalLag), Labels: labels},
+	)
+
+	// 写入 VictoriaMetrics
+	if err := w.vmClient.Write(ctx, vmMetrics); err != nil {
+		return fmt.Errorf("failed to write metrics to victoriametrics: %w", err)
+	}
+
+	log.Printf("Collected and wrote %d metrics for cluster %d", len(vmMetrics), cluster.ClusterID)
 	return nil
 }

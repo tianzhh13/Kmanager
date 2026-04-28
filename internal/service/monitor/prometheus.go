@@ -3,332 +3,176 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
 	"time"
 
-	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
-	"kafka-management-platform/pkg/prometheus"
+	"kafka-management-platform/pkg/encryption"
+	"kafka-management-platform/pkg/victoriametrics"
 
 	"github.com/gin-gonic/gin"
 )
 
 var (
-	// ErrNoPrometheusURL 集群未配置 Prometheus URL
-	ErrNoPrometheusURL = fmt.Errorf("cluster does not have Prometheus URL configured")
-	// ErrTimeRangeExceeded 时间范围超过最大限制
-	ErrTimeRangeExceeded = fmt.Errorf("time range exceeds maximum of 30 days")
-	// ErrInvalidTimeRange 无效的时间范围
-	ErrInvalidTimeRange = fmt.Errorf("end time must be after start time")
+	// ErrNoJMXExporterURL 集群未配置 JMX Exporter URL
+	ErrNoJMXExporterURL = fmt.Errorf("cluster does not have JMX Exporter URL configured")
 )
 
-// Service 监控服务
+// ClusterMetricsResponse 集群指标响应
+type ClusterMetricsResponse struct {
+	ClusterID int64 `json:"cluster_id"`
+
+	// 来自 JMX Exporter
+	BrokerMetrics *BrokerMetrics `json:"broker_metrics"`
+
+	// 来自内置 Kafka Exporter
+	ConsumerGroups []*ConsumerGroupInfo `json:"consumer_groups"`
+
+	// 元数据
+	BrokerCount int `json:"broker_count"`
+	TopicCount  int `json:"topic_count"`
+
+	// 监控状态
+	JMXExporterAvailable   bool `json:"jmx_exporter_available"`
+	KafkaExporterAvailable bool `json:"kafka_exporter_available"`
+}
+
+// Service 监控服务（整合 JMX Exporter + 内置 Kafka Exporter）
 type Service struct {
-	clusterRepo repository.ClusterRepository
-	clients     map[int64]*prometheus.Client // 集群ID到Prometheus客户端的映射
+	clusterRepo   repository.ClusterRepository
+	encryptionSvc *encryption.Service
+	jmxClients    map[int64]*JMXClient  // JMX Exporter 客户端缓存
+	kafkaExporter *KafkaExporterService // 内置 Kafka Exporter
+	vmClient      *victoriametrics.Client
 }
 
 // NewService 创建监控服务
-func NewService(clusterRepo repository.ClusterRepository) *Service {
+func NewService(
+	clusterRepo repository.ClusterRepository,
+	encryptionSvc *encryption.Service,
+	vmClient *victoriametrics.Client,
+	kerberosBaseDir string,
+) *Service {
 	return &Service{
-		clusterRepo: clusterRepo,
-		clients:     make(map[int64]*prometheus.Client),
+		clusterRepo:   clusterRepo,
+		encryptionSvc: encryptionSvc,
+		jmxClients:    make(map[int64]*JMXClient),
+		kafkaExporter: NewKafkaExporterService(clusterRepo, encryptionSvc, kerberosBaseDir),
+		vmClient:      vmClient,
 	}
 }
 
-// getClient 获取或创建 Prometheus 客户端
-func (s *Service) getClient(clusterID int64, prometheusURL string) (*prometheus.Client, error) {
-	// 缓存客户端
-	if client, exists := s.clients[clusterID]; exists {
-		return client, nil
+// getJMXClient 获取或创建 JMX 客户端
+func (s *Service) getJMXClient(clusterID int64, jmxURL string) *JMXClient {
+	if client, exists := s.jmxClients[clusterID]; exists {
+		return client
 	}
 
-	client := prometheus.NewClient(prometheusURL)
-	s.clients[clusterID] = client
-	return client, nil
+	client := NewJMXClient(jmxURL)
+	s.jmxClients[clusterID] = client
+	return client
 }
 
-// ValidateTimeRange 验证时间范围（最长30天）
-func ValidateTimeRange(start, end time.Time) error {
-	maxDuration := 30 * 24 * time.Hour
-	if end.Sub(start) > maxDuration {
-		return ErrTimeRangeExceeded
-	}
-	if end.Before(start) {
-		return ErrInvalidTimeRange
-	}
-	return nil
-}
+// GetClusterMetrics 获取集群监控指标（整合 JMX + Kafka Exporter）
+func (s *Service) GetClusterMetrics(ctx context.Context, clusterID int64) (*ClusterMetricsResponse, error) {
+	log.Printf("[Monitor] Getting cluster metrics for cluster %d", clusterID)
 
-// GetClusterMetrics 获取集群概览指标
-// 需求: 6.2
-func (s *Service) GetClusterMetrics(ctx context.Context, clusterID int64, start, end time.Time) (*models.ClusterMetrics, error) {
-	// 验证时间范围
-	if err := ValidateTimeRange(start, end); err != nil {
-		return nil, err
-	}
-
-	// 获取集群配置
 	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}
 
-	if cluster.PrometheusURL == "" {
-		return nil, ErrNoPrometheusURL
-	}
-
-	client, err := s.getClient(clusterID, cluster.PrometheusURL)
-	if err != nil {
-		return nil, err
-	}
-
-	metrics := &models.ClusterMetrics{
+	response := &ClusterMetricsResponse{
 		ClusterID: clusterID,
-		StartTime: start,
-		EndTime:   end,
 	}
 
-	// 查询 Broker 数量
-	brokerCount, err := s.querySingleValue(ctx, client, "count(kafka_broker_info)", end)
-	if err == nil {
-		metrics.BrokerCount = int(brokerCount)
+	// 1. 从 JMX Exporter 获取 Broker 指标
+	if cluster.JMXExporterURL != "" {
+		jmxClient := s.getJMXClient(clusterID, cluster.JMXExporterURL)
+		brokerMetrics, err := jmxClient.GetBrokerMetrics(ctx)
+		if err != nil {
+			log.Printf("[Monitor] Failed to get JMX metrics: %v", err)
+			response.JMXExporterAvailable = false
+		} else {
+			response.BrokerMetrics = brokerMetrics
+			response.JMXExporterAvailable = true
+		}
 	}
 
-	// 查询 Topic 数量
-	topicCount, err := s.querySingleValue(ctx, client, "count(kafka_topic_partition_count)", end)
-	if err == nil {
-		metrics.TopicCount = int(topicCount)
+	// 2. 从内置 Kafka Exporter 获取消费者组 Lag
+	consumerGroups, err := s.kafkaExporter.GetAllConsumerGroupLags(ctx, clusterID)
+	if err != nil {
+		log.Printf("[Monitor] Failed to get consumer group lags: %v", err)
+		response.KafkaExporterAvailable = false
+	} else {
+		response.ConsumerGroups = consumerGroups
+		response.KafkaExporterAvailable = true
 	}
 
-	// 查询消息速率（每秒消息数）
-	msgRate, err := s.querySingleValue(ctx, client, "sum(rate(kafka_server_brokertopicmetrics_messagesin_total[5m]))", end)
-	if err == nil {
-		metrics.MessageRate = msgRate
+	// 3. 获取元数据
+	metadata, err := s.kafkaExporter.GetClusterMetadata(ctx, clusterID)
+	if err != nil {
+		log.Printf("[Monitor] Failed to get cluster metadata: %v", err)
+	} else {
+		response.BrokerCount = len(metadata.Brokers)
+		response.TopicCount = metadata.TopicCount
 	}
 
-	// 查询字节速率
-	bytesInRate, err := s.querySingleValue(ctx, client, "sum(rate(kafka_server_brokertopicmetrics_bytesin_total[5m]))", end)
-	if err == nil {
-		metrics.BytesInRate = bytesInRate
-	}
-
-	bytesOutRate, err := s.querySingleValue(ctx, client, "sum(rate(kafka_server_brokertopicmetrics_bytesout_total[5m]))", end)
-	if err == nil {
-		metrics.BytesOutRate = bytesOutRate
-	}
-
-	return metrics, nil
+	return response, nil
 }
 
-// GetBrokerMetrics 获取 Broker 级别指标
-// 需求: 6.3
-func (s *Service) GetBrokerMetrics(ctx context.Context, clusterID int64, brokerHost string, start, end time.Time) (*models.BrokerMetrics, error) {
-	if err := ValidateTimeRange(start, end); err != nil {
-		return nil, err
-	}
+// GetConsumerGroupLags 获取消费者组 Lag（内置 Kafka Exporter）
+func (s *Service) GetConsumerGroupLags(ctx context.Context, clusterID int64) ([]*ConsumerGroupInfo, error) {
+	return s.kafkaExporter.GetAllConsumerGroupLags(ctx, clusterID)
+}
 
+// GetConsumerGroupInfo 获取单个消费者组详情
+func (s *Service) GetConsumerGroupInfo(ctx context.Context, clusterID int64, groupID string) (*ConsumerGroupInfo, error) {
+	return s.kafkaExporter.GetConsumerGroupInfo(ctx, clusterID, groupID)
+}
+
+// GetBrokerMetrics 从 JMX Exporter 获取 Broker 指标
+func (s *Service) GetBrokerMetrics(ctx context.Context, clusterID int64) (*BrokerMetrics, error) {
 	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}
 
-	if cluster.PrometheusURL == "" {
-		return nil, ErrNoPrometheusURL
+	if cluster.JMXExporterURL == "" {
+		return nil, ErrNoJMXExporterURL
 	}
 
-	client, err := s.getClient(clusterID, cluster.PrometheusURL)
-	if err != nil {
-		return nil, err
-	}
-
-	metrics := &models.BrokerMetrics{
-		ClusterID:  clusterID,
-		BrokerHost: brokerHost,
-		StartTime:  start,
-		EndTime:    end,
-	}
-
-	// 查询 CPU 使用率
-	cpuUsage, err := s.querySingleValue(ctx, client,
-		fmt.Sprintf("avg(rate(process_cpu_seconds_total{instance=\"%s\"}[5m])) * 100", brokerHost), end)
-	if err == nil {
-		metrics.CPUUsage = cpuUsage
-	}
-
-	// 查询内存使用
-	memUsage, err := s.querySingleValue(ctx, client,
-		fmt.Sprintf("process_resident_memory_bytes{instance=\"%s\"}", brokerHost), end)
-	if err == nil {
-		metrics.MemoryUsage = memUsage
-	}
-
-	// 查询网络流入速率
-	netIn, err := s.querySingleValue(ctx, client,
-		fmt.Sprintf("sum(rate(kafka_network_socketserver_networkprocessor_avgidle_percent{instance=\"%s\"}[5m]))", brokerHost), end)
-	if err == nil {
-		metrics.NetworkInRate = netIn
-	}
-
-	// 查询网络流出速率
-	netOut, err := s.querySingleValue(ctx, client,
-		fmt.Sprintf("sum(rate(kafka_network_socketserver_networkprocessor_avgidle_percent{instance=\"%s\"}[5m]))", brokerHost), end)
-	if err == nil {
-		metrics.NetworkOutRate = netOut
-	}
-
-	return metrics, nil
+	jmxClient := s.getJMXClient(clusterID, cluster.JMXExporterURL)
+	return jmxClient.GetBrokerMetrics(ctx)
 }
 
-// GetTopicMetrics 获取 Topic 级别指标
-// 需求: 6.4
-func (s *Service) GetTopicMetrics(ctx context.Context, clusterID int64, topicName string, start, end time.Time) (*models.TopicMetrics, error) {
-	if err := ValidateTimeRange(start, end); err != nil {
-		return nil, err
-	}
-
+// TestJMXExporter 测试 JMX Exporter 连接
+func (s *Service) TestJMXExporter(ctx context.Context, clusterID int64) error {
 	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster: %w", err)
+		return fmt.Errorf("failed to get cluster: %w", err)
 	}
 
-	if cluster.PrometheusURL == "" {
-		return nil, ErrNoPrometheusURL
+	if cluster.JMXExporterURL == "" {
+		return ErrNoJMXExporterURL
 	}
 
-	client, err := s.getClient(clusterID, cluster.PrometheusURL)
-	if err != nil {
-		return nil, err
-	}
-
-	metrics := &models.TopicMetrics{
-		ClusterID: clusterID,
-		TopicName: topicName,
-		StartTime: start,
-		EndTime:   end,
-	}
-
-	// 查询消息流入速率
-	msgRate, err := s.querySingleValue(ctx, client,
-		fmt.Sprintf("sum(rate(kafka_server_brokertopicmetrics_messagesin_total{topic=\"%s\"}[5m]))", topicName), end)
-	if err == nil {
-		metrics.MessageRateIn = msgRate
-	}
-
-	// 查询字节流入速率
-	bytesInRate, err := s.querySingleValue(ctx, client,
-		fmt.Sprintf("sum(rate(kafka_server_brokertopicmetrics_bytesin_total{topic=\"%s\"}[5m]))", topicName), end)
-	if err == nil {
-		metrics.BytesRateIn = bytesInRate
-	}
-
-	// 查询字节流出速率
-	bytesOutRate, err := s.querySingleValue(ctx, client,
-		fmt.Sprintf("sum(rate(kafka_server_brokertopicmetrics_bytesout_total{topic=\"%s\"}[5m]))", topicName), end)
-	if err == nil {
-		metrics.BytesRateOut = bytesOutRate
-	}
-
-	// 查询分区数量
-	partitions, err := s.querySingleValue(ctx, client,
-		fmt.Sprintf("kafka_topic_partition_count{topic=\"%s\"}", topicName), end)
-	if err == nil {
-		metrics.PartitionCount = int(partitions)
-	}
-
-	return metrics, nil
+	jmxClient := s.getJMXClient(clusterID, cluster.JMXExporterURL)
+	return jmxClient.HealthCheck(ctx)
 }
 
-// GetConsumerGroupMetrics 获取消费组指标
-// 需求: 6.5
-func (s *Service) GetConsumerGroupMetrics(ctx context.Context, clusterID int64, consumerGroup string, start, end time.Time) (*models.ConsumerGroupMetrics, error) {
-	if err := ValidateTimeRange(start, end); err != nil {
-		return nil, err
+// QueryMetricsRange 从 VictoriaMetrics 查询历史指标
+func (s *Service) QueryMetricsRange(ctx context.Context, query string, start, end time.Time, step string) ([]byte, error) {
+	if s.vmClient == nil || !s.vmClient.IsEnabled() {
+		return nil, fmt.Errorf("victoriametrics is not configured")
 	}
-
-	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster: %w", err)
-	}
-
-	if cluster.PrometheusURL == "" {
-		return nil, ErrNoPrometheusURL
-	}
-
-	client, err := s.getClient(clusterID, cluster.PrometheusURL)
-	if err != nil {
-		return nil, err
-	}
-
-	metrics := &models.ConsumerGroupMetrics{
-		ClusterID:     clusterID,
-		ConsumerGroup: consumerGroup,
-		StartTime:     start,
-		EndTime:       end,
-	}
-
-	// 查询消费延迟
-	lag, err := s.querySingleValue(ctx, client,
-		fmt.Sprintf("sum(kafka_consumergroup_group_topic_partition_lag{group=\"%s\"})", consumerGroup), end)
-	if err == nil {
-		metrics.Lag = lag
-	}
-
-	// 查询消费速率
-	consumeRate, err := s.querySingleValue(ctx, client,
-		fmt.Sprintf("sum(rate(kafka_consumergroup_group_topic_records_consumed_total{group=\"%s\"}[5m]))", consumerGroup), end)
-	if err == nil {
-		metrics.ConsumeRate = consumeRate
-	}
-
-	// 查询成员数量
-	members, err := s.querySingleValue(ctx, client,
-		fmt.Sprintf("kafka_consumergroup_group_member_count{group=\"%s\"}", consumerGroup), end)
-	if err == nil {
-		metrics.MemberCount = int(members)
-	}
-
-	return metrics, nil
+	return s.vmClient.QueryRange(ctx, query, start, end, step)
 }
 
-// querySingleValue 从查询结果中提取单个值
-func (s *Service) querySingleValue(ctx context.Context, client *prometheus.Client, query string, timestamp time.Time) (float64, error) {
-	result, err := client.Query(ctx, query, timestamp)
-	if err != nil {
-		return 0, err
-	}
-
-	return prometheus.ParseValue(result)
-}
-
-// QueryPrometheus 执行自定义 PromQL 查询
-// 需求: 6.1, 6.6, 6.7
-func (s *Service) QueryPrometheus(ctx context.Context, clusterID int64, query string, start, end time.Time, step time.Duration) ([]prometheus.TimeSeriesPoint, error) {
-	if err := ValidateTimeRange(start, end); err != nil {
-		return nil, err
-	}
-
-	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster: %w", err)
-	}
-
-	if cluster.PrometheusURL == "" {
-		return nil, ErrNoPrometheusURL
-	}
-
-	client, err := s.getClient(clusterID, cluster.PrometheusURL)
-	if err != nil {
-		return nil, err
-	}
-
-	result, err := client.QueryRange(ctx, query, start, end, step)
-	if err != nil {
-		return nil, err
-	}
-
-	return prometheus.ParseValues(result)
-}
+// ============================================================
+// HTTP Handlers
+// ============================================================
 
 // Handler HTTP 处理器
 type Handler struct {
@@ -342,29 +186,13 @@ func NewHandler(svc *Service) *Handler {
 
 // GetClusterMetrics 处理获取集群指标请求
 func (h *Handler) GetClusterMetrics(c *gin.Context) {
-	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	clusterID, err := parseInt64Param(c.Param("id"))
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid cluster id"})
 		return
 	}
 
-	// 解析时间参数
-	startStr := c.DefaultQuery("start", time.Now().Add(-1*time.Hour).Format(time.RFC3339))
-	endStr := c.DefaultQuery("end", time.Now().Format(time.RFC3339))
-
-	start, err := time.Parse(time.RFC3339, startStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid start time format"})
-		return
-	}
-
-	end, err := time.Parse(time.RFC3339, endStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid end time format"})
-		return
-	}
-
-	metrics, err := h.svc.GetClusterMetrics(c.Request.Context(), clusterID, start, end)
+	metrics, err := h.svc.GetClusterMetrics(c.Request.Context(), clusterID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -373,164 +201,129 @@ func (h *Handler) GetClusterMetrics(c *gin.Context) {
 	c.JSON(200, metrics)
 }
 
-// GetBrokerMetrics 处理获取 Broker 指标请求
-func (h *Handler) GetBrokerMetrics(c *gin.Context) {
-	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+// GetConsumerGroupLags 处理获取消费者组 Lag 请求
+func (h *Handler) GetConsumerGroupLags(c *gin.Context) {
+	clusterID, err := parseInt64Param(c.Param("id"))
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid cluster id"})
 		return
 	}
 
-	brokerHost := c.Query("host")
-	if brokerHost == "" {
-		c.JSON(400, gin.H{"error": "broker host is required"})
-		return
-	}
-
-	startStr := c.DefaultQuery("start", time.Now().Add(-1*time.Hour).Format(time.RFC3339))
-	endStr := c.DefaultQuery("end", time.Now().Format(time.RFC3339))
-
-	start, err := time.Parse(time.RFC3339, startStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid start time format"})
-		return
-	}
-
-	end, err := time.Parse(time.RFC3339, endStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid end time format"})
-		return
-	}
-
-	metrics, err := h.svc.GetBrokerMetrics(c.Request.Context(), clusterID, brokerHost, start, end)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(200, metrics)
-}
-
-// GetTopicMetrics 处理获取 Topic 指标请求
-func (h *Handler) GetTopicMetrics(c *gin.Context) {
-	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid cluster id"})
-		return
-	}
-
-	topicName := c.Param("topic")
-	if topicName == "" {
-		c.JSON(400, gin.H{"error": "topic name is required"})
-		return
-	}
-
-	startStr := c.DefaultQuery("start", time.Now().Add(-1*time.Hour).Format(time.RFC3339))
-	endStr := c.DefaultQuery("end", time.Now().Format(time.RFC3339))
-
-	start, err := time.Parse(time.RFC3339, startStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid start time format"})
-		return
-	}
-
-	end, err := time.Parse(time.RFC3339, endStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid end time format"})
-		return
-	}
-
-	metrics, err := h.svc.GetTopicMetrics(c.Request.Context(), clusterID, topicName, start, end)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(200, metrics)
-}
-
-// GetConsumerGroupMetrics 处理获取消费组指标请求
-func (h *Handler) GetConsumerGroupMetrics(c *gin.Context) {
-	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid cluster id"})
-		return
-	}
-
-	group := c.Query("group")
-	if group == "" {
-		c.JSON(400, gin.H{"error": "consumer group is required"})
-		return
-	}
-
-	startStr := c.DefaultQuery("start", time.Now().Add(-1*time.Hour).Format(time.RFC3339))
-	endStr := c.DefaultQuery("end", time.Now().Format(time.RFC3339))
-
-	start, err := time.Parse(time.RFC3339, startStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid start time format"})
-		return
-	}
-
-	end, err := time.Parse(time.RFC3339, endStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid end time format"})
-		return
-	}
-
-	metrics, err := h.svc.GetConsumerGroupMetrics(c.Request.Context(), clusterID, group, start, end)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(200, metrics)
-}
-
-// QueryPrometheus 处理自定义 PromQL 查询请求
-func (h *Handler) QueryPrometheus(c *gin.Context) {
-	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid cluster id"})
-		return
-	}
-
-	query := c.Query("query")
-	if query == "" {
-		c.JSON(400, gin.H{"error": "query is required"})
-		return
-	}
-
-	startStr := c.DefaultQuery("start", time.Now().Add(-1*time.Hour).Format(time.RFC3339))
-	endStr := c.DefaultQuery("end", time.Now().Format(time.RFC3339))
-	stepStr := c.DefaultQuery("step", "1m")
-
-	start, err := time.Parse(time.RFC3339, startStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid start time format"})
-		return
-	}
-
-	end, err := time.Parse(time.RFC3339, endStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid end time format"})
-		return
-	}
-
-	step, err := time.ParseDuration(stepStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid step format"})
-		return
-	}
-
-	points, err := h.svc.QueryPrometheus(c.Request.Context(), clusterID, query, start, end, step)
+	groups, err := h.svc.GetConsumerGroupLags(c.Request.Context(), clusterID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(200, gin.H{
-		"query": query,
-		"data":  points,
+		"data": groups,
 	})
+}
+
+// GetConsumerGroupInfo 处理获取单个消费者组详情请求
+func (h *Handler) GetConsumerGroupInfo(c *gin.Context) {
+	clusterID, err := parseInt64Param(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid cluster id"})
+		return
+	}
+
+	groupID := c.Query("group")
+	if groupID == "" {
+		c.JSON(400, gin.H{"error": "group parameter is required"})
+		return
+	}
+
+	info, err := h.svc.GetConsumerGroupInfo(c.Request.Context(), clusterID, groupID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, info)
+}
+
+// GetBrokerMetrics 处理获取 Broker 指标请求
+func (h *Handler) GetBrokerMetrics(c *gin.Context) {
+	clusterID, err := parseInt64Param(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid cluster id"})
+		return
+	}
+
+	metrics, err := h.svc.GetBrokerMetrics(c.Request.Context(), clusterID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, metrics)
+}
+
+// GetMetricsHistory 处理获取历史指标请求（代理 VictoriaMetrics 查询）
+func (h *Handler) GetMetricsHistory(c *gin.Context) {
+	// 获取查询参数
+	query := c.Query("query")
+	if query == "" {
+		c.JSON(400, gin.H{"error": "query parameter is required"})
+		return
+	}
+
+	var start, end time.Time
+	var step string
+
+	// 优先使用 start/end 参数
+	startStr := c.Query("start")
+	endStr := c.Query("end")
+
+	if startStr != "" && endStr != "" {
+		// 使用精确的 start/end 时间戳
+		startUnix, err1 := strconv.ParseInt(startStr, 10, 64)
+		endUnix, err2 := strconv.ParseInt(endStr, 10, 64)
+		if err1 != nil || err2 != nil {
+			c.JSON(400, gin.H{"error": "invalid start/end timestamp"})
+			return
+		}
+		start = time.Unix(startUnix, 0)
+		end = time.Unix(endUnix, 0)
+	} else {
+		// 兼容旧的 duration 参数
+		durationStr := c.DefaultQuery("duration", "1h")
+		var duration time.Duration
+		switch durationStr {
+		case "6h", "6hour":
+			duration = 6 * time.Hour
+		case "24h", "1d", "1day":
+			duration = 24 * time.Hour
+		case "7d", "7day", "1w":
+			duration = 7 * 24 * time.Hour
+		default:
+			var err error
+			duration, err = time.ParseDuration(durationStr)
+			if err != nil {
+				duration = time.Hour
+			}
+		}
+		end = time.Now()
+		start = end.Add(-duration)
+	}
+
+	// 步长参数
+	step = c.DefaultQuery("step", "30s")
+
+	// 查询 VictoriaMetrics
+	result, err := h.svc.QueryMetricsRange(c.Request.Context(), query, start, end, step)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Data(200, "application/json", result)
+}
+
+// parseInt64Param 解析 int64 参数
+func parseInt64Param(param string) (int64, error) {
+	var result int64
+	_, err := fmt.Sscanf(param, "%d", &result)
+	return result, err
 }

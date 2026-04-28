@@ -1,7 +1,6 @@
 package kafka
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -206,6 +205,26 @@ func (c *AdminClient) DescribeUser(username string) (*sarama.DescribeUserScramCr
 	return results[0], nil
 }
 
+// ListConsumerGroups 列出所有消费者组
+func (c *AdminClient) ListConsumerGroups() (map[string]string, error) {
+	return c.admin.ListConsumerGroups()
+}
+
+// DescribeConsumerGroups 描述消费者组
+func (c *AdminClient) DescribeConsumerGroups(groups []string) ([]*sarama.GroupDescription, error) {
+	return c.admin.DescribeConsumerGroups(groups)
+}
+
+// ListConsumerGroupOffsets 列出消费者组的 Offset
+func (c *AdminClient) ListConsumerGroupOffsets(group string, topicPartitions map[string][]int32) (*sarama.OffsetFetchResponse, error) {
+	return c.admin.ListConsumerGroupOffsets(group, topicPartitions)
+}
+
+// DescribeCluster 描述集群
+func (c *AdminClient) DescribeCluster() ([]*sarama.Broker, int32, error) {
+	return c.admin.DescribeCluster()
+}
+
 // configureAuth 配置 Kafka 认证方式
 func configureAuth(config *sarama.Config, authType models.AuthType, authConfigJSON string) error {
 	switch authType {
@@ -224,7 +243,7 @@ func configureAuth(config *sarama.Config, authType models.AuthType, authConfigJS
 	}
 }
 
-// configureSCRAM 配置 SCRAM 认证
+// configureSCRAM 配置 SASL 认证（支持 PLAIN / SCRAM-SHA-256 / SCRAM-SHA-512）
 func configureSCRAM(config *sarama.Config, authConfigJSON string) error {
 	if authConfigJSON == "" {
 		return ErrInvalidAuthConfig
@@ -245,23 +264,20 @@ func configureSCRAM(config *sarama.Config, authConfigJSON string) error {
 		return fmt.Errorf("%w: missing password", ErrInvalidAuthConfig)
 	}
 
-	mechanism := "SCRAM-SHA-256"
+	mechanism := "PLAIN"
 	if m, ok := authConfig["mechanism"].(string); ok && m != "" {
 		mechanism = m
 	}
 
-	// 安全协议，默认为 SASL_SSL
-	// 支持: SASL_SSL, SASL_PLAINTEXT, SSL, PLAINTEXT
-	securityProtocol := "SASL_SSL"
-	if sp, ok := authConfig["security_protocol"].(string); ok && sp != "" {
-		securityProtocol = strings.ToUpper(sp)
-	}
-
+	// 固定使用 SASL_PLAINTEXT（无 TLS）
 	config.Net.SASL.Enable = true
 	config.Net.SASL.User = username
 	config.Net.SASL.Password = password
+	config.Net.TLS.Enable = false
 
 	switch mechanism {
+	case "PLAIN":
+		config.Net.SASL.Mechanism = sarama.SASLTypePlaintext
 	case "SCRAM-SHA-256":
 		config.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA256
 		config.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
@@ -273,42 +289,19 @@ func configureSCRAM(config *sarama.Config, authConfigJSON string) error {
 			return &XDGSCRAMClient{HashGeneratorFcn: scram.SHA512}
 		}
 	default:
-		return fmt.Errorf("%w: unsupported SCRAM mechanism: %s", ErrInvalidAuthConfig, mechanism)
-	}
-
-	// 根据安全协议配置 TLS
-	switch securityProtocol {
-	case "SASL_SSL":
-		// SASL over TLS
-		config.Net.TLS.Enable = true
-		config.Net.TLS.Config = &tls.Config{
-			InsecureSkipVerify: false,
-		}
-	case "SASL_PLAINTEXT":
-		// SASL over 明文传输（不启用 TLS）
-		config.Net.TLS.Enable = false
-	case "SSL":
-		// 仅 TLS（无 SASL）
-		config.Net.TLS.Enable = true
-		config.Net.TLS.Config = &tls.Config{
-			InsecureSkipVerify: false,
-		}
-	case "PLAINTEXT":
-		// 明文传输（无 TLS，无 SASL）
-		config.Net.TLS.Enable = false
-		config.Net.SASL.Enable = false
-	default:
-		// 默认使用 SASL_SSL
-		config.Net.TLS.Enable = true
-		config.Net.TLS.Config = &tls.Config{
-			InsecureSkipVerify: false,
-		}
+		return fmt.Errorf("%w: unsupported SASL mechanism: %s", ErrInvalidAuthConfig, mechanism)
 	}
 
 	return nil
 }
 
 // configureKerberos 配置 Kerberos 认证
+// authConfigJSON 包含以下字段：
+// - principal: Kerberos 主体（如 user/hostname@REALM）
+// - realm: Kerberos 域（可从 principal 解析）
+// - service_name: 服务名称（默认 kafka）
+// - krb5_conf_path: krb5.conf 文件完整路径（运行时写入的临时文件）
+// - keytab_path: keytab 文件完整路径（运行时写入的临时文件）
 func configureKerberos(config *sarama.Config, authConfigJSON string) error {
 	if authConfigJSON == "" {
 		return ErrInvalidAuthConfig
@@ -324,14 +317,47 @@ func configureKerberos(config *sarama.Config, authConfigJSON string) error {
 		return fmt.Errorf("%w: missing principal", ErrInvalidAuthConfig)
 	}
 
-	keytab, ok := authConfig["keytab"].(string)
-	if !ok || keytab == "" {
-		return fmt.Errorf("%w: missing keytab", ErrInvalidAuthConfig)
+	// 优先使用显式提供的 realm，否则从 principal 解析
+	realm, _ := authConfig["realm"].(string)
+	if realm == "" {
+		// 从 principal 中提取 realm（格式：user@REALM 或 user/hostname@REALM）
+		atIndex := -1
+		for i := len(principal) - 1; i >= 0; i-- {
+			if principal[i] == '@' {
+				atIndex = i
+				break
+			}
+		}
+		if atIndex == -1 || atIndex == len(principal)-1 {
+			return fmt.Errorf("%w: cannot extract realm from principal, expected format: user@REALM", ErrInvalidAuthConfig)
+		}
+		realm = principal[atIndex+1:]
 	}
 
-	realm, ok := authConfig["realm"].(string)
-	if !ok || realm == "" {
-		return fmt.Errorf("%w: missing realm", ErrInvalidAuthConfig)
+	// 从 principal 中提取 username（去掉 @REALM 部分）
+	// sarama/gokrb5 要求 Username 和 Realm 分开传
+	atIndex := -1
+	for i := len(principal) - 1; i >= 0; i-- {
+		if principal[i] == '@' {
+			atIndex = i
+			break
+		}
+	}
+	username := principal
+	if atIndex > 0 {
+		username = principal[:atIndex]
+	}
+
+	// 获取 krb5.conf 路径
+	krb5ConfPath, _ := authConfig["krb5_conf_path"].(string)
+	if krb5ConfPath == "" {
+		return fmt.Errorf("%w: missing krb5_conf_path", ErrInvalidAuthConfig)
+	}
+
+	// 获取 keytab 路径
+	keytabPath, _ := authConfig["keytab_path"].(string)
+	if keytabPath == "" {
+		return fmt.Errorf("%w: missing keytab_path", ErrInvalidAuthConfig)
 	}
 
 	serviceName := "kafka"
@@ -342,11 +368,11 @@ func configureKerberos(config *sarama.Config, authConfigJSON string) error {
 	config.Net.SASL.Enable = true
 	config.Net.SASL.Mechanism = sarama.SASLTypeGSSAPI
 	config.Net.SASL.GSSAPI.ServiceName = serviceName
-	config.Net.SASL.GSSAPI.KerberosConfigPath = "/etc/krb5.conf"
+	config.Net.SASL.GSSAPI.KerberosConfigPath = krb5ConfPath
 	config.Net.SASL.GSSAPI.Realm = realm
-	config.Net.SASL.GSSAPI.Username = principal
+	config.Net.SASL.GSSAPI.Username = username // 只传用户名部分，不含 @REALM
 	config.Net.SASL.GSSAPI.AuthType = sarama.KRB5_KEYTAB_AUTH
-	config.Net.SASL.GSSAPI.KeyTabPath = keytab
+	config.Net.SASL.GSSAPI.KeyTabPath = keytabPath
 
 	return nil
 }

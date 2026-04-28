@@ -8,11 +8,12 @@ import (
 
 // Config 应用配置
 type Config struct {
-	Server     ServerConfig     `mapstructure:"server"`
-	Database   DatabaseConfig   `mapstructure:"database"`
-	JWT        JWTConfig        `mapstructure:"jwt"`
-	Encryption EncryptionConfig `mapstructure:"encryption"`
-	Log        LogConfig        `mapstructure:"log"`
+	Server          ServerConfig          `mapstructure:"server"`
+	Database        DatabaseConfig        `mapstructure:"database"`
+	JWT             JWTConfig             `mapstructure:"jwt"`
+	Encryption      EncryptionConfig      `mapstructure:"encryption"`
+	Log             LogConfig             `mapstructure:"log"`
+	VictoriaMetrics VictoriaMetricsConfig `mapstructure:"victoriametrics"`
 }
 
 // ServerConfig 服务器配置
@@ -39,10 +40,10 @@ type DatabaseConfig struct {
 
 // JWTConfig JWT 配置
 type JWTConfig struct {
-	Secret               string `mapstructure:"secret"`
-	AccessTokenExpire    int    `mapstructure:"access_token_expire"`  // 秒
-	RefreshTokenExpire   int    `mapstructure:"refresh_token_expire"` // 秒
-	Issuer               string `mapstructure:"issuer"`
+	Secret             string `mapstructure:"secret"`
+	AccessTokenExpire  int    `mapstructure:"access_token_expire"`  // 秒
+	RefreshTokenExpire int    `mapstructure:"refresh_token_expire"` // 秒
+	Issuer             string `mapstructure:"issuer"`
 }
 
 // EncryptionConfig 加密配置
@@ -55,6 +56,13 @@ type LogConfig struct {
 	Level      string `mapstructure:"level"`       // debug, info, warn, error
 	Format     string `mapstructure:"format"`      // json, console
 	OutputPath string `mapstructure:"output_path"` // stdout, 文件路径
+}
+
+// VictoriaMetricsConfig VictoriaMetrics 配置
+type VictoriaMetricsConfig struct {
+	WriteURL string `mapstructure:"write_url"` // 写入地址，如 http://localhost:8428/insert/0/prometheus
+	QueryURL string `mapstructure:"query_url"` // 查询地址，如 http://localhost:8428/select/0/prometheus
+	Enabled  bool   `mapstructure:"enabled"`   // 是否启用
 }
 
 // Load 加载配置
@@ -126,6 +134,11 @@ func setDefaults() {
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "json")
 	viper.SetDefault("log.output_path", "stdout")
+
+	// VictoriaMetrics 默认配置
+	viper.SetDefault("victoriametrics.write_url", "http://localhost:8428/insert/0/prometheus")
+	viper.SetDefault("victoriametrics.query_url", "http://localhost:8428/select/0/prometheus")
+	viper.SetDefault("victoriametrics.enabled", true)
 }
 
 // validate 验证配置

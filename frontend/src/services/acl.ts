@@ -5,10 +5,22 @@ export interface ACL {
   cluster_id: number
   resource_type: string
   resource_name: string
+  resource_pattern: string
   principal: string
+  host: string
   operation: string
-  permission: string
+  permission_type: string
   created_at: string
+}
+
+export interface UserACLInfo {
+  resource_type: string
+  resource_name: string
+  resource_pattern: string
+  principal: string
+  host: string
+  operation: string
+  permission_type: string
 }
 
 export interface CreateACLRequest {
@@ -22,12 +34,31 @@ export interface CreateACLRequest {
   host?: string
 }
 
+export interface DeleteACLFromKafkaRequest {
+  resource_type: string
+  resource_name: string
+  resource_pattern: string
+  principal: string
+  host: string
+  operation: string
+  permission_type: string
+}
+
 export const getACLs = (params?: { cluster_id?: number; resource_type?: string; principal?: string }) => {
   console.log('=== DEBUG: getACLs called with params ===', params)
   return request.get('/acls', { params }).then(res => {
     console.log('=== DEBUG: getACLs response ===', res)
-    // 后端返回格式: { data: [...], total: ... }
     return res.data?.data || res.data || []
+  })
+}
+
+export const getUserACLsFromKafka = (clusterId: number, principal: string) => {
+  console.log('=== DEBUG: getUserACLsFromKafka called, clusterId ===', clusterId, 'principal ===', principal)
+  return request.get('/acls/user', {
+    params: { cluster_id: clusterId, principal }
+  }).then(res => {
+    console.log('=== DEBUG: getUserACLsFromKafka response ===', res)
+    return res.data?.data || []
   })
 }
 
@@ -45,6 +76,17 @@ export const deleteACL = (id: number, clusterId: number) => {
     params: { cluster_id: clusterId }
   }).then(res => {
     console.log('=== DEBUG: deleteACL response ===', res)
+    return res.data
+  })
+}
+
+export const deleteACLFromKafka = (clusterId: number, data: DeleteACLFromKafkaRequest) => {
+  console.log('=== DEBUG: deleteACLFromKafka called, clusterId ===', clusterId, 'data ===', data)
+  return request.delete('/acls/kafka', {
+    params: { cluster_id: clusterId },
+    data
+  }).then(res => {
+    console.log('=== DEBUG: deleteACLFromKafka response ===', res)
     return res.data
   })
 }

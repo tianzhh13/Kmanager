@@ -23,9 +23,10 @@ var (
 
 // Service ACL 管理服务
 type Service struct {
-	aclRepo       repository.ACLRepository
-	clusterRepo   repository.ClusterRepository
-	encryptionSvc *encryption.Service
+	aclRepo         repository.ACLRepository
+	clusterRepo     repository.ClusterRepository
+	encryptionSvc   *encryption.Service
+	kerberosBaseDir string
 }
 
 // NewService 创建 ACL 管理服务实例
@@ -33,11 +34,13 @@ func NewService(
 	aclRepo repository.ACLRepository,
 	clusterRepo repository.ClusterRepository,
 	encryptionSvc *encryption.Service,
+	kerberosBaseDir string,
 ) *Service {
 	return &Service{
-		aclRepo:       aclRepo,
-		clusterRepo:   clusterRepo,
-		encryptionSvc: encryptionSvc,
+		aclRepo:         aclRepo,
+		clusterRepo:     clusterRepo,
+		encryptionSvc:   encryptionSvc,
+		kerberosBaseDir: kerberosBaseDir,
 	}
 }
 
@@ -110,8 +113,8 @@ func (s *Service) CreateACL(ctx context.Context, req *CreateACLRequest) error {
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
@@ -183,8 +186,8 @@ func (s *Service) DeleteACL(ctx context.Context, aclID int64) error {
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
@@ -267,6 +270,140 @@ func (s *Service) ListACLs(ctx context.Context, req *ListACLsRequest) (*ListACLs
 	}, nil
 }
 
+// UserACLInfo 用户 ACL 信息（用于从 Kafka 直接查询）
+type UserACLInfo struct {
+	ResourceType    string `json:"resource_type"`
+	ResourceName    string `json:"resource_name"`
+	ResourcePattern string `json:"resource_pattern"`
+	Principal       string `json:"principal"`
+	Host            string `json:"host"`
+	Operation       string `json:"operation"`
+	PermissionType  string `json:"permission_type"`
+}
+
+// ListUserACLsFromKafka 从 Kafka 直接查询用户的 ACL（实时查询）
+func (s *Service) ListUserACLsFromKafka(ctx context.Context, clusterID int64, principal string) ([]*UserACLInfo, error) {
+	log.Printf("[ListUserACLsFromKafka] Querying ACLs for principal=%s from Kafka", principal)
+
+	// 获取集群配置
+	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster: %w", err)
+	}
+
+	// 解密认证配置
+	var authConfigJSON string
+	if cluster.AuthConfig != "" {
+		decrypted, err := s.encryptionSvc.DecryptString(cluster.AuthConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt auth config: %w", err)
+		}
+		authConfigJSON = decrypted
+	}
+
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kafka admin client: %w", err)
+	}
+	defer adminClient.Close()
+
+	// 从 Kafka 获取该用户的所有 ACL
+	filter := sarama.AclFilter{
+		ResourceType:              sarama.AclResourceAny,
+		ResourcePatternTypeFilter: sarama.AclPatternAny,
+		Principal:                 &principal,
+		Host:                      nil,
+		Operation:                 sarama.AclOperationAny,
+		PermissionType:            sarama.AclPermissionAny,
+	}
+
+	kafkaACLs, err := adminClient.ListACLs(filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list acls from kafka: %w", err)
+	}
+
+	// 转换结果
+	var result []*UserACLInfo
+	for _, resourceACL := range kafkaACLs {
+		for _, acl := range resourceACL.Acls {
+			info := &UserACLInfo{
+				ResourceType:    string(s.convertResourceTypeFromSarama(resourceACL.ResourceType)),
+				ResourceName:    resourceACL.ResourceName,
+				ResourcePattern: string(s.convertPatternTypeFromSarama(resourceACL.ResourcePatternType)),
+				Principal:       acl.Principal,
+				Host:            acl.Host,
+				Operation:       string(s.convertOperationFromSarama(acl.Operation)),
+				PermissionType:  string(s.convertPermissionTypeFromSarama(acl.PermissionType)),
+			}
+			result = append(result, info)
+		}
+	}
+
+	log.Printf("[ListUserACLsFromKafka] Found %d ACLs for principal=%s", len(result), principal)
+	return result, nil
+}
+
+// DeleteACLFromKafka 从 Kafka 删除指定用户的 ACL（按条件匹配）
+func (s *Service) DeleteACLFromKafka(ctx context.Context, clusterID int64, req *DeleteACLFromKafkaRequest) error {
+	log.Printf("[DeleteACLFromKafka] Deleting ACL: cluster=%d, principal=%s, resource=%s, operation=%s",
+		clusterID, req.Principal, req.ResourceName, req.Operation)
+
+	// 获取集群配置
+	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
+	if err != nil {
+		return fmt.Errorf("failed to get cluster: %w", err)
+	}
+
+	// 解密认证配置
+	var authConfigJSON string
+	if cluster.AuthConfig != "" {
+		decrypted, err := s.encryptionSvc.DecryptString(cluster.AuthConfig)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt auth config: %w", err)
+		}
+		authConfigJSON = decrypted
+	}
+
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
+	if err != nil {
+		return fmt.Errorf("failed to create kafka admin client: %w", err)
+	}
+	defer adminClient.Close()
+
+	// 构建 ACL Filter
+	filter := sarama.AclFilter{
+		ResourceType:              s.convertResourceType(models.ResourceType(req.ResourceType)),
+		ResourceName:              &req.ResourceName,
+		ResourcePatternTypeFilter: s.convertPatternType(models.PatternType(req.ResourcePattern)),
+		Principal:                 &req.Principal,
+		Host:                      &req.Host,
+		Operation:                 s.convertOperation(models.OperationType(req.Operation)),
+		PermissionType:            s.convertPermissionType(models.PermissionType(req.PermissionType)),
+	}
+
+	// 从 Kafka 删除 ACL
+	matchedACLs, err := adminClient.DeleteACL(filter, false)
+	if err != nil {
+		return fmt.Errorf("failed to delete acl from kafka: %w", err)
+	}
+
+	log.Printf("[DeleteACLFromKafka] Deleted %d matching ACLs", len(matchedACLs))
+	return nil
+}
+
+// DeleteACLFromKafkaRequest 从 Kafka 删除 ACL 的请求
+type DeleteACLFromKafkaRequest struct {
+	ResourceType    string `json:"resource_type" binding:"required"`
+	ResourceName    string `json:"resource_name" binding:"required"`
+	ResourcePattern string `json:"resource_pattern"`
+	Principal       string `json:"principal" binding:"required"`
+	Host            string `json:"host"`
+	Operation       string `json:"operation" binding:"required"`
+	PermissionType  string `json:"permission_type" binding:"required"`
+}
+
 // SyncACLs 同步集群的所有 ACL 数据
 func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 	log.Printf("[SyncACLs] Starting sync for cluster %d", clusterID)
@@ -288,8 +425,8 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
