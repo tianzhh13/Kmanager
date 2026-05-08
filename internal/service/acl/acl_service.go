@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
@@ -518,12 +519,12 @@ func (s *Service) validateCreateACLRequest(req *CreateACLRequest) error {
 
 // 类型转换辅助函数
 func (s *Service) convertResourceType(rt models.ResourceType) sarama.AclResourceType {
-	switch rt {
-	case models.ResourceTypeTopic:
+	switch strings.ToLower(string(rt)) {
+	case "topic":
 		return sarama.AclResourceTopic
-	case models.ResourceTypeGroup:
+	case "group":
 		return sarama.AclResourceGroup
-	case models.ResourceTypeCluster:
+	case "cluster":
 		return sarama.AclResourceCluster
 	default:
 		return sarama.AclResourceAny
@@ -544,10 +545,10 @@ func (s *Service) convertResourceTypeFromSarama(rt sarama.AclResourceType) model
 }
 
 func (s *Service) convertPatternType(pt models.PatternType) sarama.AclResourcePatternType {
-	switch pt {
-	case models.PatternTypeLiteral:
+	switch strings.ToLower(string(pt)) {
+	case "literal":
 		return sarama.AclPatternLiteral
-	case models.PatternTypePrefixed:
+	case "prefixed":
 		return sarama.AclPatternPrefixed
 	default:
 		return sarama.AclPatternLiteral
@@ -566,20 +567,20 @@ func (s *Service) convertPatternTypeFromSarama(pt sarama.AclResourcePatternType)
 }
 
 func (s *Service) convertOperation(op models.OperationType) sarama.AclOperation {
-	switch op {
-	case models.OperationRead:
+	switch strings.ToLower(string(op)) {
+	case "read":
 		return sarama.AclOperationRead
-	case models.OperationWrite:
+	case "write":
 		return sarama.AclOperationWrite
-	case models.OperationCreate:
+	case "create":
 		return sarama.AclOperationCreate
-	case models.OperationDelete:
+	case "delete":
 		return sarama.AclOperationDelete
-	case models.OperationAlter:
+	case "alter":
 		return sarama.AclOperationAlter
-	case models.OperationDescribe:
+	case "describe":
 		return sarama.AclOperationDescribe
-	case models.OperationAll:
+	case "all":
 		return sarama.AclOperationAll
 	default:
 		return sarama.AclOperationAny
@@ -608,10 +609,10 @@ func (s *Service) convertOperationFromSarama(op sarama.AclOperation) models.Oper
 }
 
 func (s *Service) convertPermissionType(pt models.PermissionType) sarama.AclPermissionType {
-	switch pt {
-	case models.PermissionTypeAllow:
+	switch strings.ToLower(string(pt)) {
+	case "allow":
 		return sarama.AclPermissionAllow
-	case models.PermissionTypeDeny:
+	case "deny":
 		return sarama.AclPermissionDeny
 	default:
 		return sarama.AclPermissionAny

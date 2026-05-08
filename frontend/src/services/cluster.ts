@@ -7,7 +7,7 @@ export interface Cluster {
   auth_type: string
   sasl_mechanism?: string
   auth_config?: string
-  jmx_exporter_url: string
+  jmx_exporter_urls: string  // 多个 URL 逗号分隔
   description: string
   status: string
   created_at: string
@@ -19,7 +19,7 @@ export interface CreateClusterRequest {
   bootstrap_servers: string
   auth_type: string
   auth_config?: Record<string, any>
-  jmx_exporter_url?: string
+  jmx_exporter_urls?: string  // 多个 URL 逗号分隔
   description?: string
 }
 
@@ -28,7 +28,7 @@ export interface UpdateClusterRequest {
   bootstrap_servers?: string
   auth_type?: string
   auth_config?: Record<string, any>
-  jmx_exporter_url?: string
+  jmx_exporter_urls?: string  // 多个 URL 逗号分隔
   description?: string
   status?: string
 }

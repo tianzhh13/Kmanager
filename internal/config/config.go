@@ -14,6 +14,12 @@ type Config struct {
 	Encryption      EncryptionConfig      `mapstructure:"encryption"`
 	Log             LogConfig             `mapstructure:"log"`
 	VictoriaMetrics VictoriaMetricsConfig `mapstructure:"victoriametrics"`
+	SyncWorker      SyncWorkerConfig      `mapstructure:"syncworker"`
+}
+
+// SyncWorkerConfig 数据同步 Worker 配置
+type SyncWorkerConfig struct {
+	Interval int `mapstructure:"interval"` // 同步间隔，单位秒，默认 30
 }
 
 // ServerConfig 服务器配置
@@ -139,6 +145,9 @@ func setDefaults() {
 	viper.SetDefault("victoriametrics.write_url", "http://localhost:8428/insert/0/prometheus")
 	viper.SetDefault("victoriametrics.query_url", "http://localhost:8428/select/0/prometheus")
 	viper.SetDefault("victoriametrics.enabled", true)
+
+	// SyncWorker 默认配置
+	viper.SetDefault("syncworker.interval", 30)
 }
 
 // validate 验证配置

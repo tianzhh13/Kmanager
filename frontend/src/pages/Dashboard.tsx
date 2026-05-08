@@ -9,7 +9,7 @@ interface DashboardStats {
   scram_user_count: number
 }
 
-const Dashboard: React.FC = () => {
+const DashboardPage: React.FC = () => {
   const [stats, setStats] = useState<DashboardStats>({
     cluster_count: 0,
     topic_count: 0,
@@ -18,18 +18,19 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const res = await api.get<DashboardStats>('/dashboard/stats')
-        setStats(res.data)
-      } catch (error) {
-        console.error('Failed to fetch stats:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
     fetchStats()
   }, [])
+
+  const fetchStats = async () => {
+    try {
+      const res = await api.get<DashboardStats>('/dashboard/stats')
+      setStats(res.data)
+    } catch (error) {
+      console.error('Failed to fetch stats:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   return (
     <div>
@@ -80,4 +81,4 @@ const Dashboard: React.FC = () => {
   )
 }
 
-export default Dashboard
+export default DashboardPage

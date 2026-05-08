@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,8 +21,6 @@ import (
 )
 
 const (
-	// 默认同步间隔 30 秒（用于监控指标采集）
-	defaultSyncInterval = 30 * time.Second
 	// 最大重试次数
 	maxRetries = 3
 	// 重试间隔
@@ -40,6 +39,7 @@ type SyncWorker struct {
 	vmClient        *victoriametrics.Client
 	adminClientPool sync.Map // map[int64]*kafka.AdminClient
 	kerberosBaseDir string
+	syncInterval    time.Duration // 同步间隔
 	stopCh          chan struct{}
 	wg              sync.WaitGroup
 }
@@ -75,6 +75,13 @@ func NewSyncWorker(
 	// 创建监控服务
 	monitorSvc := monitor.NewService(clusterRepo, encryptSvc, vmClient, kerberosBaseDir)
 
+	// 从配置读取同步间隔，默认 30 秒
+	syncInterval := 30 * time.Second
+	if cfg.SyncWorker.Interval > 0 {
+		syncInterval = time.Duration(cfg.SyncWorker.Interval) * time.Second
+	}
+	log.Printf("Sync worker interval: %v", syncInterval)
+
 	return &SyncWorker{
 		cfg:             cfg,
 		clusterRepo:     clusterRepo,
@@ -85,6 +92,7 @@ func NewSyncWorker(
 		monitorSvc:      monitorSvc,
 		vmClient:        vmClient,
 		kerberosBaseDir: kerberosBaseDir,
+		syncInterval:    syncInterval,
 		stopCh:          make(chan struct{}),
 	}
 }
@@ -128,8 +136,8 @@ func (w *SyncWorker) Stop() error {
 func (w *SyncWorker) runScheduledSync() {
 	defer w.wg.Done()
 
-	// 每 5 分钟同步一次
-	ticker := time.NewTicker(defaultSyncInterval)
+	// 使用配置的同步间隔
+	ticker := time.NewTicker(w.syncInterval)
 	defer ticker.Stop()
 
 	// 立即执行一次同步
@@ -502,40 +510,216 @@ func (w *SyncWorker) collectAndWriteMetrics(ctx context.Context, cluster *models
 		return fmt.Errorf("failed to get cluster metrics: %w", err)
 	}
 
-	// 构建标签
-	labels := map[string]string{
+	// 构建基础标签
+	baseLabels := map[string]string{
 		"cluster_id":   strconv.FormatInt(cluster.ClusterID, 10),
 		"cluster_name": cluster.ClusterName,
 	}
 
 	var vmMetrics []victoriametrics.Metric
 
-	// 写入 Broker 指标
+	// 1. 写入 Broker 指标（来自 JMX Exporter）
 	if metrics.BrokerMetrics != nil {
 		vmMetrics = append(vmMetrics,
-			victoriametrics.Metric{Name: "kafka_messages_in_per_sec", Value: metrics.BrokerMetrics.MessagesInPerSec, Labels: labels},
-			victoriametrics.Metric{Name: "kafka_bytes_in_per_sec", Value: metrics.BrokerMetrics.BytesInPerSec, Labels: labels},
-			victoriametrics.Metric{Name: "kafka_bytes_out_per_sec", Value: metrics.BrokerMetrics.BytesOutPerSec, Labels: labels},
-			victoriametrics.Metric{Name: "kafka_under_replicated_partitions", Value: metrics.BrokerMetrics.UnderReplicatedPartitions, Labels: labels},
-			victoriametrics.Metric{Name: "kafka_offline_partitions_count", Value: metrics.BrokerMetrics.OfflinePartitionsCount, Labels: labels},
-			victoriametrics.Metric{Name: "kafka_active_controller_count", Value: metrics.BrokerMetrics.ActiveControllerCount, Labels: labels},
+			victoriametrics.Metric{Name: "kafka_messages_in_per_sec", Value: metrics.BrokerMetrics.MessagesInPerSec, Labels: baseLabels},
+			victoriametrics.Metric{Name: "kafka_bytes_in_per_sec", Value: metrics.BrokerMetrics.BytesInPerSec, Labels: baseLabels},
+			victoriametrics.Metric{Name: "kafka_bytes_out_per_sec", Value: metrics.BrokerMetrics.BytesOutPerSec, Labels: baseLabels},
+			victoriametrics.Metric{Name: "kafka_under_replicated_partitions", Value: metrics.BrokerMetrics.UnderReplicatedPartitions, Labels: baseLabels},
+			victoriametrics.Metric{Name: "kafka_offline_partitions_count", Value: metrics.BrokerMetrics.OfflinePartitionsCount, Labels: baseLabels},
+			victoriametrics.Metric{Name: "kafka_active_controller_count", Value: metrics.BrokerMetrics.ActiveControllerCount, Labels: baseLabels},
+			// 新增指标
+			victoriametrics.Metric{Name: "kafka_produce_requests_per_sec", Value: metrics.BrokerMetrics.TotalProduceRequestsPerSec, Labels: baseLabels},
+			victoriametrics.Metric{Name: "kafka_fetch_requests_per_sec", Value: metrics.BrokerMetrics.TotalFetchRequestsPerSec, Labels: baseLabels},
+			victoriametrics.Metric{Name: "kafka_request_queue_size", Value: metrics.BrokerMetrics.RequestQueueSize, Labels: baseLabels},
 		)
 	}
 
-	// 写入元数据指标
+	// 2. 写入集群级别元数据指标
 	vmMetrics = append(vmMetrics,
-		victoriametrics.Metric{Name: "kafka_broker_count", Value: float64(metrics.BrokerCount), Labels: labels},
-		victoriametrics.Metric{Name: "kafka_topic_count", Value: float64(metrics.TopicCount), Labels: labels},
-		victoriametrics.Metric{Name: "kafka_consumer_group_count", Value: float64(len(metrics.ConsumerGroups)), Labels: labels},
+		victoriametrics.Metric{Name: "kafka_broker_count", Value: float64(metrics.BrokerCount), Labels: baseLabels},
+		victoriametrics.Metric{Name: "kafka_topic_count", Value: float64(metrics.TopicCount), Labels: baseLabels},
+		victoriametrics.Metric{Name: "kafka_consumer_group_count", Value: float64(len(metrics.ConsumerGroups)), Labels: baseLabels},
 	)
 
-	// 计算总延迟
+	// 2.1 写入 Broker 信息指标（用于 Broker 监控 Tab 筛选）
+	for _, broker := range metrics.Brokers {
+		brokerLabels := make(map[string]string)
+		for k, v := range baseLabels {
+			brokerLabels[k] = v
+		}
+		brokerLabels["broker_id"] = strconv.FormatInt(int64(broker.ID), 10)
+		brokerLabels["broker_host"] = broker.Host
+		brokerLabels["broker_port"] = strconv.FormatInt(int64(broker.Port), 10)
+		if broker.Rack != "" {
+			brokerLabels["broker_rack"] = broker.Rack
+		}
+		// kafka_broker_info 是一个 info 类型指标，值固定为 1
+		vmMetrics = append(vmMetrics,
+			victoriametrics.Metric{Name: "kafka_broker_info", Value: 1, Labels: brokerLabels},
+		)
+	}
+
+	// 3. 写入按 Topic 分区的指标
+	topicPartitions, err := w.monitorSvc.GetTopicPartitionCount(ctx, cluster.ClusterID)
+	if err == nil {
+		for topic, partitionCount := range topicPartitions {
+			labels := make(map[string]string)
+			for k, v := range baseLabels {
+				labels[k] = v
+			}
+			labels["topic"] = topic
+			vmMetrics = append(vmMetrics,
+				victoriametrics.Metric{Name: "kafka_topic_partitions", Value: float64(partitionCount), Labels: labels},
+			)
+		}
+	}
+
+	// 4. 写入分区详情指标（副本、ISR、Leader 等）
+	partitionDetails, err := w.monitorSvc.GetTopicPartitionDetails(ctx, cluster.ClusterID)
+	if err == nil {
+		// 构建 topic -> partitions 映射用于获取 offset
+		topicPartitions := make(map[string][]int32)
+		for _, pd := range partitionDetails {
+			topicPartitions[pd.Topic] = append(topicPartitions[pd.Topic], pd.Partition)
+		}
+
+		// 获取所有分区的 LogEndOffset
+		endOffsets, err := w.monitorSvc.GetTopicPartitionOffsets(ctx, cluster.ClusterID, topicPartitions)
+		if err != nil {
+			log.Printf("[SyncWorker] Failed to get partition offsets: %v", err)
+		}
+
+		// 获取所有分区的 LogStartOffset
+		startOffsets, err := w.monitorSvc.GetTopicPartitionStartOffsets(ctx, cluster.ClusterID, topicPartitions)
+		if err != nil {
+			log.Printf("[SyncWorker] Failed to get partition start offsets: %v", err)
+		}
+
+		for _, pd := range partitionDetails {
+			labels := make(map[string]string)
+			for k, v := range baseLabels {
+				labels[k] = v
+			}
+			labels["topic"] = pd.Topic
+			labels["partition"] = strconv.FormatInt(int64(pd.Partition), 10)
+
+			// 分区副本数
+			vmMetrics = append(vmMetrics,
+				victoriametrics.Metric{Name: "kafka_topic_partition_replicas", Value: float64(len(pd.Replicas)), Labels: labels},
+			)
+
+			// ISR 数量
+			vmMetrics = append(vmMetrics,
+				victoriametrics.Metric{Name: "kafka_topic_partition_in_sync_replica", Value: float64(len(pd.ISR)), Labels: labels},
+			)
+
+			// 是否是首选 Leader（1 或 0）
+			preferredLeaderValue := float64(0)
+			if pd.IsPreferredLeader {
+				preferredLeaderValue = 1
+			}
+			vmMetrics = append(vmMetrics,
+				victoriametrics.Metric{Name: "kafka_topic_partition_leader_is_preferred", Value: preferredLeaderValue, Labels: labels},
+			)
+
+			// 是否未同步（1 或 0）
+			underReplicatedValue := float64(0)
+			if pd.UnderReplicated {
+				underReplicatedValue = 1
+			}
+			vmMetrics = append(vmMetrics,
+				victoriametrics.Metric{Name: "kafka_topic_partition_under_replicated_partition", Value: underReplicatedValue, Labels: labels},
+			)
+
+			// 从 endOffsets 中获取 LogEndOffset
+			logEndOffset := int64(0)
+			if endOffsets != nil && endOffsets[pd.Topic] != nil {
+				if offset, ok := endOffsets[pd.Topic][pd.Partition]; ok {
+					logEndOffset = offset
+				}
+			}
+
+			// 当前偏移量（LogEndOffset）
+			vmMetrics = append(vmMetrics,
+				victoriametrics.Metric{Name: "kafka_topic_partition_current_offset", Value: float64(logEndOffset), Labels: labels},
+			)
+
+			// 从 startOffsets 中获取 LogStartOffset
+			logStartOffset := int64(0)
+			if startOffsets != nil && startOffsets[pd.Topic] != nil {
+				if offset, ok := startOffsets[pd.Topic][pd.Partition]; ok {
+					logStartOffset = offset
+				}
+			}
+
+			// 最旧偏移量（LogStartOffset）
+			vmMetrics = append(vmMetrics,
+				victoriametrics.Metric{Name: "kafka_topic_partition_oldest_offset", Value: float64(logStartOffset), Labels: labels},
+			)
+		}
+	}
+
+	// 5. 写入消费者组详细指标
 	var totalLag int64
 	for _, cg := range metrics.ConsumerGroups {
+		// 跳过内部消费者组
+		if strings.HasPrefix(cg.GroupID, "__") {
+			continue
+		}
+
+		// 消费者组成员数
+		cgLabels := make(map[string]string)
+		for k, v := range baseLabels {
+			cgLabels[k] = v
+		}
+		cgLabels["consumergroup"] = cg.GroupID
+		vmMetrics = append(vmMetrics,
+			victoriametrics.Metric{Name: "kafka_consumergroup_members", Value: float64(cg.Members), Labels: cgLabels},
+		)
+
+		// 按 Topic 汇总的 Lag
+		for _, topicLag := range cg.Topics {
+			// 跳过内部 Topic
+			if strings.HasPrefix(topicLag.Topic, "__") {
+				continue
+			}
+
+			topicLabels := make(map[string]string)
+			for k, v := range baseLabels {
+				topicLabels[k] = v
+			}
+			topicLabels["consumergroup"] = cg.GroupID
+			topicLabels["topic"] = topicLag.Topic
+			vmMetrics = append(vmMetrics,
+				victoriametrics.Metric{Name: "kafka_consumergroup_lag_sum", Value: float64(topicLag.Lag), Labels: topicLabels},
+			)
+
+			// 分区级别的 Lag 和 current_offset
+			for _, partitionLag := range topicLag.Partitions {
+				partitionLabels := make(map[string]string)
+				for k, v := range topicLabels {
+					partitionLabels[k] = v
+				}
+				partitionLabels["partition"] = strconv.FormatInt(int64(partitionLag.Partition), 10)
+				vmMetrics = append(vmMetrics,
+					victoriametrics.Metric{Name: "kafka_consumergroup_lag", Value: float64(partitionLag.Lag), Labels: partitionLabels},
+					victoriametrics.Metric{Name: "kafka_consumergroup_current_offset", Value: float64(partitionLag.CurrentOffset), Labels: partitionLabels},
+				)
+				// 写入 lag_seconds（仅对有值的分区）
+				if partitionLag.LagSeconds >= 0 {
+					vmMetrics = append(vmMetrics,
+						victoriametrics.Metric{Name: "kafka_consumergroup_lag_seconds", Value: float64(partitionLag.LagSeconds), Labels: partitionLabels},
+					)
+				}
+			}
+		}
+
 		totalLag += cg.TotalLag
 	}
+
+	// 5. 写入总延迟
 	vmMetrics = append(vmMetrics,
-		victoriametrics.Metric{Name: "kafka_total_lag", Value: float64(totalLag), Labels: labels},
+		victoriametrics.Metric{Name: "kafka_total_lag", Value: float64(totalLag), Labels: baseLabels},
 	)
 
 	// 写入 VictoriaMetrics
