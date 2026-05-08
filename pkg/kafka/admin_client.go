@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"kafka-management-platform/internal/models"
 
@@ -21,7 +22,9 @@ var (
 
 // AdminClient Kafka Admin 客户端封装
 type AdminClient struct {
-	admin sarama.ClusterAdmin
+	admin  sarama.ClusterAdmin
+	client sarama.Client // 保存 Client 用于获取 offset
+	config *sarama.Config
 }
 
 // NewAdminClient 创建 Kafka Admin 客户端
@@ -41,13 +44,19 @@ func NewAdminClient(cluster *models.Cluster, authConfigJSON string) (*AdminClien
 		brokers[i] = strings.TrimSpace(broker)
 	}
 
+	// 创建 Client（会自动处理 SASL 认证）
+	client, err := sarama.NewClient(brokers, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create client: %w", err)
+	}
+
 	// 创建 Admin 客户端
-	admin, err := sarama.NewClusterAdmin(brokers, config)
+	admin, err := sarama.NewClusterAdminFromClient(client)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cluster admin: %w", err)
 	}
 
-	return &AdminClient{admin: admin}, nil
+	return &AdminClient{admin: admin, client: client, config: config}, nil
 }
 
 // TestConnection 测试 Kafka 集群连接
@@ -223,6 +232,122 @@ func (c *AdminClient) ListConsumerGroupOffsets(group string, topicPartitions map
 // DescribeCluster 描述集群
 func (c *AdminClient) DescribeCluster() ([]*sarama.Broker, int32, error) {
 	return c.admin.DescribeCluster()
+}
+
+// DescribeTopics 描述 Topic 详情
+func (c *AdminClient) DescribeTopics(topics []string) ([]*sarama.TopicMetadata, error) {
+	return c.admin.DescribeTopics(topics)
+}
+
+// ListAllTopicMetadata 获取所有 Topic 的元数据
+func (c *AdminClient) ListAllTopicMetadata() ([]*sarama.TopicMetadata, error) {
+	// 传入 nil 表示获取所有 Topic
+	return c.admin.DescribeTopics(nil)
+}
+
+// TopicPartitionInfo Topic 分区信息
+type TopicPartitionInfo struct {
+	Topic             string
+	Partition         int32
+	Leader            int32   // Leader Broker ID
+	Replicas          []int32 // 副本列表
+	ISR               []int32 // ISR 列表
+	OfflineReplicas   []int32 // 离线副本列表
+	LogEndOffset      int64   // 当前偏移量
+	LogStartOffset    int64   // 最旧偏移量
+	IsPreferredLeader bool    // 是否是首选 Leader
+	UnderReplicated   bool    // 是否未同步
+}
+
+// GetTopicPartitionDetails 获取所有 Topic 的分区详情
+func (c *AdminClient) GetTopicPartitionDetails() ([]TopicPartitionInfo, error) {
+	// 获取所有 Topic 元数据
+	topics, err := c.ListAllTopicMetadata()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list topic metadata: %w", err)
+	}
+
+	var result []TopicPartitionInfo
+
+	for _, topic := range topics {
+		// 跳过内部 Topic
+		if strings.HasPrefix(topic.Name, "__") {
+			continue
+		}
+
+		for _, partition := range topic.Partitions {
+			info := TopicPartitionInfo{
+				Topic:           topic.Name,
+				Partition:       partition.ID,
+				Leader:          partition.Leader,
+				Replicas:        partition.Replicas,
+				ISR:             partition.Isr,
+				OfflineReplicas: partition.OfflineReplicas,
+			}
+
+			// 判断是否是首选 Leader（首选 Leader 是 Replicas[0]）
+			if len(partition.Replicas) > 0 && partition.Leader == partition.Replicas[0] {
+				info.IsPreferredLeader = true
+			}
+
+			// 判断是否未同步（ISR 数量小于 Replicas 数量）
+			if len(partition.Isr) < len(partition.Replicas) {
+				info.UnderReplicated = true
+			}
+
+			result = append(result, info)
+		}
+	}
+
+	return result, nil
+}
+
+// GetTopicPartitionOffsets 获取 Topic 分区的 LogEndOffset
+// 使用 sarama.Client 的 GetOffset 方法获取
+func (c *AdminClient) GetTopicPartitionOffsets(topicPartitions map[string][]int32) (map[string]map[int32]int64, error) {
+	result := make(map[string]map[int32]int64)
+
+	for topic, partitions := range topicPartitions {
+		if result[topic] == nil {
+			result[topic] = make(map[int32]int64)
+		}
+		for _, partition := range partitions {
+			// 使用 sarama.Client 的 GetOffset 方法获取最新 offset
+			// sarama.OffsetNewest = -1 表示获取最新的 offset
+			offset, err := c.client.GetOffset(topic, partition, sarama.OffsetNewest)
+			if err != nil {
+				fmt.Printf("[WARN] Failed to get offset for topic=%s partition=%d: %v\n", topic, partition, err)
+				continue
+			}
+			result[topic][partition] = offset
+			fmt.Printf("[DEBUG] Got offset: topic=%s, partition=%d, offset=%d\n", topic, partition, offset)
+		}
+	}
+
+	return result, nil
+}
+
+// GetTopicPartitionStartOffsets 获取 Topic 分区的 LogStartOffset（最旧偏移量）
+// 使用 sarama.Client 的 GetOffset 方法获取
+func (c *AdminClient) GetTopicPartitionStartOffsets(topicPartitions map[string][]int32) (map[string]map[int32]int64, error) {
+	result := make(map[string]map[int32]int64)
+
+	for topic, partitions := range topicPartitions {
+		if result[topic] == nil {
+			result[topic] = make(map[int32]int64)
+		}
+		for _, partition := range partitions {
+			// sarama.OffsetOldest = -2 表示获取最旧的 offset
+			offset, err := c.client.GetOffset(topic, partition, sarama.OffsetOldest)
+			if err != nil {
+				fmt.Printf("[WARN] Failed to get start offset for topic=%s partition=%d: %v\n", topic, partition, err)
+				continue
+			}
+			result[topic][partition] = offset
+		}
+	}
+
+	return result, nil
 }
 
 // configureAuth 配置 Kafka 认证方式
@@ -405,4 +530,111 @@ func (x *XDGSCRAMClient) Step(challenge string) (response string, err error) {
 // Done 完成 SCRAM 认证
 func (x *XDGSCRAMClient) Done() bool {
 	return x.ClientConversation.Done()
+}
+
+// GetMessageTimestamp 获取指定 Topic 分区 offset 处消息的时间戳
+// 通过 Fetch 请求获取消息，返回消息的时间戳
+func (c *AdminClient) GetMessageTimestamp(topic string, partition int32, offset int64) (int64, error) {
+	// 获取分区 Leader
+	leader, err := c.client.Leader(topic, partition)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get leader: %w", err)
+	}
+
+	// 构建 Fetch 请求
+	fetchRequest := &sarama.FetchRequest{
+		MinBytes:    1,
+		MaxWaitTime: 1000, // 1 second
+		MaxBytes:    1024, // 只需要一条消息
+		Version:     4,
+	}
+
+	// AddBlock(topic, partitionID, fetchOffset, maxBytes, leaderEpoch)
+	fetchRequest.AddBlock(topic, partition, offset, 1024, -1)
+
+	// 发送 Fetch 请求
+	response, err := leader.Fetch(fetchRequest)
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch message: %w", err)
+	}
+
+	// 解析响应
+	block := response.GetBlock(topic, partition)
+	if block == nil {
+		return 0, fmt.Errorf("no block in fetch response")
+	}
+
+	if block.Err != sarama.ErrNoError {
+		return 0, fmt.Errorf("fetch error: %s", block.Err)
+	}
+
+	// 遍历 RecordsSet 获取时间戳
+	for _, records := range block.RecordsSet {
+		if records == nil {
+			continue
+		}
+
+		// 新版本格式 (RecordBatch)
+		if records.RecordBatch != nil && len(records.RecordBatch.Records) > 0 {
+			batch := records.RecordBatch
+			// 第一条消息的时间戳
+			if len(batch.Records) > 0 {
+				// 计算实际时间戳 = FirstTimestamp + TimestampDelta
+				timestamp := batch.FirstTimestamp.Add(batch.Records[0].TimestampDelta)
+				return timestamp.Unix(), nil
+			}
+		}
+
+		// 旧版本格式 (MessageSet)
+		if records.MsgSet != nil {
+			for _, msgBlock := range records.MsgSet.Messages {
+				if msgBlock.Msg != nil {
+					return msgBlock.Msg.Timestamp.Unix(), nil
+				}
+			}
+		}
+	}
+
+	// 尝试使用 deprecated Records 字段
+	if block.Records != nil {
+		if block.Records.RecordBatch != nil && len(block.Records.RecordBatch.Records) > 0 {
+			batch := block.Records.RecordBatch
+			timestamp := batch.FirstTimestamp.Add(batch.Records[0].TimestampDelta)
+			return timestamp.Unix(), nil
+		}
+
+		if block.Records.MsgSet != nil {
+			for _, msgBlock := range block.Records.MsgSet.Messages {
+				if msgBlock.Msg != nil {
+					return msgBlock.Msg.Timestamp.Unix(), nil
+				}
+			}
+		}
+	}
+
+	return 0, fmt.Errorf("no messages found at offset %d", offset)
+}
+
+// CalculateConsumerGroupLagSeconds 计算消费者组的 Lag 时间（秒）
+// lag_seconds = 当前时间 - 最后消费消息的时间戳
+func (c *AdminClient) CalculateConsumerGroupLagSeconds(topic string, partition int32, currentOffset, endOffset int64) (int64, error) {
+	// 如果没有 lag，返回 0
+	if currentOffset >= endOffset || currentOffset < 0 {
+		return 0, nil
+	}
+
+	// 获取当前 offset 的消息时间戳
+	timestamp, err := c.GetMessageTimestamp(topic, partition, currentOffset)
+	if err != nil {
+		// 如果无法获取时间戳，返回 -1 表示无法计算
+		return -1, err
+	}
+
+	// 计算 lag_seconds
+	lagSeconds := time.Now().Unix() - timestamp
+	if lagSeconds < 0 {
+		lagSeconds = 0
+	}
+
+	return lagSeconds, nil
 }

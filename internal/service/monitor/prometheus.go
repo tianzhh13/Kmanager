@@ -9,6 +9,7 @@ import (
 
 	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/pkg/encryption"
+	"kafka-management-platform/pkg/kafka"
 	"kafka-management-platform/pkg/victoriametrics"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,9 @@ var (
 	// ErrNoJMXExporterURL 集群未配置 JMX Exporter URL
 	ErrNoJMXExporterURL = fmt.Errorf("cluster does not have JMX Exporter URL configured")
 )
+
+// TopicPartitionInfo Topic 分区信息（别名）
+type TopicPartitionInfo = kafka.TopicPartitionInfo
 
 // ClusterMetricsResponse 集群指标响应
 type ClusterMetricsResponse struct {
@@ -30,8 +34,9 @@ type ClusterMetricsResponse struct {
 	ConsumerGroups []*ConsumerGroupInfo `json:"consumer_groups"`
 
 	// 元数据
-	BrokerCount int `json:"broker_count"`
-	TopicCount  int `json:"topic_count"`
+	Brokers     []BrokerInfo `json:"brokers"`
+	BrokerCount int          `json:"broker_count"`
+	TopicCount  int          `json:"topic_count"`
 
 	// 监控状态
 	JMXExporterAvailable   bool `json:"jmx_exporter_available"`
@@ -87,16 +92,19 @@ func (s *Service) GetClusterMetrics(ctx context.Context, clusterID int64) (*Clus
 		ClusterID: clusterID,
 	}
 
-	// 1. 从 JMX Exporter 获取 Broker 指标
-	if cluster.JMXExporterURL != "" {
-		jmxClient := s.getJMXClient(clusterID, cluster.JMXExporterURL)
-		brokerMetrics, err := jmxClient.GetBrokerMetrics(ctx)
-		if err != nil {
-			log.Printf("[Monitor] Failed to get JMX metrics: %v", err)
-			response.JMXExporterAvailable = false
-		} else {
-			response.BrokerMetrics = brokerMetrics
-			response.JMXExporterAvailable = true
+	// 1. 从 JMX Exporter 获取 Broker 指标（支持多个 Broker）
+	if cluster.JMXExporterURLs != "" {
+		urls := ParseJMXExporterURLs(cluster.JMXExporterURLs)
+		if len(urls) > 0 {
+			multiClient := NewMultiJMXClient(urls)
+			brokerMetrics, err := multiClient.GetAggregatedMetrics(ctx)
+			if err != nil {
+				log.Printf("[Monitor] Failed to get JMX metrics: %v", err)
+				response.JMXExporterAvailable = false
+			} else {
+				response.BrokerMetrics = brokerMetrics
+				response.JMXExporterAvailable = true
+			}
 		}
 	}
 
@@ -115,6 +123,7 @@ func (s *Service) GetClusterMetrics(ctx context.Context, clusterID int64) (*Clus
 	if err != nil {
 		log.Printf("[Monitor] Failed to get cluster metadata: %v", err)
 	} else {
+		response.Brokers = metadata.Brokers
 		response.BrokerCount = len(metadata.Brokers)
 		response.TopicCount = metadata.TopicCount
 	}
@@ -132,19 +141,44 @@ func (s *Service) GetConsumerGroupInfo(ctx context.Context, clusterID int64, gro
 	return s.kafkaExporter.GetConsumerGroupInfo(ctx, clusterID, groupID)
 }
 
-// GetBrokerMetrics 从 JMX Exporter 获取 Broker 指标
+// GetTopicPartitionCount 获取 Topic 分区数
+func (s *Service) GetTopicPartitionCount(ctx context.Context, clusterID int64) (map[string]int32, error) {
+	return s.kafkaExporter.GetTopicPartitionCount(ctx, clusterID)
+}
+
+// GetTopicPartitionDetails 获取 Topic 分区详情
+func (s *Service) GetTopicPartitionDetails(ctx context.Context, clusterID int64) ([]TopicPartitionInfo, error) {
+	return s.kafkaExporter.GetTopicPartitionDetails(ctx, clusterID)
+}
+
+// GetTopicPartitionOffsets 获取 Topic 分区的 LogEndOffset
+func (s *Service) GetTopicPartitionOffsets(ctx context.Context, clusterID int64, topicPartitions map[string][]int32) (map[string]map[int32]int64, error) {
+	return s.kafkaExporter.GetTopicPartitionOffsets(ctx, clusterID, topicPartitions)
+}
+
+// GetTopicPartitionStartOffsets 获取 Topic 分区的 LogStartOffset（最旧偏移量）
+func (s *Service) GetTopicPartitionStartOffsets(ctx context.Context, clusterID int64, topicPartitions map[string][]int32) (map[string]map[int32]int64, error) {
+	return s.kafkaExporter.GetTopicPartitionStartOffsets(ctx, clusterID, topicPartitions)
+}
+
+// GetBrokerMetrics 从 JMX Exporter 获取 Broker 指标（集群聚合）
 func (s *Service) GetBrokerMetrics(ctx context.Context, clusterID int64) (*BrokerMetrics, error) {
 	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}
 
-	if cluster.JMXExporterURL == "" {
+	if cluster.JMXExporterURLs == "" {
 		return nil, ErrNoJMXExporterURL
 	}
 
-	jmxClient := s.getJMXClient(clusterID, cluster.JMXExporterURL)
-	return jmxClient.GetBrokerMetrics(ctx)
+	urls := ParseJMXExporterURLs(cluster.JMXExporterURLs)
+	if len(urls) == 0 {
+		return nil, ErrNoJMXExporterURL
+	}
+
+	multiClient := NewMultiJMXClient(urls)
+	return multiClient.GetAggregatedMetrics(ctx)
 }
 
 // TestJMXExporter 测试 JMX Exporter 连接
@@ -154,12 +188,18 @@ func (s *Service) TestJMXExporter(ctx context.Context, clusterID int64) error {
 		return fmt.Errorf("failed to get cluster: %w", err)
 	}
 
-	if cluster.JMXExporterURL == "" {
+	if cluster.JMXExporterURLs == "" {
 		return ErrNoJMXExporterURL
 	}
 
-	jmxClient := s.getJMXClient(clusterID, cluster.JMXExporterURL)
-	return jmxClient.HealthCheck(ctx)
+	urls := ParseJMXExporterURLs(cluster.JMXExporterURLs)
+	if len(urls) == 0 {
+		return ErrNoJMXExporterURL
+	}
+
+	// 测试第一个 URL 的连接
+	client := NewJMXClient(urls[0])
+	return client.HealthCheck(ctx)
 }
 
 // QueryMetricsRange 从 VictoriaMetrics 查询历史指标

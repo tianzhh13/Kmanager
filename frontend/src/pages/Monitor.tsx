@@ -1,16 +1,29 @@
 import { useState, useEffect } from 'react'
-import { Card, Row, Col, Select, Spin, message, Statistic, Table, Tabs, Space, Tag, Alert, DatePicker, Button } from 'antd'
+import { Card, Row, Col, Select, Spin, message, Statistic, Table, Tabs, Space, Tag, Alert, DatePicker, Button, Checkbox } from 'antd'
 import { CalendarOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import dayjs, { Dayjs } from 'dayjs'
 import { clusterAPI } from '../services/cluster'
-import { metricsAPI, ClusterMetricsResponse, ConsumerGroupInfo, BrokerMetrics } from '../services/metrics'
-import type { ColumnsType } from 'antd/es/table'
+import { metricsAPI, ClusterMetricsResponse } from '../services/metrics'
 import axios from '../services/api'
 
 interface ClusterOption {
   cluster_id: number
   cluster_name: string
+}
+
+// Topic 信息接口
+interface TopicInfo {
+  name: string
+  partitions: number
+  replication_factor: number
+  log_size_bytes?: number
+}
+
+// Topic 分区指标
+interface PartitionMetric {
+  partition: number
+  values: { time: string; value: number }[]
 }
 
 const Monitor: React.FC = () => {
@@ -26,10 +39,34 @@ const Monitor: React.FC = () => {
   const [quickRange, setQuickRange] = useState<string>('1h')
   const [customRange, setCustomRange] = useState<[Dayjs, Dayjs] | null>(null)
 
-  // 折线图数据
-  const [throughputData, setThroughputData] = useState<{ times: string[], messages: number[], bytesIn: number[], bytesOut: number[] }>({ times: [], messages: [], bytesIn: [], bytesOut: [] })
-  const [lagData, setLagData] = useState<{ times: string[], totalLag: number[], consumerGroupCount: number[] }>({ times: [], totalLag: [], consumerGroupCount: [] })
-  const [partitionData, setPartitionData] = useState<{ times: string[], underReplicated: number[], offline: number[] }>({ times: [], underReplicated: [], offline: [] })
+  // Topic 监控 - 状态
+  const [topics, setTopics] = useState<TopicInfo[]>([])
+  const [selectedTopic, setSelectedTopic] = useState<string | null>(null)
+  const [selectedConsumerGroup, setSelectedConsumerGroup] = useState<string | null>(null)
+  const [topicConsumerGroups, setTopicConsumerGroups] = useState<string[]>([])
+  const [topicLoading, setTopicLoading] = useState(false)
+  const [selectedPartitions, setSelectedPartitions] = useState<number[]>([])
+  const [partitionMetrics, setPartitionMetrics] = useState<{
+    produceRate: PartitionMetric[]
+    consumeRate: PartitionMetric[]
+    lag: PartitionMetric[]
+  }>({ produceRate: [], consumeRate: [], lag: [] })
+
+  // 集群概览 - 统计指标（从 VM 查询）
+  const [overviewStats, setOverviewStats] = useState({
+    topicPartitionTotal: 0,
+    consumerGroupMemberCount: 0,
+    consumerGroupMemberTotal: 0,
+    isrTotal: 0,
+    nonPreferredLeaderCount: 0,
+  })
+
+  // 集群概览 - 趋势数据
+  const [produceRateData, setProduceRateData] = useState<{ times: string[], values: number[] }>({ times: [], values: [] })
+  const [consumeRateData, setConsumeRateData] = useState<{ times: string[], values: number[] }>({ times: [], values: [] })
+  const [lagTrendData, setLagTrendData] = useState<{ times: string[], values: number[] }>({ times: [], values: [] })
+  const [bytesInData, setBytesInData] = useState<{ times: string[], values: number[] }>({ times: [], values: [] })
+  const [bytesOutData, setBytesOutData] = useState<{ times: string[], values: number[] }>({ times: [], values: [] })
 
   // 加载集群列表
   useEffect(() => {
@@ -45,10 +82,53 @@ const Monitor: React.FC = () => {
 
   // 加载历史数据
   useEffect(() => {
-    if (selectedCluster && activeTab === 'charts') {
+    if (selectedCluster) {
       loadHistory()
     }
-  }, [selectedCluster, quickRange, customRange, timeRange, activeTab])
+  }, [selectedCluster, quickRange, customRange, timeRange])
+
+  // 当切换到 Topic 监控 Tab 时加载 Topic 列表
+  useEffect(() => {
+    if (activeTab === 'topic' && selectedCluster) {
+      loadTopics()
+    }
+  }, [activeTab, selectedCluster])
+
+  // 当选择 Topic 时加载该 Topic 的消费组列表
+  useEffect(() => {
+    if (selectedTopic && selectedCluster && metrics?.consumer_groups) {
+      // 从 metrics 中过滤出消费该 Topic 的消费组
+      const cgs = metrics.consumer_groups
+        .filter(cg => cg.topics.some(t => t.topic === selectedTopic))
+        .map(cg => cg.group_id)
+      setTopicConsumerGroups(cgs)
+      // 如果当前选择的消费组不在列表中，清空选择
+      if (selectedConsumerGroup && !cgs.includes(selectedConsumerGroup)) {
+        setSelectedConsumerGroup(null)
+      }
+    } else {
+      setTopicConsumerGroups([])
+      setSelectedConsumerGroup(null)
+    }
+  }, [selectedTopic, metrics?.consumer_groups])
+
+  // 当选择 Topic 时重置分区指标
+  useEffect(() => {
+    setPartitionMetrics({ produceRate: [], consumeRate: [], lag: [] })
+    setSelectedPartitions([])
+  }, [selectedTopic])
+
+  // 当选择 ConsumerGroup 时重置消费相关指标
+  useEffect(() => {
+    setPartitionMetrics(prev => ({ ...prev, consumeRate: [], lag: [] }))
+  }, [selectedConsumerGroup])
+
+  // 当选择 Topic 或 ConsumerGroup 时加载分区指标
+  useEffect(() => {
+    if (selectedTopic && selectedCluster && activeTab === 'topic') {
+      loadPartitionMetrics()
+    }
+  }, [selectedTopic, selectedConsumerGroup, selectedCluster, quickRange, customRange, timeRange, activeTab])
 
   const loadClusters = async () => {
     try {
@@ -76,6 +156,125 @@ const Monitor: React.FC = () => {
     }
   }
 
+  // 加载 Topic 列表
+  const loadTopics = async () => {
+    if (!selectedCluster) return
+    
+    setTopicLoading(true)
+    try {
+      // 从 VM 获取 Topic 列表（通过 kafka_topic_partitions 指标）
+      const res = await axios.get<VMQueryResponse>('/metrics/history', {
+        params: {
+          query: `kafka_topic_partitions{cluster_id="${selectedCluster.cluster_id}"}`,
+          start: dayjs().subtract(1, 'minute').unix(),
+          end: dayjs().unix(),
+          step: '60s'
+        }
+      })
+      
+      if (res.data.status === 'success') {
+        const topicMap = new Map<string, TopicInfo>()
+        res.data.data.result.forEach(r => {
+          const name = r.metric.topic
+          if (name && !topicMap.has(name)) {
+            topicMap.set(name, {
+              name,
+              partitions: parseInt(r.metric.partition_count || '0') || 1,
+              replication_factor: 1,
+            })
+          }
+        })
+        setTopics(Array.from(topicMap.values()))
+      }
+    } catch (error) {
+      console.error('Failed to load topics', error)
+    } finally {
+      setTopicLoading(false)
+    }
+  }
+
+  // 加载分区级别的指标
+  const loadPartitionMetrics = async () => {
+    if (!selectedCluster || !selectedTopic) return
+    
+    setTopicLoading(true)
+    try {
+      const { start, end, step } = getTimeRange()
+      const clusterId = selectedCluster.cluster_id
+
+      // 查询 Topic 分区级别的生产速率
+      const produceRes = await axios.get<VMQueryResponse>('/metrics/history', {
+        params: {
+          query: `rate(kafka_topic_partition_current_offset{cluster_id="${clusterId}",topic="${selectedTopic}"}[30s])`,
+          start: start.unix(),
+          end: end.unix(),
+          step
+        }
+      })
+
+      // 查询消费组分区级别的消费速率和 Lag
+      let consumeRes = { data: { status: 'success', data: { result: [] as any[] } } }
+      let lagRes = { data: { status: 'success', data: { result: [] as any[] } } }
+      
+      if (selectedConsumerGroup) {
+        consumeRes = await axios.get<VMQueryResponse>('/metrics/history', {
+          params: {
+            query: `rate(kafka_consumergroup_current_offset{cluster_id="${clusterId}",topic="${selectedTopic}",consumergroup="${selectedConsumerGroup}"}[30s])`,
+            start: start.unix(),
+            end: end.unix(),
+            step
+          }
+        })
+
+        lagRes = await axios.get<VMQueryResponse>('/metrics/history', {
+          params: {
+            query: `kafka_consumergroup_lag{cluster_id="${clusterId}",topic="${selectedTopic}",consumergroup="${selectedConsumerGroup}"}`,
+            start: start.unix(),
+            end: end.unix(),
+            step
+          }
+        })
+      }
+
+      // 解析分区指标（按分区去重，保留最后一个）
+      const parsePartitionMetrics = (result: any[]): PartitionMetric[] => {
+        const partitionMap = new Map<number, PartitionMetric>()
+        result.forEach(r => {
+          const partition = parseInt(r.metric.partition || '0')
+          partitionMap.set(partition, {
+            partition,
+            values: r.values.map((v: [number, string]) => ({
+              time: dayjs.unix(v[0]).format('HH:mm'),
+              value: parseFloat(v[1]) || 0
+            }))
+          })
+        })
+        return Array.from(partitionMap.values())
+      }
+
+      setPartitionMetrics({
+        produceRate: parsePartitionMetrics(produceRes.data.data.result),
+        consumeRate: parsePartitionMetrics(consumeRes.data.data.result),
+        lag: parsePartitionMetrics(lagRes.data.data.result)
+      })
+
+      // 获取所有分区号
+      const allPartitions = new Set<number>()
+      produceRes.data.data.result.forEach((r: any) => {
+        if (r.metric.partition) {
+          allPartitions.add(parseInt(r.metric.partition))
+        }
+      })
+      if (selectedPartitions.length === 0) {
+        setSelectedPartitions(Array.from(allPartitions).sort((a, b) => a - b))
+      }
+    } catch (error) {
+      console.error('Failed to load partition metrics', error)
+    } finally {
+      setTopicLoading(false)
+    }
+  }
+
   // 从 VictoriaMetrics 查询历史数据
   const queryVM = async (query: string, start: Dayjs, end: Dayjs, step: string): Promise<Array<[number, string]>> => {
     try {
@@ -97,35 +296,62 @@ const Monitor: React.FC = () => {
     }
   }
 
+  // 查询即时值
+  const queryVMInstant = async (query: string): Promise<number> => {
+    try {
+      const res = await axios.get<VMQueryResponse>('/metrics/history', {
+        params: {
+          query,
+          start: dayjs().subtract(1, 'minute').unix(),
+          end: dayjs().unix(),
+          step: '60s'
+        }
+      })
+      if (res.data.status === 'success' && res.data.data.result.length > 0) {
+        const values = res.data.data.result[0].values
+        if (values.length > 0) {
+          return parseFloat(values[values.length - 1][1]) || 0
+        }
+      }
+      return 0
+    } catch (error) {
+      console.error('VM instant query failed:', query, error)
+      return 0
+    }
+  }
+
   // 获取时间范围
   const getTimeRange = (): { start: Dayjs; end: Dayjs; step: string } => {
-    const end = dayjs()
+    let end: Dayjs
     let start: Dayjs
     let step: string
 
     if (timeRange === 'custom' && customRange) {
       start = customRange[0]
+      end = customRange[1]
       const durationMinutes = end.diff(start, 'minute')
-      // 根据时间范围自动计算步长
-      if (durationMinutes <= 60) {
+      // step 与数据采集间隔（30s）匹配，确保能获取足够数据点
+      if (durationMinutes <= 30) {
         step = '30s'
-      } else if (durationMinutes <= 360) {
+      } else if (durationMinutes <= 120) {
         step = '1m'
+      } else if (durationMinutes <= 360) {
+        step = '2m'
       } else if (durationMinutes <= 1440) {
         step = '5m'
       } else {
-        step = '15m'
+        step = '10m'
       }
     } else {
-      // 快速选择
+      end = dayjs()
       switch (quickRange) {
         case '5m':
           start = end.subtract(5, 'minute')
-          step = '10s'
+          step = '30s'
           break
         case '15m':
           start = end.subtract(15, 'minute')
-          step = '15s'
+          step = '30s'
           break
         case '30m':
           start = end.subtract(30, 'minute')
@@ -133,19 +359,19 @@ const Monitor: React.FC = () => {
           break
         case '1h':
           start = end.subtract(1, 'hour')
-          step = '30s'
+          step = '1m'
           break
         case '3h':
           start = end.subtract(3, 'hour')
-          step = '1m'
+          step = '2m'
           break
         case '6h':
           start = end.subtract(6, 'hour')
-          step = '1m'
+          step = '2m'
           break
         case '12h':
           start = end.subtract(12, 'hour')
-          step = '2m'
+          step = '5m'
           break
         case '24h':
           start = end.subtract(24, 'hour')
@@ -157,7 +383,7 @@ const Monitor: React.FC = () => {
           break
         case '7d':
           start = end.subtract(7, 'day')
-          step = '15m'
+          step = '30m'
           break
         case '30d':
           start = end.subtract(30, 'day')
@@ -165,7 +391,7 @@ const Monitor: React.FC = () => {
           break
         default:
           start = end.subtract(1, 'hour')
-          step = '30s'
+          step = '1m'
       }
     }
 
@@ -180,40 +406,63 @@ const Monitor: React.FC = () => {
       const clusterId = selectedCluster.cluster_id.toString()
       const { start, end, step } = getTimeRange()
       
-      // 并行查询所有指标
-      const [messagesRes, bytesInRes, bytesOutRes, lagRes, cgCountRes, underRepRes, offlineRes] = await Promise.all([
-        queryVM(`kafka_messages_in_per_sec{cluster_id="${clusterId}"}`, start, end, step),
-        queryVM(`kafka_bytes_in_per_sec{cluster_id="${clusterId}"}`, start, end, step),
-        queryVM(`kafka_bytes_out_per_sec{cluster_id="${clusterId}"}`, start, end, step),
-        queryVM(`kafka_total_lag{cluster_id="${clusterId}"}`, start, end, step),
-        queryVM(`kafka_consumer_group_count{cluster_id="${clusterId}"}`, start, end, step),
-        queryVM(`kafka_under_replicated_partitions{cluster_id="${clusterId}"}`, start, end, step),
-        queryVM(`kafka_offline_partitions_count{cluster_id="${clusterId}"}`, start, end, step),
+      // 1. 查询集群概览统计指标
+      const [
+        topicPartitionTotal,
+        consumerGroupMemberCount,
+        consumerGroupMemberTotal,
+        isrTotal,
+        nonPreferredLeaderCount,
+      ] = await Promise.all([
+        queryVMInstant(`sum(kafka_topic_partitions{cluster_id="${clusterId}",topic!~"__.*"})`),
+        queryVMInstant(`count(kafka_consumergroup_members{cluster_id="${clusterId}",consumergroup!~"__.*"})`),
+        queryVMInstant(`sum(kafka_consumergroup_members{cluster_id="${clusterId}",consumergroup!~"__.*"})`),
+        queryVMInstant(`sum(kafka_topic_partition_in_sync_replica{cluster_id="${clusterId}"})`),
+        queryVMInstant(`count(kafka_topic_partition_leader_is_preferred{cluster_id="${clusterId}"}<1)`),
       ])
 
-      // 处理时间轴
-      const times = messagesRes.map(v => dayjs.unix(v[0]).format('HH:mm:ss'))
-
-      // 设置吞吐量数据
-      setThroughputData({
-        times,
-        messages: messagesRes.map(v => parseFloat(v[1]) || 0),
-        bytesIn: bytesInRes.map(v => parseFloat(v[1]) || 0),
-        bytesOut: bytesOutRes.map(v => parseFloat(v[1]) || 0),
+      setOverviewStats({
+        topicPartitionTotal,
+        consumerGroupMemberCount,
+        consumerGroupMemberTotal,
+        isrTotal,
+        nonPreferredLeaderCount,
       })
 
-      // 设置延迟数据
-      setLagData({
+      // 2. 查询趋势数据
+      const [produceRateRes, consumeRateRes, lagRes, bytesInRes, bytesOutRes] = await Promise.all([
+        queryVM(`sum(rate(kafka_topic_partition_current_offset{cluster_id="${clusterId}",topic!~"__.*"}[30s]))`, start, end, step),
+        queryVM(`sum(rate(kafka_consumergroup_current_offset{cluster_id="${clusterId}"}[30s]))`, start, end, step),
+        queryVM(`sum(kafka_consumergroup_lag_sum{cluster_id="${clusterId}"})`, start, end, step),
+        queryVM(`sum(rate(kafka_bytes_in_per_sec{cluster_id="${clusterId}"}[30s]))`, start, end, step),
+        queryVM(`sum(rate(kafka_bytes_out_per_sec{cluster_id="${clusterId}"}[30s]))`, start, end, step),
+      ])
+
+      const times = produceRateRes.map(v => dayjs.unix(v[0]).format('HH:mm'))
+
+      setProduceRateData({
         times,
-        totalLag: lagRes.map(v => parseFloat(v[1]) || 0),
-        consumerGroupCount: cgCountRes.map(v => parseFloat(v[1]) || 0),
+        values: produceRateRes.map(v => parseFloat(v[1]) || 0),
       })
 
-      // 设置分区数据
-      setPartitionData({
+      setConsumeRateData({
         times,
-        underReplicated: underRepRes.map(v => parseFloat(v[1]) || 0),
-        offline: offlineRes.map(v => parseFloat(v[1]) || 0),
+        values: consumeRateRes.map(v => parseFloat(v[1]) || 0),
+      })
+
+      setLagTrendData({
+        times,
+        values: lagRes.map(v => parseFloat(v[1]) || 0),
+      })
+
+      setBytesInData({
+        times,
+        values: bytesInRes.map(v => parseFloat(v[1]) || 0),
+      })
+
+      setBytesOutData({
+        times,
+        values: bytesOutRes.map(v => parseFloat(v[1]) || 0),
       })
 
     } catch (error) {
@@ -223,240 +472,474 @@ const Monitor: React.FC = () => {
     }
   }
 
-  const consumerColumns: ColumnsType<ConsumerGroupInfo> = [
-    { 
-      title: '消费组', 
-      dataIndex: 'group_id', 
-      key: 'group_id' 
-    },
-    { 
-      title: '状态', 
-      dataIndex: 'state', 
-      key: 'state',
-      render: (state: string) => {
-        const colorMap: Record<string, string> = {
-          'Stable': 'green',
-          'Empty': 'default',
-          'Rebalancing': 'orange',
-          'Dead': 'red',
-        }
-        return <Tag color={colorMap[state] || 'default'}>{state}</Tag>
-      }
-    },
-    { 
-      title: '消费延迟', 
-      dataIndex: 'total_lag', 
-      key: 'total_lag',
-      render: (val: number) => val?.toLocaleString() || 0,
-      sorter: (a, b) => a.total_lag - b.total_lag,
-    },
-    { 
-      title: '成员数', 
-      dataIndex: 'member_count', 
-      key: 'member_count' 
-    },
-    { 
-      title: 'Topic 数', 
-      dataIndex: 'topics', 
-      key: 'topic_count',
-      render: (topics: ConsumerGroupInfo['topics']) => topics?.length || 0
-    },
-  ]
+  // 时间选择器组件
+  const renderTimeSelector = () => (
+    <Space wrap>
+      {timeRange === 'quick' ? (
+        <>
+          <Button.Group>
+            <Button size="small" type={quickRange === '5m' ? 'primary' : 'default'} onClick={() => setQuickRange('5m')}>5分钟</Button>
+            <Button size="small" type={quickRange === '15m' ? 'primary' : 'default'} onClick={() => setQuickRange('15m')}>15分钟</Button>
+            <Button size="small" type={quickRange === '30m' ? 'primary' : 'default'} onClick={() => setQuickRange('30m')}>30分钟</Button>
+            <Button size="small" type={quickRange === '1h' ? 'primary' : 'default'} onClick={() => setQuickRange('1h')}>1小时</Button>
+            <Button size="small" type={quickRange === '3h' ? 'primary' : 'default'} onClick={() => setQuickRange('3h')}>3小时</Button>
+            <Button size="small" type={quickRange === '6h' ? 'primary' : 'default'} onClick={() => setQuickRange('6h')}>6小时</Button>
+            <Button size="small" type={quickRange === '12h' ? 'primary' : 'default'} onClick={() => setQuickRange('12h')}>12小时</Button>
+            <Button size="small" type={quickRange === '24h' ? 'primary' : 'default'} onClick={() => setQuickRange('24h')}>24小时</Button>
+            <Button size="small" type={quickRange === '2d' ? 'primary' : 'default'} onClick={() => setQuickRange('2d')}>2天</Button>
+            <Button size="small" type={quickRange === '7d' ? 'primary' : 'default'} onClick={() => setQuickRange('7d')}>7天</Button>
+            <Button size="small" type={quickRange === '30d' ? 'primary' : 'default'} onClick={() => setQuickRange('30d')}>30天</Button>
+          </Button.Group>
+          <Button size="small" icon={<CalendarOutlined />} onClick={() => setTimeRange('custom')}>
+            自定义
+          </Button>
+        </>
+      ) : (
+        <>
+          <DatePicker.RangePicker
+            size="small"
+            showTime
+            value={customRange}
+            onChange={(dates) => {
+              if (dates && dates[0] && dates[1]) {
+                setCustomRange([dates[0], dates[1]])
+              }
+            }}
+            presets={[
+              { label: '最近1小时', value: [dayjs().subtract(1, 'hour'), dayjs()] },
+              { label: '最近6小时', value: [dayjs().subtract(6, 'hour'), dayjs()] },
+              { label: '最近24小时', value: [dayjs().subtract(24, 'hour'), dayjs()] },
+              { label: '最近7天', value: [dayjs().subtract(7, 'day'), dayjs()] },
+              { label: '最近30天', value: [dayjs().subtract(30, 'day'), dayjs()] },
+            ]}
+            style={{ width: 360 }}
+          />
+          <Button size="small" onClick={() => { setTimeRange('quick'); setCustomRange(null) }}>
+            快速选择
+          </Button>
+        </>
+      )}
+    </Space>
+  )
 
-  const expandableConfig = {
-    expandedRowRender: (record: ConsumerGroupInfo) => (
-      <Table
-        size="small"
-        dataSource={record.topics}
-        rowKey={(r) => `${r.topic}-${r.partition}`}
-        columns={[
-          { title: 'Topic', dataIndex: 'topic', key: 'topic' },
-          { title: '分区', dataIndex: 'partition', key: 'partition' },
-          { 
-            title: 'Lag', 
-            dataIndex: 'lag', 
-            key: 'lag',
-            render: (val: number) => val?.toLocaleString() || 0,
-          },
-          { 
-            title: 'Log End Offset', 
-            dataIndex: 'log_end_offset', 
-            key: 'log_end_offset',
-            render: (val: number) => val?.toLocaleString() || 0,
-          },
-          { 
-            title: 'Consumer Offset', 
-            dataIndex: 'consumer_offset', 
-            key: 'consumer_offset',
-            render: (val: number) => val?.toLocaleString() || 0,
-          },
-        ]}
-        pagination={false}
-      />
-    ),
-    rowExpandable: (record: ConsumerGroupInfo) => record.topics && record.topics.length > 0,
-  }
+  // 折线图配置 - 生产速率
+  const getProduceRateChartOption = () => ({
+    title: { text: '集群生产速率', left: 'center', textStyle: { fontSize: 14 } },
+    tooltip: { trigger: 'axis', formatter: (params: any) => `${params[0].axisValue}<br/>${params[0].value.toFixed(2)} msg/s` },
+    grid: { left: '3%', right: '4%', bottom: '10%', top: '15%', containLabel: true },
+    xAxis: { type: 'category', boundaryGap: false, data: produceRateData.times },
+    yAxis: { type: 'value', name: 'msg/s' },
+    series: [{
+      type: 'line',
+      smooth: true,
+      data: produceRateData.values,
+      itemStyle: { color: '#1890ff' },
+      areaStyle: { opacity: 0.1 }
+    }]
+  })
 
-  const formatBytes = (bytes: number) => {
-    if (!bytes) return '0 B'
-    const units = ['B', 'KB', 'MB', 'GB', 'TB']
-    let i = 0
-    while (bytes >= 1024 && i < units.length - 1) {
-      bytes /= 1024
-      i++
-    }
-    return `${bytes.toFixed(2)} ${units[i]}`
-  }
-
-  const formatBytesForChart = (bytes: number): string => {
-    if (!bytes) return '0'
-    if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
-    if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB'
-    if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' KB'
-    return bytes.toFixed(2) + ' B'
-  }
-
-  // 折线图配置 - 吞吐量
-  const getThroughputChartOption = () => ({
-    title: { text: '吞吐量趋势', left: 'center', textStyle: { fontSize: 14 } },
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['消息数/s', '字节流入', '字节流出'], bottom: 0 },
-    grid: { left: '3%', right: '4%', bottom: '15%', top: '15%', containLabel: true },
-    xAxis: { type: 'category', boundaryGap: false, data: throughputData.times },
-    yAxis: [
-      { type: 'value', name: '消息/s', position: 'left' },
-      { type: 'value', name: '字节/s', position: 'right' }
-    ],
-    series: [
-      {
-        name: '消息数/s',
-        type: 'line',
-        smooth: true,
-        data: throughputData.messages,
-        itemStyle: { color: '#1890ff' },
-        areaStyle: { opacity: 0.1 }
-      },
-      {
-        name: '字节流入',
-        type: 'line',
-        smooth: true,
-        yAxisIndex: 1,
-        data: throughputData.bytesIn.map(formatBytesForChart),
-        itemStyle: { color: '#52c41a' }
-      },
-      {
-        name: '字节流出',
-        type: 'line',
-        smooth: true,
-        yAxisIndex: 1,
-        data: throughputData.bytesOut.map(formatBytesForChart),
-        itemStyle: { color: '#faad14' }
-      }
-    ]
+  // 折线图配置 - 消费速率
+  const getConsumeRateChartOption = () => ({
+    title: { text: '集群消费速率', left: 'center', textStyle: { fontSize: 14 } },
+    tooltip: { trigger: 'axis', formatter: (params: any) => `${params[0].axisValue}<br/>${params[0].value.toFixed(2)} msg/s` },
+    grid: { left: '3%', right: '4%', bottom: '10%', top: '15%', containLabel: true },
+    xAxis: { type: 'category', boundaryGap: false, data: consumeRateData.times },
+    yAxis: { type: 'value', name: 'msg/s' },
+    series: [{
+      type: 'line',
+      smooth: true,
+      data: consumeRateData.values,
+      itemStyle: { color: '#52c41a' },
+      areaStyle: { opacity: 0.1 }
+    }]
   })
 
   // 折线图配置 - 消费延迟
-  const getLagChartOption = () => ({
-    title: { text: '消费延迟趋势', left: 'center', textStyle: { fontSize: 14 } },
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['总延迟', '消费组数'], bottom: 0 },
-    grid: { left: '3%', right: '4%', bottom: '15%', top: '15%', containLabel: true },
-    xAxis: { type: 'category', boundaryGap: false, data: lagData.times },
-    yAxis: [
-      { type: 'value', name: '延迟数' },
-      { type: 'value', name: '消费组数', position: 'right' }
-    ],
-    series: [
-      {
-        name: '总延迟',
-        type: 'line',
-        smooth: true,
-        data: lagData.totalLag,
-        itemStyle: { color: '#f5222d' },
-        areaStyle: { opacity: 0.1 }
-      },
-      {
-        name: '消费组数',
-        type: 'line',
-        smooth: true,
-        yAxisIndex: 1,
-        data: lagData.consumerGroupCount,
-        itemStyle: { color: '#722ed1' }
-      }
-    ]
+  const getLagTrendChartOption = () => ({
+    title: { text: '消费者组总 Lag', left: 'center', textStyle: { fontSize: 14 } },
+    tooltip: { trigger: 'axis', formatter: (params: any) => `${params[0].axisValue}<br/>${params[0].value.toLocaleString()}` },
+    grid: { left: '3%', right: '4%', bottom: '10%', top: '15%', containLabel: true },
+    xAxis: { type: 'category', boundaryGap: false, data: lagTrendData.times },
+    yAxis: { type: 'value', name: 'Lag' },
+    series: [{
+      type: 'line',
+      smooth: true,
+      data: lagTrendData.values,
+      itemStyle: { color: '#f5222d' },
+      areaStyle: { opacity: 0.1 }
+    }]
   })
 
-  // 折线图配置 - 分区状态
-  const getPartitionChartOption = () => ({
-    title: { text: '分区状态趋势', left: 'center', textStyle: { fontSize: 14 } },
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['未同步分区', '离线分区'], bottom: 0 },
-    grid: { left: '3%', right: '4%', bottom: '15%', top: '15%', containLabel: true },
-    xAxis: { type: 'category', boundaryGap: false, data: partitionData.times },
-    yAxis: { type: 'value', name: '数量' },
-    series: [
-      {
-        name: '未同步分区',
-        type: 'line',
-        smooth: true,
-        data: partitionData.underReplicated,
-        itemStyle: { color: '#fa8c16' },
-        areaStyle: { opacity: 0.1 }
-      },
-      {
-        name: '离线分区',
-        type: 'line',
-        smooth: true,
-        data: partitionData.offline,
-        itemStyle: { color: '#f5222d' },
-        areaStyle: { opacity: 0.1 }
-      }
-    ]
+  // 折线图配置 - 字节流入
+  const getBytesInChartOption = () => ({
+    title: { text: '字节流入速率', left: 'center', textStyle: { fontSize: 14 } },
+    tooltip: { 
+      trigger: 'axis', 
+      formatter: (params: any) => `${params[0].axisValue}<br/>${formatBytesForChart(params[0].value)}`
+    },
+    grid: { left: '3%', right: '4%', bottom: '10%', top: '15%', containLabel: true },
+    xAxis: { type: 'category', boundaryGap: false, data: bytesInData.times },
+    yAxis: { type: 'value', name: 'bytes/s', axisLabel: { formatter: (value: number) => formatBytesForChart(value) } },
+    series: [{
+      type: 'line',
+      smooth: true,
+      data: bytesInData.values,
+      itemStyle: { color: '#52c41a' },
+      areaStyle: { opacity: 0.1 }
+    }]
   })
 
-  const renderBrokerOverview = (brokerMetrics: BrokerMetrics | null) => {
-    if (!brokerMetrics) return null
-    return (
-      <Row gutter={16}>
-        <Col span={6}>
-          <Card>
-            <Statistic 
-              title="消息流入速率" 
-              value={brokerMetrics.messages_in_per_sec || 0} 
-              suffix="msg/s"
-              valueStyle={{ color: '#1890ff' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic 
-              title="字节流入速率" 
-              value={formatBytes(brokerMetrics.bytes_in_per_sec)}
-              valueStyle={{ color: '#52c41a' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic 
-              title="字节流出速率" 
-              value={formatBytes(brokerMetrics.bytes_out_per_sec)}
-              valueStyle={{ color: '#faad14' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic 
-              title="未同步分区" 
-              value={brokerMetrics.under_replicated_partitions || 0}
-              valueStyle={{ color: brokerMetrics.under_replicated_partitions > 0 ? '#f5222d' : '#52c41a' }}
-            />
-          </Card>
-        </Col>
-      </Row>
-    )
+  // 折线图配置 - 字节流出
+  const getBytesOutChartOption = () => ({
+    title: { text: '字节流出速率', left: 'center', textStyle: { fontSize: 14 } },
+    tooltip: { 
+      trigger: 'axis', 
+      formatter: (params: any) => `${params[0].axisValue}<br/>${formatBytesForChart(params[0].value)}`
+    },
+    grid: { left: '3%', right: '4%', bottom: '10%', top: '15%', containLabel: true },
+    xAxis: { type: 'category', boundaryGap: false, data: bytesOutData.times },
+    yAxis: { type: 'value', name: 'bytes/s', axisLabel: { formatter: (value: number) => formatBytesForChart(value) } },
+    series: [{
+      type: 'line',
+      smooth: true,
+      data: bytesOutData.values,
+      itemStyle: { color: '#faad14' },
+      areaStyle: { opacity: 0.1 }
+    }]
+  })
+
+  // 格式化字节用于图表
+  const formatBytesForChart = (bytes: number): string => {
+    if (!bytes || bytes === 0) return '0 B'
+    if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+    if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB'
+    if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' KB'
+    return bytes.toFixed(0) + ' B'
+  }
+
+  // Topic 监控 - 生产速率折线图（按分区）
+  const getTopicProduceRateChartOption = () => {
+    const colors = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed1', '#13c2c2', '#eb2f96', '#fa8c16']
+    const filteredMetrics = partitionMetrics.produceRate.filter(p => selectedPartitions.includes(p.partition) && p.values.length > 0)
+    
+    if (filteredMetrics.length === 0) {
+      return {}
+    }
+
+    // 使用第一个分区的时间作为基准
+    const times = filteredMetrics[0]?.values.map(v => v.time) || []
+    
+    return {
+      title: { text: 'Topic 生产速率（按分区）', left: 'center', textStyle: { fontSize: 14 } },
+      tooltip: { 
+        trigger: 'axis',
+        formatter: (params: any[]) => {
+          if (!params || params.length === 0) return ''
+          let html = params[0].axisValue + '<br/>'
+          params.filter(p => p.value !== undefined && p.value !== null).forEach(p => {
+            html += `${p.marker} 分区${p.seriesName}: ${p.value.toFixed(2)} msg/s<br/>`
+          })
+          return html
+        }
+      },
+      legend: { 
+        data: filteredMetrics.map(p => `分区${p.partition}`),
+        top: 25,
+        type: 'scroll'
+      },
+      grid: { left: '3%', right: '4%', bottom: '3%', top: 60, containLabel: true },
+      xAxis: { type: 'category', boundaryGap: false, data: times },
+      yAxis: { type: 'value', name: 'msg/s' },
+      series: filteredMetrics.map((p, index) => ({
+        name: p.partition.toString(),
+        type: 'line',
+        smooth: true,
+        data: p.values.map(v => v.value),
+        itemStyle: { color: colors[index % colors.length] },
+        emphasis: { focus: 'series' }
+      }))
+    }
+  }
+
+  // Topic 监控 - 消费速率折线图（按分区）
+  const getTopicConsumeRateChartOption = () => {
+    const colors = ['#52c41a', '#1890ff', '#faad14', '#f5222d', '#722ed1', '#13c2c2', '#eb2f96', '#fa8c16']
+    const filteredMetrics = partitionMetrics.consumeRate.filter(p => selectedPartitions.includes(p.partition) && p.values.length > 0)
+    
+    if (filteredMetrics.length === 0 || !selectedConsumerGroup) {
+      return {
+        title: { text: '消费组消费速率（按分区）', left: 'center', textStyle: { fontSize: 14, color: '#999' } },
+        graphic: {
+          type: 'text',
+          left: 'center',
+          top: 'middle',
+          style: { text: selectedConsumerGroup ? '暂无数据' : '请选择消费组', fill: '#999', fontSize: 14 }
+        },
+        xAxis: { type: 'category', data: [] },
+        yAxis: { type: 'value' },
+        series: []
+      }
+    }
+
+    const times = filteredMetrics[0]?.values.map(v => v.time) || []
+    
+    return {
+      title: { text: `消费速率（按分区）`, left: 'center', textStyle: { fontSize: 14 } },
+      tooltip: { 
+        trigger: 'axis',
+        formatter: (params: any[]) => {
+          if (!params || params.length === 0) return ''
+          let html = params[0].axisValue + '<br/>'
+          params.filter(p => p.value !== undefined && p.value !== null).forEach(p => {
+            html += `${p.marker} 分区${p.seriesName}: ${p.value.toFixed(2)} msg/s<br/>`
+          })
+          return html
+        }
+      },
+      legend: { 
+        data: filteredMetrics.map(p => `分区${p.partition}`),
+        top: 25,
+        type: 'scroll'
+      },
+      grid: { left: '3%', right: '4%', bottom: '3%', top: 60, containLabel: true },
+      xAxis: { type: 'category', boundaryGap: false, data: times },
+      yAxis: { type: 'value', name: 'msg/s' },
+      series: filteredMetrics.map((p, index) => ({
+        name: p.partition.toString(),
+        type: 'line',
+        smooth: true,
+        data: p.values.map(v => v.value),
+        itemStyle: { color: colors[index % colors.length] },
+        emphasis: { focus: 'series' }
+      }))
+    }
+  }
+
+  // Topic 监控 - Lag 折线图（按分区）
+  const getTopicLagChartOption = () => {
+    const colors = ['#f5222d', '#faad14', '#1890ff', '#52c41a', '#722ed1', '#13c2c2', '#eb2f96', '#fa8c16']
+    const filteredMetrics = partitionMetrics.lag.filter(p => selectedPartitions.includes(p.partition) && p.values.length > 0)
+    
+    if (filteredMetrics.length === 0 || !selectedConsumerGroup) {
+      return {
+        title: { text: '消费组 Lag（按分区）', left: 'center', textStyle: { fontSize: 14, color: '#999' } },
+        graphic: {
+          type: 'text',
+          left: 'center',
+          top: 'middle',
+          style: { text: selectedConsumerGroup ? '暂无数据' : '请选择消费组', fill: '#999', fontSize: 14 }
+        },
+        xAxis: { type: 'category', data: [] },
+        yAxis: { type: 'value' },
+        series: []
+      }
+    }
+
+    const times = filteredMetrics[0]?.values.map(v => v.time) || []
+    
+    return {
+      title: { text: `Lag（按分区）`, left: 'center', textStyle: { fontSize: 14 } },
+      tooltip: { 
+        trigger: 'axis',
+        formatter: (params: any[]) => {
+          if (!params || params.length === 0) return ''
+          let html = params[0].axisValue + '<br/>'
+          params.filter(p => p.value !== undefined && p.value !== null).forEach(p => {
+            html += `${p.marker} 分区${p.seriesName}: ${p.value.toLocaleString()}<br/>`
+          })
+          return html
+        }
+      },
+      legend: { 
+        data: filteredMetrics.map(p => `分区${p.partition}`),
+        top: 25,
+        type: 'scroll'
+      },
+      grid: { left: '3%', right: '4%', bottom: '3%', top: 60, containLabel: true },
+      xAxis: { type: 'category', boundaryGap: false, data: times },
+      yAxis: { type: 'value', name: 'Lag' },
+      series: filteredMetrics.map((p, index) => ({
+        name: p.partition.toString(),
+        type: 'line',
+        smooth: true,
+        data: p.values.map(v => v.value),
+        itemStyle: { color: colors[index % colors.length] },
+        emphasis: { focus: 'series' }
+      }))
+    }
+  }
+
+  // Topic 监控 - 总生产速率折线图（汇总所有分区）
+  const getTopicTotalProduceRateChartOption = () => {
+    const allTimes = new Set<string>()
+    partitionMetrics.produceRate.forEach(p => p.values.forEach(v => allTimes.add(v.time)))
+    const times = Array.from(allTimes).sort()
+    
+    // 计算每个时间点的总速率
+    const totalValues = times.map(t => {
+      let sum = 0
+      partitionMetrics.produceRate.forEach(p => {
+        const found = p.values.find(v => v.time === t)
+        if (found) sum += found.value
+      })
+      return sum
+    })
+    
+    return {
+      title: { text: 'Topic 生产速率', left: 'center', textStyle: { fontSize: 14 } },
+      tooltip: { 
+        trigger: 'axis',
+        formatter: (params: any) => `${params[0].axisValue}<br/>${(params[0].value || 0).toFixed(2)} msg/s`
+      },
+      grid: { left: '3%', right: '4%', bottom: '10%', top: '15%', containLabel: true },
+      xAxis: { type: 'category', boundaryGap: false, data: times },
+      yAxis: { type: 'value', name: 'msg/s' },
+      series: [{
+        type: 'line',
+        smooth: true,
+        data: totalValues,
+        itemStyle: { color: '#1890ff' },
+        areaStyle: { opacity: 0.1 }
+      }]
+    }
+  }
+
+  // Topic 监控 - 总消费速率折线图（汇总所有分区）
+  const getTopicTotalConsumeRateChartOption = () => {
+    // 检查是否有选中的消费组和该消费组是否有数据
+    const hasConsumeData = partitionMetrics.consumeRate.some(p => p.values.length > 0)
+    
+    if (!selectedConsumerGroup) {
+      return {
+        title: { text: '消费组消费速率', left: 'center', textStyle: { fontSize: 14, color: '#999' } },
+        graphic: {
+          type: 'text',
+          left: 'center',
+          top: 'middle',
+          style: { text: '请选择消费组', fill: '#999', fontSize: 14 }
+        },
+        xAxis: { type: 'category', data: [] },
+        yAxis: { type: 'value' },
+        series: []
+      }
+    }
+
+    if (!hasConsumeData) {
+      return {
+        title: { text: '消费组消费速率', left: 'center', textStyle: { fontSize: 14, color: '#999' } },
+        graphic: {
+          type: 'text',
+          left: 'center',
+          top: 'middle',
+          style: { text: '该消费组未消费此 Topic', fill: '#999', fontSize: 14 }
+        },
+        xAxis: { type: 'category', data: [] },
+        yAxis: { type: 'value' },
+        series: []
+      }
+    }
+
+    const allTimes = new Set<string>()
+    partitionMetrics.consumeRate.forEach(p => p.values.forEach(v => allTimes.add(v.time)))
+    const times = Array.from(allTimes).sort()
+    
+    // 计算每个时间点的总速率
+    const totalValues = times.map(t => {
+      let sum = 0
+      partitionMetrics.consumeRate.forEach(p => {
+        const found = p.values.find(v => v.time === t)
+        if (found) sum += found.value
+      })
+      return sum
+    })
+    
+    return {
+      title: { text: `消费速率 (${selectedConsumerGroup})`, left: 'center', textStyle: { fontSize: 14 } },
+      tooltip: {
+        trigger: 'axis',
+        formatter: (params: any) => `${params[0].axisValue}<br/>${(params[0].value || 0).toFixed(2)} msg/s`
+      },
+      graphic: [], // 清除 graphic
+      grid: { left: '3%', right: '4%', bottom: '10%', top: '15%', containLabel: true },
+      xAxis: { type: 'category', boundaryGap: false, data: times },
+      yAxis: { type: 'value', name: 'msg/s' },
+      series: [{
+        type: 'line',
+        smooth: true,
+        data: totalValues,
+        itemStyle: { color: '#52c41a' },
+        areaStyle: { opacity: 0.1 }
+      }]
+    }
+  }
+
+  // Topic 监控 - 总 Lag 折线图（汇总所有分区）
+  const getTopicTotalLagChartOption = () => {
+    // 检查是否有选中的消费组和该消费组是否有数据
+    const hasLagData = partitionMetrics.lag.some(p => p.values.length > 0)
+
+    if (!selectedConsumerGroup) {
+      return {
+        title: { text: '消费组 Lag', left: 'center', textStyle: { fontSize: 14, color: '#999' } },
+        graphic: {
+          type: 'text',
+          left: 'center',
+          top: 'middle',
+          style: { text: '请选择消费组', fill: '#999', fontSize: 14 }
+        },
+        xAxis: { type: 'category', data: [] },
+        yAxis: { type: 'value' },
+        series: []
+      }
+    }
+
+    if (!hasLagData) {
+      return {
+        title: { text: '消费组 Lag', left: 'center', textStyle: { fontSize: 14, color: '#999' } },
+        graphic: {
+          type: 'text',
+          left: 'center',
+          top: 'middle',
+          style: { text: '该消费组未消费此 Topic', fill: '#999', fontSize: 14 }
+        },
+        xAxis: { type: 'category', data: [] },
+        yAxis: { type: 'value' },
+        series: []
+      }
+    }
+
+    const allTimes = new Set<string>()
+    partitionMetrics.lag.forEach(p => p.values.forEach(v => allTimes.add(v.time)))
+    const times = Array.from(allTimes).sort()
+    
+    // 计算每个时间点的总 Lag
+    const totalValues = times.map(t => {
+      let sum = 0
+      partitionMetrics.lag.forEach(p => {
+        const found = p.values.find(v => v.time === t)
+        if (found) sum += found.value
+      })
+      return sum
+    })
+    
+    return {
+      title: { text: `Lag (${selectedConsumerGroup})`, left: 'center', textStyle: { fontSize: 14 } },
+      tooltip: {
+        trigger: 'axis',
+        formatter: (params: any) => `${params[0].axisValue}<br/>${(params[0].value || 0).toLocaleString()}`
+      },
+      graphic: [], // 清除 graphic
+      grid: { left: '3%', right: '4%', bottom: '10%', top: '15%', containLabel: true },
+      xAxis: { type: 'category', boundaryGap: false, data: times },
+      yAxis: { type: 'value', name: 'Lag' },
+      series: [{
+        type: 'line',
+        smooth: true,
+        data: totalValues,
+        itemStyle: { color: '#f5222d' },
+        areaStyle: { opacity: 0.1 }
+      }]
+    }
   }
 
   const tabItems = [
@@ -465,6 +948,7 @@ const Monitor: React.FC = () => {
       label: '集群概览',
       children: (
         <>
+          {/* 告警提示 */}
           {!metrics?.jmx_exporter_available && (
             <Alert
               message="JMX Exporter 未配置或不可用"
@@ -483,218 +967,380 @@ const Monitor: React.FC = () => {
               style={{ marginBottom: 16 }}
             />
           )}
+
+          {/* 第一行：基础统计 */}
           <Row gutter={16}>
-            <Col span={6}>
-              <Card>
+            <Col span={4}>
+              <Card size="small">
                 <Statistic 
                   title="Broker 数量" 
                   value={metrics?.broker_count || 0} 
-                  valueStyle={{ color: '#1890ff' }}
+                  valueStyle={{ color: '#1890ff', fontSize: 24 }}
                 />
               </Card>
             </Col>
-            <Col span={6}>
-              <Card>
+            <Col span={4}>
+              <Card size="small">
                 <Statistic 
                   title="Topic 数量" 
                   value={metrics?.topic_count || 0} 
-                  valueStyle={{ color: '#52c41a' }}
+                  valueStyle={{ color: '#52c41a', fontSize: 24 }}
                 />
               </Card>
             </Col>
-            <Col span={6}>
-              <Card>
+            <Col span={4}>
+              <Card size="small">
+                <Statistic 
+                  title="分区总数" 
+                  value={overviewStats.topicPartitionTotal}
+                  valueStyle={{ fontSize: 24 }}
+                />
+              </Card>
+            </Col>
+            <Col span={4}>
+              <Card size="small">
                 <Statistic 
                   title="消费组数量" 
-                  value={metrics?.consumer_groups?.length || 0} 
-                  valueStyle={{ color: '#faad14' }}
+                  value={metrics?.consumer_groups?.length || 0}
+                  valueStyle={{ color: '#faad14', fontSize: 24 }}
                 />
               </Card>
             </Col>
-            <Col span={6}>
-              <Card>
+            <Col span={4}>
+              <Card size="small">
                 <Statistic 
-                  title="总消费延迟" 
-                  value={metrics?.consumer_groups?.reduce((sum, g) => sum + g.total_lag, 0) || 0}
-                  valueStyle={{ color: '#f5222d' }}
+                  title="消费组成员总数" 
+                  value={overviewStats.consumerGroupMemberTotal}
+                  valueStyle={{ fontSize: 24 }}
+                />
+              </Card>
+            </Col>
+            <Col span={4}>
+              <Card size="small">
+                <Statistic 
+                  title="ISR 总数" 
+                  value={overviewStats.isrTotal}
+                  valueStyle={{ color: '#52c41a', fontSize: 24 }}
                 />
               </Card>
             </Col>
           </Row>
-          {metrics?.broker_metrics && (
-            <div style={{ marginTop: 16 }}>
-              <h4>Broker 指标</h4>
-              {renderBrokerOverview(metrics.broker_metrics)}
-            </div>
-          )}
-        </>
-      )
-    },
-    {
-      key: 'charts',
-      label: '历史趋势',
-      children: (
-        <div>
-          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <span>集群: <strong>{selectedCluster?.cluster_name}</strong></span>
-            <Space wrap>
-              {timeRange === 'quick' ? (
-                <>
-                  <Button.Group>
-                    <Button size="small" type={quickRange === '5m' ? 'primary' : 'default'} onClick={() => setQuickRange('5m')}>5分钟</Button>
-                    <Button size="small" type={quickRange === '15m' ? 'primary' : 'default'} onClick={() => setQuickRange('15m')}>15分钟</Button>
-                    <Button size="small" type={quickRange === '30m' ? 'primary' : 'default'} onClick={() => setQuickRange('30m')}>30分钟</Button>
-                    <Button size="small" type={quickRange === '1h' ? 'primary' : 'default'} onClick={() => setQuickRange('1h')}>1小时</Button>
-                    <Button size="small" type={quickRange === '3h' ? 'primary' : 'default'} onClick={() => setQuickRange('3h')}>3小时</Button>
-                    <Button size="small" type={quickRange === '6h' ? 'primary' : 'default'} onClick={() => setQuickRange('6h')}>6小时</Button>
-                    <Button size="small" type={quickRange === '12h' ? 'primary' : 'default'} onClick={() => setQuickRange('12h')}>12小时</Button>
-                    <Button size="small" type={quickRange === '24h' ? 'primary' : 'default'} onClick={() => setQuickRange('24h')}>24小时</Button>
-                    <Button size="small" type={quickRange === '2d' ? 'primary' : 'default'} onClick={() => setQuickRange('2d')}>2天</Button>
-                    <Button size="small" type={quickRange === '7d' ? 'primary' : 'default'} onClick={() => setQuickRange('7d')}>7天</Button>
-                    <Button size="small" type={quickRange === '30d' ? 'primary' : 'default'} onClick={() => setQuickRange('30d')}>30天</Button>
-                  </Button.Group>
-                  <Button size="small" icon={<CalendarOutlined />} onClick={() => setTimeRange('custom')}>
-                    自定义
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <DatePicker.RangePicker
-                    size="small"
-                    showTime
-                    value={customRange}
-                    onChange={(dates) => {
-                      if (dates && dates[0] && dates[1]) {
-                        setCustomRange([dates[0], dates[1]])
-                      }
-                    }}
-                    presets={[
-                      { label: '最近1小时', value: [dayjs().subtract(1, 'hour'), dayjs()] },
-                      { label: '最近6小时', value: [dayjs().subtract(6, 'hour'), dayjs()] },
-                      { label: '最近24小时', value: [dayjs().subtract(24, 'hour'), dayjs()] },
-                      { label: '最近7天', value: [dayjs().subtract(7, 'day'), dayjs()] },
-                      { label: '最近30天', value: [dayjs().subtract(30, 'day'), dayjs()] },
-                    ]}
-                    style={{ width: 360 }}
-                  />
-                  <Button size="small" onClick={() => { setTimeRange('quick'); setCustomRange(null) }}>
-                    快速选择
-                  </Button>
-                </>
-              )}
-            </Space>
+
+          {/* 第二行：副本状态 */}
+          <Row gutter={16} style={{ marginTop: 16 }}>
+            <Col span={4}>
+              <Card size="small">
+                <Statistic 
+                  title="非首选 Leader" 
+                  value={overviewStats.nonPreferredLeaderCount}
+                  valueStyle={{ 
+                    color: overviewStats.nonPreferredLeaderCount > 0 ? '#f5222d' : '#52c41a', 
+                    fontSize: 24 
+                  }}
+                />
+              </Card>
+            </Col>
+            <Col span={4}>
+              <Card size="small">
+                <Statistic 
+                  title="总消费延迟" 
+                  value={metrics?.consumer_groups?.reduce((sum, g) => sum + g.total_lag, 0) || 0}
+                  valueStyle={{ color: '#f5222d', fontSize: 24 }}
+                />
+              </Card>
+            </Col>
+          </Row>
+
+          {/* 趋势图 */}
+          <div style={{ marginTop: 24 }}>
+            <h4>历史趋势</h4>
+            {historyLoading ? (
+              <Spin tip="加载历史数据..." />
+            ) : produceRateData.times.length === 0 ? (
+              <Alert
+                message="暂无历史数据"
+                description="系统会每 30 秒自动采集一次指标，请稍后再查看。确保 VictoriaMetrics 已正确配置。"
+                type="info"
+              />
+            ) : (
+              <Row gutter={[16, 16]}>
+                <Col span={12}>
+                  <Card size="small">
+                    <ReactECharts option={getLagTrendChartOption()} style={{ height: 250 }} />
+                  </Card>
+                </Col>
+                <Col span={12}>
+                  <Card size="small">
+                    <ReactECharts option={getProduceRateChartOption()} style={{ height: 250 }} />
+                  </Card>
+                </Col>
+                <Col span={12}>
+                  <Card size="small">
+                    <ReactECharts option={getConsumeRateChartOption()} style={{ height: 250 }} />
+                  </Card>
+                </Col>
+                <Col span={12}>
+                  <Card size="small">
+                    <ReactECharts option={getBytesInChartOption()} style={{ height: 250 }} />
+                  </Card>
+                </Col>
+                <Col span={12}>
+                  <Card size="small">
+                    <ReactECharts option={getBytesOutChartOption()} style={{ height: 250 }} />
+                  </Card>
+                </Col>
+              </Row>
+            )}
           </div>
-          
-          {historyLoading ? (
-            <Spin tip="加载历史数据..." />
-          ) : throughputData.times.length === 0 ? (
-            <Alert
-              message="暂无历史数据"
-              description="系统会每 30 秒自动采集一次指标，请稍后再查看。确保 VictoriaMetrics 已正确配置且集群已设置 JMX Exporter URL。"
-              type="info"
-            />
-          ) : (
-            <Row gutter={[16, 16]}>
-              <Col span={24}>
-                <Card>
-                  <ReactECharts option={getThroughputChartOption()} style={{ height: 300 }} />
-                </Card>
-              </Col>
-              <Col span={24}>
-                <Card>
-                  <ReactECharts option={getLagChartOption()} style={{ height: 300 }} />
-                </Card>
-              </Col>
-              <Col span={24}>
-                <Card>
-                  <ReactECharts option={getPartitionChartOption()} style={{ height: 300 }} />
-                </Card>
-              </Col>
-            </Row>
-          )}
-        </div>
+        </>
       )
     },
     {
       key: 'broker',
       label: 'Broker 监控',
-      children: metrics?.broker_metrics ? (
-        <>
-          <Row gutter={16}>
-            <Col span={6}>
-              <Card>
-                <Statistic 
-                  title="消息流入速率" 
-                  value={metrics.broker_metrics.messages_in_per_sec || 0} 
-                  suffix="msg/s"
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic 
-                  title="字节流入速率" 
-                  value={formatBytes(metrics.broker_metrics.bytes_in_per_sec)}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic 
-                  title="字节流出速率" 
-                  value={formatBytes(metrics.broker_metrics.bytes_out_per_sec)}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic 
-                  title="未同步分区" 
-                  value={metrics.broker_metrics.under_replicated_partitions || 0}
-                  valueStyle={{ color: metrics.broker_metrics.under_replicated_partitions > 0 ? '#f5222d' : '#52c41a' }}
-                />
-              </Card>
-            </Col>
-          </Row>
-          <Row gutter={16} style={{ marginTop: 16 }}>
-            <Col span={6}>
-              <Card>
-                <Statistic 
-                  title="离线分区" 
-                  value={metrics.broker_metrics.offline_partitions_count || 0}
-                  valueStyle={{ color: metrics.broker_metrics.offline_partitions_count > 0 ? '#f5222d' : '#52c41a' }}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic 
-                  title="活跃 Controller" 
-                  value={metrics.broker_metrics.active_controller_count || 0}
-                />
-              </Card>
-            </Col>
-          </Row>
-        </>
-      ) : (
+      children: (
         <Alert
-          message="Broker 指标不可用"
-          description="请配置 JMX Exporter URL"
+          message="开发中"
+          description="Broker 监控功能正在开发，需要支持按 Broker/Topic 维度筛选"
           type="info"
         />
       )
     },
     {
-      key: 'consumer',
-      label: '消费组监控',
+      key: 'topic',
+      label: 'Topic 监控',
       children: (
-        <Table 
-          dataSource={metrics?.consumer_groups || []} 
-          columns={consumerColumns} 
-          rowKey="group_id"
-          expandable={expandableConfig}
-          pagination={{ pageSize: 20 }}
-        />
+        <Spin spinning={topicLoading}>
+          {/* 1. 选择器 */}
+          <Space style={{ marginBottom: 16 }} wrap>
+            <Select
+              placeholder="选择 Topic"
+              value={selectedTopic}
+              onChange={(value) => {
+                setSelectedTopic(value)
+                setSelectedPartitions([])
+              }}
+              style={{ width: 200 }}
+              options={topics.map(t => ({ label: t.name, value: t.name }))}
+              allowClear
+              showSearch
+              filterOption={(input, option) => 
+                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+            />
+            <Select
+              placeholder="选择消费组"
+              value={selectedConsumerGroup}
+              onChange={setSelectedConsumerGroup}
+              style={{ width: 200 }}
+              options={topicConsumerGroups.map(cg => ({ label: cg, value: cg }))}
+              allowClear
+              showSearch
+              disabled={!selectedTopic}
+              filterOption={(input, option) => 
+                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+            />
+          </Space>
+
+          {!selectedTopic ? (
+            <Alert
+              message="请选择 Topic"
+              description="选择 Topic 后将显示该 Topic 的详细监控信息"
+              type="info"
+            />
+          ) : (
+            <>
+              {/* 2. Topic 维度信息表格 */}
+              <Card size="small" title="Topic 概览" style={{ marginBottom: 16 }}>
+                <Row gutter={24}>
+                  <Col span={6}>
+                    <Statistic 
+                      title="Topic 名称" 
+                      value={selectedTopic}
+                      valueStyle={{ fontSize: 16 }}
+                    />
+                  </Col>
+                  <Col span={6}>
+                    <Statistic 
+                      title="分区数" 
+                      value={topics.find(t => t.name === selectedTopic)?.partitions || 0}
+                    />
+                  </Col>
+                  <Col span={6}>
+                    <Statistic 
+                      title="消费组数量" 
+                      value={topicConsumerGroups.length}
+                    />
+                  </Col>
+                  <Col span={6}>
+                    <Statistic 
+                      title="总 Lag" 
+                      value={metrics?.consumer_groups
+                        ?.filter(cg => cg.topics.some(t => t.topic === selectedTopic))
+                        .reduce((sum, cg) => sum + cg.topics
+                          .filter(t => t.topic === selectedTopic)
+                          .reduce((s, t) => s + t.lag, 0), 0) || 0}
+                      valueStyle={{ color: '#f5222d' }}
+                    />
+                  </Col>
+                </Row>
+                
+                {/* 消费组列表 */}
+                {topicConsumerGroups.length === 0 ? (
+                  <Alert
+                    message="该 Topic 暂无消费组"
+                    description="当前选择的 Topic 没有活跃的消费组，请选择其他 Topic 或等待消费组启动"
+                    type="info"
+                    style={{ marginTop: 16 }}
+                  />
+                ) : (
+                  <div style={{ marginTop: 16 }}>
+                    <h4 style={{ marginBottom: 8 }}>消费组列表（点击选中）</h4>
+                    <Table
+                      size="small"
+                      dataSource={metrics?.consumer_groups
+                        ?.filter(cg => cg.topics.some(t => t.topic === selectedTopic))
+                        .map(cg => {
+                          const topicData = cg.topics.filter(t => t.topic === selectedTopic)
+                          return {
+                            group_id: cg.group_id,
+                            state: cg.state,
+                            member_count: cg.member_count || 0,
+                            topic_lag: topicData.reduce((s, t) => s + t.lag, 0),
+                            topic: selectedTopic,
+                            partitions: topicData.length
+                          }
+                        }) || []}
+                      columns={[
+                        { title: '消费组', dataIndex: 'group_id', key: 'group_id' },
+                        { 
+                          title: '状态', 
+                          dataIndex: 'state', 
+                          key: 'state',
+                          render: (state: string) => {
+                            const colorMap: Record<string, string> = {
+                              'Stable': 'green',
+                              'Empty': 'default',
+                              'Rebalancing': 'orange',
+                              'Dead': 'red',
+                            }
+                            return <Tag color={colorMap[state] || 'default'}>{state}</Tag>
+                          }
+                        },
+                        { title: '成员数', dataIndex: 'member_count', key: 'member_count' },
+                        { title: '消费分区数', dataIndex: 'partitions', key: 'partitions' },
+                        { 
+                          title: 'Lag', 
+                          dataIndex: 'topic_lag', 
+                          key: 'topic_lag',
+                          render: (val: number) => val?.toLocaleString() || 0
+                        },
+                      ]}
+                      rowKey="group_id"
+                      pagination={false}
+                      onRow={(record) => ({
+                        onClick: () => setSelectedConsumerGroup(record.group_id),
+                        style: { cursor: 'pointer', backgroundColor: selectedConsumerGroup === record.group_id ? '#e6f7ff' : undefined }
+                      })}
+                    />
+                  </div>
+                )}
+              </Card>
+
+              {/* 3. Topic 汇总指标 */}
+              <Row gutter={16} style={{ marginBottom: 16 }}>
+                <Col span={8}>
+                  <Card size="small">
+                    <ReactECharts
+                      key={`total-produce-${selectedTopic}`}
+                      option={getTopicTotalProduceRateChartOption()}
+                      style={{ height: 200 }}
+                      notMerge={true}
+                    />
+                  </Card>
+                </Col>
+                <Col span={8}>
+                  <Card size="small">
+                    <ReactECharts
+                      key={`total-consume-${selectedTopic}-${selectedConsumerGroup}`}
+                      option={getTopicTotalConsumeRateChartOption()}
+                      style={{ height: 200 }}
+                      notMerge={true}
+                    />
+                  </Card>
+                </Col>
+                <Col span={8}>
+                  <Card size="small">
+                    <ReactECharts
+                      key={`total-lag-${selectedTopic}-${selectedConsumerGroup}`}
+                      option={getTopicTotalLagChartOption()}
+                      style={{ height: 200 }}
+                      notMerge={true}
+                    />
+                  </Card>
+                </Col>
+              </Row>
+
+              {/* 4. 分区选择器 */}
+              {partitionMetrics.produceRate.length > 0 && (
+                <Card size="small" title="分区选择（点击筛选要查看的分区）" style={{ marginBottom: 16 }}>
+                  <div style={{ maxHeight: 120, overflowY: 'auto' }}>
+                    <Checkbox.Group
+                      value={selectedPartitions}
+                      onChange={(values) => setSelectedPartitions(values as number[])}
+                    >
+                      <Space wrap>
+                        {partitionMetrics.produceRate
+                          .map(p => p.partition)
+                          .sort((a, b) => a - b)
+                          .map(p => (
+                            <Checkbox key={p} value={p}>分区 {p}</Checkbox>
+                          ))}
+                      </Space>
+                    </Checkbox.Group>
+                  </div>
+                </Card>
+              )}
+
+              {/* 5. 分区级别折线图 */}
+              {partitionMetrics.produceRate.length > 0 && selectedPartitions.length > 0 && (
+                <Row gutter={[16, 16]}>
+                  <Col span={24}>
+                    <Card size="small">
+                      <ReactECharts
+                        key={`produce-${selectedTopic}-${selectedPartitions.join('-')}`}
+                        option={getTopicProduceRateChartOption()}
+                        style={{ height: 300 }}
+                        notMerge={true}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={12}>
+                    <Card size="small">
+                      <ReactECharts
+                        key={`consume-${selectedTopic}-${selectedConsumerGroup}-${selectedPartitions.join('-')}`}
+                        option={getTopicConsumeRateChartOption()}
+                        style={{ height: 300 } }
+                        notMerge={true}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={12}>
+                    <Card size="small">
+                      <ReactECharts
+                        key={`lag-${selectedTopic}-${selectedConsumerGroup}-${selectedPartitions.join('-')}`}
+                        option={getTopicLagChartOption()}
+                        style={{ height: 300 }}
+                        notMerge={true}
+                      />
+                    </Card>
+                  </Col>
+                </Row>
+              )}
+            </>
+          )}
+        </Spin>
       )
     }
   ]
@@ -718,6 +1364,10 @@ const Monitor: React.FC = () => {
           </Space>
         }
       >
+        {/* 时间选择器放在 Tabs 上方 */}
+        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+          {renderTimeSelector()}
+        </div>
         <Spin spinning={loading}>
           <Tabs 
             activeKey={activeTab} 

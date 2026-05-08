@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,32 +19,42 @@ type JMXMetric struct {
 	Labels map[string]string `json:"labels"`
 }
 
-// BrokerMetrics Broker 指标汇总
+// BrokerMetrics Broker 指标汇总（集群维度，聚合所有 Broker）
 type BrokerMetrics struct {
-	// 吞吐量
+	// 吞吐量（集群汇总）
 	MessagesInPerSec float64 `json:"messages_in_per_sec"`
 	BytesInPerSec    float64 `json:"bytes_in_per_sec"`
 	BytesOutPerSec   float64 `json:"bytes_out_per_sec"`
 
-	// 副本状态
+	// 副本状态（取第一个 Broker 的值，因为是集群级别的）
 	UnderReplicatedPartitions float64 `json:"under_replicated_partitions"`
 	ISRShrinksPerSec          float64 `json:"isr_shrinks_per_sec"`
 	ISRExpandsPerSec          float64 `json:"isr_expands_per_sec"`
 
-	// Controller
+	// Controller（集群只有一个 Active Controller）
 	ActiveControllerCount  float64 `json:"active_controller_count"`
 	OfflinePartitionsCount float64 `json:"offline_partitions_count"`
 
-	// 请求
+	// 请求（集群汇总）
 	TotalProduceRequestsPerSec float64 `json:"total_produce_requests_per_sec"`
 	TotalFetchRequestsPerSec   float64 `json:"total_fetch_requests_per_sec"`
 	RequestQueueSize           float64 `json:"request_queue_size"`
 
-	// JVM
+	// JVM（不适用于集群汇总，保留字段）
 	HeapMemoryUsed float64 `json:"heap_memory_used"`
 	HeapMemoryMax  float64 `json:"heap_memory_max"`
 	GCTimeSeconds  float64 `json:"gc_time_seconds"`
 	GCCount        float64 `json:"gc_count"`
+
+	// Broker 数量
+	BrokerCount int `json:"broker_count"`
+}
+
+// BrokerMetricDetail 单个 Broker 的指标详情
+type BrokerMetricDetail struct {
+	BrokerID   int            `json:"broker_id"`
+	BrokerHost string         `json:"broker_host"`
+	Metrics    *BrokerMetrics `json:"metrics"`
 }
 
 // JMXClient JMX Exporter HTTP 客户端
@@ -68,7 +79,13 @@ func (c *JMXClient) FetchMetrics(ctx context.Context) ([]JMXMetric, error) {
 		return nil, fmt.Errorf("jmx exporter url is empty")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL, nil)
+	// 确保 URL 以 /metrics 结尾
+	metricsURL := c.baseURL
+	if !strings.HasSuffix(metricsURL, "/metrics") {
+		metricsURL = strings.TrimSuffix(metricsURL, "/") + "/metrics"
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", metricsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request failed: %w", err)
 	}
@@ -89,6 +106,145 @@ func (c *JMXClient) FetchMetrics(ctx context.Context) ([]JMXMetric, error) {
 	}
 
 	return parsePrometheusMetrics(string(body)), nil
+}
+
+// ParseJMXExporterURLs 解析 JMX Exporter URL 列表（逗号分隔）
+func ParseJMXExporterURLs(urls string) []string {
+	if urls == "" {
+		return nil
+	}
+	parts := strings.Split(urls, ",")
+	var result []string
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
+// MultiJMXClient 多 Broker JMX 客户端
+type MultiJMXClient struct {
+	urls       []string
+	httpClient *http.Client
+}
+
+// NewMultiJMXClient 创建多 Broker JMX 客户端
+func NewMultiJMXClient(urls []string) *MultiJMXClient {
+	return &MultiJMXClient{
+		urls: urls,
+		httpClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
+}
+
+// FetchAllBrokerMetrics 并行获取所有 Broker 的指标
+func (m *MultiJMXClient) FetchAllBrokerMetrics(ctx context.Context) ([]BrokerMetricDetail, error) {
+	if len(m.urls) == 0 {
+		return nil, fmt.Errorf("no jmx exporter urls configured")
+	}
+
+	var (
+		wg     sync.WaitGroup
+		mu     sync.Mutex
+		result []BrokerMetricDetail
+		errors []error
+	)
+
+	for i, url := range m.urls {
+		wg.Add(1)
+		go func(index int, jmxURL string) {
+			defer wg.Done()
+
+			client := NewJMXClient(jmxURL)
+			metrics, err := client.GetBrokerMetrics(ctx)
+			if err != nil {
+				mu.Lock()
+				errors = append(errors, fmt.Errorf("broker %d (%s): %w", index, jmxURL, err))
+				mu.Unlock()
+				return
+			}
+
+			// 从 URL 中提取 host 作为标识
+			host := extractHostFromURL(jmxURL)
+
+			mu.Lock()
+			result = append(result, BrokerMetricDetail{
+				BrokerID:   index + 1,
+				BrokerHost: host,
+				Metrics:    metrics,
+			})
+			mu.Unlock()
+		}(i, url)
+	}
+
+	wg.Wait()
+
+	// 如果全部失败，返回错误
+	if len(result) == 0 && len(errors) > 0 {
+		return nil, fmt.Errorf("all jmx exporters failed: %v", errors)
+	}
+
+	return result, nil
+}
+
+// GetAggregatedMetrics 获取聚合后的集群级别指标
+func (m *MultiJMXClient) GetAggregatedMetrics(ctx context.Context) (*BrokerMetrics, error) {
+	details, err := m.FetchAllBrokerMetrics(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(details) == 0 {
+		return nil, fmt.Errorf("no broker metrics available")
+	}
+
+	aggregated := &BrokerMetrics{
+		BrokerCount: len(details),
+	}
+
+	for _, detail := range details {
+		if detail.Metrics == nil {
+			continue
+		}
+
+		// 吞吐量：累加所有 Broker
+		aggregated.MessagesInPerSec += detail.Metrics.MessagesInPerSec
+		aggregated.BytesInPerSec += detail.Metrics.BytesInPerSec
+		aggregated.BytesOutPerSec += detail.Metrics.BytesOutPerSec
+		aggregated.TotalProduceRequestsPerSec += detail.Metrics.TotalProduceRequestsPerSec
+		aggregated.TotalFetchRequestsPerSec += detail.Metrics.TotalFetchRequestsPerSec
+		aggregated.RequestQueueSize += detail.Metrics.RequestQueueSize
+
+		// Controller 指标：取第一个有效值（集群级别只有一个 Active Controller）
+		if aggregated.ActiveControllerCount == 0 && detail.Metrics.ActiveControllerCount > 0 {
+			aggregated.ActiveControllerCount = detail.Metrics.ActiveControllerCount
+		}
+		if aggregated.OfflinePartitionsCount == 0 {
+			aggregated.OfflinePartitionsCount = detail.Metrics.OfflinePartitionsCount
+		}
+		if aggregated.UnderReplicatedPartitions == 0 {
+			aggregated.UnderReplicatedPartitions = detail.Metrics.UnderReplicatedPartitions
+		}
+	}
+
+	return aggregated, nil
+}
+
+// extractHostFromURL 从 URL 中提取 host
+func extractHostFromURL(urlStr string) string {
+	// 简单提取：去掉 http:// 前缀和端口
+	urlStr = strings.TrimPrefix(urlStr, "http://")
+	urlStr = strings.TrimPrefix(urlStr, "https://")
+	if idx := strings.Index(urlStr, ":"); idx > 0 {
+		return urlStr[:idx]
+	}
+	if idx := strings.Index(urlStr, "/"); idx > 0 {
+		return urlStr[:idx]
+	}
+	return urlStr
 }
 
 // parsePrometheusMetrics 解析 Prometheus 格式的 metrics
@@ -192,24 +348,24 @@ func (c *JMXClient) GetBrokerMetrics(ctx context.Context) (*BrokerMetrics, error
 	}
 
 	// 解析关键指标
-	// 吞吐量 - 尝试多种匹配方式
-	result.MessagesInPerSec = findMetricValue(metricMap, "kafka_server_BrokerTopicMetrics_MessagesInPerSec", "kafka_server_BrokerTopicMetrics_OneMinuteRate")
-	result.BytesInPerSec = findMetricValue(metricMap, "kafka_server_BrokerTopicMetrics_BytesInPerSec", "kafka_server_BrokerTopicMetrics_OneMinuteRate")
-	result.BytesOutPerSec = findMetricValue(metricMap, "kafka_server_BrokerTopicMetrics_BytesOutPerSec", "kafka_server_BrokerTopicMetrics_OneMinuteRate")
+	// 吞吐量 - JMX Exporter 使用小写 + _total 后缀
+	result.MessagesInPerSec = findMetricValue(metricMap, "kafka_server_brokertopicmetrics_messagesin_total", "kafka_server_BrokerTopicMetrics_MessagesInPersec")
+	result.BytesInPerSec = findMetricValue(metricMap, "kafka_server_brokertopicmetrics_bytesin_total", "kafka_server_BrokerTopicMetrics_BytesInPersec")
+	result.BytesOutPerSec = findMetricValue(metricMap, "kafka_server_brokertopicmetrics_bytesout_total", "kafka_server_BrokerTopicMetrics_BytesOutPersec")
 
 	// 副本状态
-	result.UnderReplicatedPartitions = getFirstValue(metricMap, "kafka_server_ReplicaManager_UnderReplicatedPartitions")
-	result.ISRShrinksPerSec = getFirstValue(metricMap, "kafka_server_ReplicaManager_IsrShrinksPerSec")
-	result.ISRExpandsPerSec = getFirstValue(metricMap, "kafka_server_ReplicaManager_IsrExpandsPerSec")
+	result.UnderReplicatedPartitions = findMetricValue(metricMap, "kafka_server_replicamanager_underreplicatedpartitions", "kafka_server_ReplicaManager_UnderReplicatedPartitions")
+	result.ISRShrinksPerSec = findMetricValue(metricMap, "kafka_server_replicamanager_isrshrinkspersec", "kafka_server_ReplicaManager_IsrShrinksPerSec")
+	result.ISRExpandsPerSec = findMetricValue(metricMap, "kafka_server_replicamanager_isrexpandspersec", "kafka_server_ReplicaManager_IsrExpandsPerSec")
 
 	// Controller
-	result.ActiveControllerCount = getFirstValue(metricMap, "kafka_controller_KafkaController_ActiveControllerCount")
-	result.OfflinePartitionsCount = getFirstValue(metricMap, "kafka_controller_KafkaController_OfflinePartitionsCount")
+	result.ActiveControllerCount = findMetricValue(metricMap, "kafka_controller_kafkacontroller_activecontrollercount", "kafka_controller_KafkaController_ActiveControllerCount")
+	result.OfflinePartitionsCount = findMetricValue(metricMap, "kafka_controller_kafkacontroller_offlinepartitionscount", "kafka_controller_KafkaController_OfflinePartitionsCount")
 
 	// 请求
-	result.TotalProduceRequestsPerSec = getFirstValue(metricMap, "kafka_server_BrokerTopicMetrics_TotalProduceRequestsPerSec")
-	result.TotalFetchRequestsPerSec = getFirstValue(metricMap, "kafka_server_BrokerTopicMetrics_TotalFetchRequestsPerSec")
-	result.RequestQueueSize = getFirstValue(metricMap, "kafka_network_RequestChannel_RequestQueueSize")
+	result.TotalProduceRequestsPerSec = findMetricValue(metricMap, "kafka_server_brokertopicmetrics_totalproducerequests_total", "kafka_server_BrokerTopicMetrics_TotalProduceRequestsPersec")
+	result.TotalFetchRequestsPerSec = findMetricValue(metricMap, "kafka_server_brokertopicmetrics_totalfetchrequests_total", "kafka_server_BrokerTopicMetrics_TotalFetchRequestsPersec")
+	result.RequestQueueSize = findMetricValue(metricMap, "kafka_network_requestchannel_requestqueuesize", "kafka_network_RequestChannel_RequestQueueSize")
 
 	// JVM
 	result.HeapMemoryUsed = getFirstValue(metricMap, "jvm_memory_bytes_used")

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 
 	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/pkg/encryption"
@@ -36,6 +38,7 @@ type PartitionLagInfo struct {
 	CurrentOffset int64 `json:"current_offset"`
 	EndOffset     int64 `json:"end_offset"`
 	Lag           int64 `json:"lag"`
+	LagSeconds    int64 `json:"lag_seconds"` // Lag 时间（秒），-1 表示无法计算
 }
 
 // TopicOffsetInfo Topic Offset 信息
@@ -64,6 +67,7 @@ type BrokerInfo struct {
 	ID   int32  `json:"id"`
 	Host string `json:"host"`
 	Port int32  `json:"port"`
+	Rack string `json:"rack"` // Broker 机架信息
 }
 
 // KafkaExporterService 内置 Kafka Exporter 服务
@@ -126,10 +130,14 @@ func (s *KafkaExporterService) GetClusterMetadata(ctx context.Context, clusterID
 
 	var brokerInfos []BrokerInfo
 	for _, b := range brokers {
+		// 解析 Addr() 获取 host 和 port
+		// Addr() 返回格式为 "host:port"
+		host, port := parseBrokerAddr(b.Addr())
 		brokerInfos = append(brokerInfos, BrokerInfo{
 			ID:   b.ID(),
-			Host: b.Addr(),
-			Port: 0, // sarama 不直接返回端口
+			Host: host,
+			Port: port,
+			Rack: b.Rack(),
 		})
 	}
 
@@ -189,27 +197,57 @@ func (s *KafkaExporterService) GetConsumerGroupInfo(ctx context.Context, cluster
 		return nil, fmt.Errorf("failed to list consumer group offsets: %w", err)
 	}
 
-	// 3. 计算每个 Topic 的 Lag
+	// 3. 收集需要查询 EndOffset 的 Topic 分区
+	topicPartitions := make(map[string][]int32)
+	consumerOffsets := make(map[string]map[int32]int64) // topic -> partition -> offset
+
+	for topic, partitions := range offsetResp.Blocks {
+		consumerOffsets[topic] = make(map[int32]int64)
+		for partition, block := range partitions {
+			if block.Offset >= 0 {
+				consumerOffsets[topic][partition] = block.Offset
+				topicPartitions[topic] = append(topicPartitions[topic], partition)
+			}
+		}
+	}
+
+	// 4. 批量获取 LogEndOffset
+	endOffsets, err := adminClient.GetTopicPartitionOffsets(topicPartitions)
+	if err != nil {
+		log.Printf("[KafkaExporter] Error getting topic end offsets: %v", err)
+	}
+
+	// 5. 计算每个 Topic 的 Lag
 	topicLags := make(map[string]*TopicLagInfo)
 	var totalLag int64
 
-	for topic, partitions := range offsetResp.Blocks {
+	for topic, partitions := range consumerOffsets {
 		topicLag := &TopicLagInfo{
 			Topic: topic,
 		}
 
-		for partition, block := range partitions {
-			// 如果 Offset 是 -1，表示没有消费过
-			if block.Offset >= 0 {
-				partitionLag := PartitionLagInfo{
-					Partition:     partition,
-					CurrentOffset: block.Offset,
-					EndOffset:     0,
-					Lag:           0,
-				}
-				topicLag.Partitions = append(topicLag.Partitions, partitionLag)
-				topicLag.CurrentOffset += block.Offset
+		for partition, currentOffset := range partitions {
+			var endOffset int64
+			if endOffsets[topic] != nil {
+				endOffset = endOffsets[topic][partition]
 			}
+
+			lag := endOffset - currentOffset
+			if lag < 0 {
+				lag = 0
+			}
+
+			partitionLag := PartitionLagInfo{
+				Partition:     partition,
+				CurrentOffset: currentOffset,
+				EndOffset:     endOffset,
+				Lag:           lag,
+			}
+
+			topicLag.Partitions = append(topicLag.Partitions, partitionLag)
+			topicLag.CurrentOffset += currentOffset
+			topicLag.EndOffset += endOffset
+			topicLag.Lag += lag
 		}
 
 		if len(topicLag.Partitions) > 0 {
@@ -221,6 +259,7 @@ func (s *KafkaExporterService) GetConsumerGroupInfo(ctx context.Context, cluster
 	var topics []TopicLagInfo
 	for _, tl := range topicLags {
 		topics = append(topics, *tl)
+		totalLag += tl.Lag
 	}
 
 	return &ConsumerGroupInfo{
@@ -265,7 +304,40 @@ func (s *KafkaExporterService) GetAllConsumerGroupLags(ctx context.Context, clus
 		return nil, fmt.Errorf("failed to describe consumer groups: %w", err)
 	}
 
-	// 3. 获取每个消费者组的 Offset 和计算 Lag
+	// 3. 收集所有需要查询 EndOffset 的 Topic 分区
+	topicPartitions := make(map[string][]int32)
+	groupOffsets := make(map[string]map[string]map[int32]int64) // group -> topic -> partition -> offset
+
+	for _, desc := range descs {
+		if desc.ErrorCode != 0 {
+			continue
+		}
+
+		offsetResp, err := adminClient.ListConsumerGroupOffsets(desc.GroupId, nil)
+		if err != nil {
+			log.Printf("[KafkaExporter] Error getting offsets for group %s: %v", desc.GroupId, err)
+			continue
+		}
+
+		groupOffsets[desc.GroupId] = make(map[string]map[int32]int64)
+		for topic, partitions := range offsetResp.Blocks {
+			groupOffsets[desc.GroupId][topic] = make(map[int32]int64)
+			for partition, block := range partitions {
+				if block.Offset >= 0 {
+					groupOffsets[desc.GroupId][topic][partition] = block.Offset
+					topicPartitions[topic] = append(topicPartitions[topic], partition)
+				}
+			}
+		}
+	}
+
+	// 4. 批量获取所有 Topic 分区的 LogEndOffset
+	endOffsets, err := adminClient.GetTopicPartitionOffsets(topicPartitions)
+	if err != nil {
+		log.Printf("[KafkaExporter] Error getting topic end offsets: %v", err)
+	}
+
+	// 5. 计算每个消费者组的 Lag
 	var result []*ConsumerGroupInfo
 	for _, desc := range descs {
 		if desc.ErrorCode != 0 {
@@ -279,10 +351,8 @@ func (s *KafkaExporterService) GetAllConsumerGroupLags(ctx context.Context, clus
 			Members: len(desc.Members),
 		}
 
-		// 获取该消费者组的 Offset
-		offsetResp, err := adminClient.ListConsumerGroupOffsets(desc.GroupId, nil)
-		if err != nil {
-			log.Printf("[KafkaExporter] Error getting offsets for group %s: %v", desc.GroupId, err)
+		offsets, ok := groupOffsets[desc.GroupId]
+		if !ok {
 			result = append(result, info)
 			continue
 		}
@@ -291,29 +361,53 @@ func (s *KafkaExporterService) GetAllConsumerGroupLags(ctx context.Context, clus
 		topicLags := make(map[string]*TopicLagInfo)
 		var totalLag int64
 
-		for topic, partitions := range offsetResp.Blocks {
+		for topic, partitions := range offsets {
 			topicLag := &TopicLagInfo{
 				Topic: topic,
 			}
 
-			for partition, block := range partitions {
-				if block.Offset < 0 {
-					continue // 没有消费过
+			for partition, currentOffset := range partitions {
+				// 获取 EndOffset
+				var endOffset int64
+				if endOffsets[topic] != nil {
+					endOffset = endOffsets[topic][partition]
+				}
+
+				// 计算 Lag
+				lag := endOffset - currentOffset
+				if lag < 0 {
+					lag = 0
+				}
+
+				// 计算 LagSeconds（仅对有 Lag 的分区计算）
+				lagSeconds := int64(-1) // -1 表示未计算或无法计算
+				if lag > 0 && currentOffset >= 0 {
+					ls, err := adminClient.CalculateConsumerGroupLagSeconds(topic, partition, currentOffset, endOffset)
+					if err != nil {
+						log.Printf("[KafkaExporter] Failed to calculate lag seconds for %s/%d: %v", topic, partition, err)
+						lagSeconds = -1
+					} else {
+						lagSeconds = ls
+					}
 				}
 
 				partitionLag := PartitionLagInfo{
 					Partition:     partition,
-					CurrentOffset: block.Offset,
-					EndOffset:     0, // TODO: 需要查询 Topic EndOffset
-					Lag:           0,
+					CurrentOffset: currentOffset,
+					EndOffset:     endOffset,
+					Lag:           lag,
+					LagSeconds:    lagSeconds,
 				}
 
 				topicLag.Partitions = append(topicLag.Partitions, partitionLag)
-				topicLag.CurrentOffset += block.Offset
+				topicLag.CurrentOffset += currentOffset
+				topicLag.EndOffset += endOffset
+				topicLag.Lag += lag
 			}
 
 			if len(topicLag.Partitions) > 0 {
 				topicLags[topic] = topicLag
+				totalLag += topicLag.Lag
 			}
 		}
 
@@ -382,5 +476,54 @@ func (s *KafkaExporterService) GetTopicPartitionCount(ctx context.Context, clust
 	return result, nil
 }
 
+// GetTopicPartitionDetails 获取 Topic 分区详情（包括 Offset）
+func (s *KafkaExporterService) GetTopicPartitionDetails(ctx context.Context, clusterID int64) ([]kafka.TopicPartitionInfo, error) {
+	adminClient, err := s.getAdminClient(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	defer adminClient.Close()
+
+	return adminClient.GetTopicPartitionDetails()
+}
+
+// GetTopicPartitionOffsets 获取 Topic 分区的 LogEndOffset
+func (s *KafkaExporterService) GetTopicPartitionOffsets(ctx context.Context, clusterID int64, topicPartitions map[string][]int32) (map[string]map[int32]int64, error) {
+	adminClient, err := s.getAdminClient(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	defer adminClient.Close()
+
+	return adminClient.GetTopicPartitionOffsets(topicPartitions)
+}
+
+// GetTopicPartitionStartOffsets 获取 Topic 分区的 LogStartOffset（最旧偏移量）
+func (s *KafkaExporterService) GetTopicPartitionStartOffsets(ctx context.Context, clusterID int64, topicPartitions map[string][]int32) (map[string]map[int32]int64, error) {
+	adminClient, err := s.getAdminClient(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	defer adminClient.Close()
+
+	return adminClient.GetTopicPartitionStartOffsets(topicPartitions)
+}
+
 // 内部使用的 sarama 类型别名（避免导出）
 type _ = sarama.ConsumerGroup // 确保导入 sarama
+
+// parseBrokerAddr 解析 Broker 地址，返回 host 和 port
+// 输入格式: "host:port" 或 "host"
+func parseBrokerAddr(addr string) (host string, port int32) {
+	parts := strings.Split(addr, ":")
+	if len(parts) == 2 {
+		host = parts[0]
+		if p, err := strconv.ParseInt(parts[1], 10, 32); err == nil {
+			port = int32(p)
+		}
+	} else if len(parts) == 1 {
+		host = parts[0]
+		port = 9092 // 默认端口
+	}
+	return
+}

@@ -96,7 +96,7 @@ const ClusterList: React.FC = () => {
         bootstrap_servers: values.bootstrap_servers,
         auth_type: values.auth_type,
         auth_config: authConfig,
-        jmx_exporter_url: values.jmx_exporter_url,
+        jmx_exporter_urls: values.jmx_exporter_urls,
         description: values.description,
       }
       
@@ -123,7 +123,7 @@ const ClusterList: React.FC = () => {
     // 设置表单值（只有可修改的字段）
     const formValues: any = {
       cluster_name: record.cluster_name,
-      jmx_exporter_url: record.jmx_exporter_url,
+      jmx_exporter_urls: record.jmx_exporter_urls,
       description: record.description,
     }
     
@@ -140,7 +140,7 @@ const ClusterList: React.FC = () => {
       // 更新集群（只有可修改的字段）
       const updateData = {
         cluster_name: values.cluster_name,
-        jmx_exporter_url: values.jmx_exporter_url,
+        jmx_exporter_urls: values.jmx_exporter_urls,
         description: values.description,
       }
       
@@ -234,11 +234,11 @@ const ClusterList: React.FC = () => {
           </Form.Item>
           
           <Form.Item 
-            name="jmx_exporter_url" 
-            label="JMX Exporter URL"
-            extra="JMX Exporter 的 HTTP 地址，用于获取 Broker 内部指标"
+            name="jmx_exporter_urls" 
+            label="JMX Exporter URLs"
+            extra="多个 Broker 的 JMX Exporter 地址，逗号分隔"
           >
-            <Input placeholder="例如：http://broker1:7071/metrics" />
+            <Input placeholder="例如：http://broker1:7071,http://broker2:7071,http://broker3:7071" />
           </Form.Item>
 
           <Form.Item name="description" label="描述">
@@ -362,11 +362,11 @@ const ClusterList: React.FC = () => {
       )}
 
       <Form.Item 
-        name="jmx_exporter_url" 
-        label="JMX Exporter URL"
-        extra="JMX Exporter 的 HTTP 地址，用于获取 Broker 内部指标（吞吐量、ISR、GC 等）"
+        name="jmx_exporter_urls" 
+        label="JMX Exporter URLs"
+        extra="多个 Broker 的 JMX Exporter 地址，逗号分隔（用于获取集群吞吐量等指标）"
       >
-        <Input placeholder="例如：http://broker1:7071/metrics" />
+        <Input placeholder="例如：http://broker1:7071,http://broker2:7071,http://broker3:7071" />
       </Form.Item>
 
       <Form.Item name="description" label="描述">

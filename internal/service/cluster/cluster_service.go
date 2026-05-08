@@ -102,19 +102,19 @@ type CreateClusterRequest struct {
 	BootstrapServers string                 `json:"bootstrap_servers" binding:"required"`
 	AuthType         models.AuthType        `json:"auth_type" binding:"required"`
 	AuthConfig       map[string]interface{} `json:"auth_config"`
-	JMXExporterURL   string                 `json:"jmx_exporter_url"`
+	JMXExporterURLs  string                 `json:"jmx_exporter_urls"` // 多个 URL 逗号分隔
 	Description      string                 `json:"description"`
 	CreatedBy        int64                  `json:"-"`
 }
 
 // UpdateClusterRequest 更新集群请求
-// 只有集群名称、JMX Exporter URL、描述可以修改
+// 只有集群名称、JMX Exporter URLs、描述可以修改
 // Bootstrap Servers 和认证配置不可修改，避免需要重新测试连接
 type UpdateClusterRequest struct {
-	ClusterName    string               `json:"cluster_name"`
-	JMXExporterURL string               `json:"jmx_exporter_url"`
-	Description    string               `json:"description"`
-	Status         models.ClusterStatus `json:"status"`
+	ClusterName     string               `json:"cluster_name"`
+	JMXExporterURLs string               `json:"jmx_exporter_urls"` // 多个 URL 逗号分隔
+	Description     string               `json:"description"`
+	Status          models.ClusterStatus `json:"status"`
 }
 
 // CreateCluster 创建集群
@@ -206,7 +206,7 @@ func (s *Service) CreateCluster(ctx context.Context, req *CreateClusterRequest) 
 		AuthType:         req.AuthType,
 		SASLMechanism:    saslMechanism,
 		AuthConfig:       authConfigEncrypted,
-		JMXExporterURL:   req.JMXExporterURL,
+		JMXExporterURLs:  req.JMXExporterURLs,
 		Description:      req.Description,
 		Status:           models.ClusterStatusActive,
 		CreatedBy:        req.CreatedBy,
@@ -364,8 +364,8 @@ func (s *Service) UpdateCluster(ctx context.Context, clusterID int64, req *Updat
 	if req.ClusterName != "" {
 		cluster.ClusterName = req.ClusterName
 	}
-	if req.JMXExporterURL != "" {
-		cluster.JMXExporterURL = req.JMXExporterURL
+	if req.JMXExporterURLs != "" {
+		cluster.JMXExporterURLs = req.JMXExporterURLs
 	}
 	if req.Description != "" {
 		cluster.Description = req.Description
