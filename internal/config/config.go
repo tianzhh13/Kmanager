@@ -15,6 +15,12 @@ type Config struct {
 	Log             LogConfig             `mapstructure:"log"`
 	VictoriaMetrics VictoriaMetricsConfig `mapstructure:"victoriametrics"`
 	SyncWorker      SyncWorkerConfig      `mapstructure:"syncworker"`
+	Session         SessionConfig         `mapstructure:"session"`
+}
+
+// SessionConfig 会话配置
+type SessionConfig struct {
+	IdleTimeout int `mapstructure:"idle_timeout"` // 无操作自动登出时间，单位分钟，默认 15
 }
 
 // SyncWorkerConfig 数据同步 Worker 配置
@@ -148,6 +154,9 @@ func setDefaults() {
 
 	// SyncWorker 默认配置
 	viper.SetDefault("syncworker.interval", 30)
+
+	// Session 默认配置
+	viper.SetDefault("session.idle_timeout", 15) // 15 分钟
 }
 
 // validate 验证配置

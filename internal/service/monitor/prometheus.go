@@ -2,8 +2,10 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"time"
 
@@ -159,6 +161,11 @@ func (s *Service) GetTopicPartitionOffsets(ctx context.Context, clusterID int64,
 // GetTopicPartitionStartOffsets 获取 Topic 分区的 LogStartOffset（最旧偏移量）
 func (s *Service) GetTopicPartitionStartOffsets(ctx context.Context, clusterID int64, topicPartitions map[string][]int32) (map[string]map[int32]int64, error) {
 	return s.kafkaExporter.GetTopicPartitionStartOffsets(ctx, clusterID, topicPartitions)
+}
+
+// GetClusterMetadata 获取集群元数据（Broker 列表、Controller、Topic 数量）
+func (s *Service) GetClusterMetadata(ctx context.Context, clusterID int64) (*ClusterMetadataInfo, error) {
+	return s.kafkaExporter.GetClusterMetadata(ctx, clusterID)
 }
 
 // GetBrokerMetrics 从 JMX Exporter 获取 Broker 指标（集群聚合）
@@ -359,6 +366,179 @@ func (h *Handler) GetMetricsHistory(c *gin.Context) {
 	}
 
 	c.Data(200, "application/json", result)
+}
+
+// BrokerOverviewItem Broker 总览信息
+type BrokerOverviewItem struct {
+	BrokerID      int     `json:"broker_id"`
+	BrokerHost    string  `json:"broker_host"`
+	LeaderCount   int     `json:"leader_count"`
+	ReplicaCount  int     `json:"replica_count"`
+	LeaderPercent float64 `json:"leader_percent"`
+	IsController  bool    `json:"is_controller"`
+}
+
+// BrokerOverviewResponse Broker 总览响应
+type BrokerOverviewResponse struct {
+	Data []BrokerOverviewItem `json:"data"`
+}
+
+// vmQueryResult VM 查询结果
+type vmQueryResult struct {
+	Status string `json:"status"`
+	Data   struct {
+		Result []struct {
+			Metric map[string]string `json:"metric"`
+			Value  [2]interface{}    `json:"value"`
+		} `json:"result"`
+	} `json:"data"`
+}
+
+// GetBrokerOverview 获取 Broker 总览数据
+func (h *Handler) GetBrokerOverview(c *gin.Context) {
+	clusterID, err := parseInt64Param(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid cluster id"})
+		return
+	}
+
+	clusterIDStr := strconv.FormatInt(clusterID, 10)
+
+	// 查询 broker_info、leader_count、replica_count、active_controller
+	queries := map[string]string{
+		"info":       fmt.Sprintf(`kafka_broker_info{cluster_id="%s"}`, clusterIDStr),
+		"leader":     fmt.Sprintf(`kafka_broker_leader_count{cluster_id="%s"}`, clusterIDStr),
+		"replica":    fmt.Sprintf(`kafka_broker_replica_count{cluster_id="%s"}`, clusterIDStr),
+		"controller": fmt.Sprintf(`kafka_broker_active_controller{cluster_id="%s"}`, clusterIDStr),
+	}
+
+	// 并行查询
+	type queryResult struct {
+		name   string
+		result *vmQueryResult
+	}
+
+	resultCh := make(chan queryResult, len(queries))
+	for name, query := range queries {
+		go func(n, q string) {
+			data, err := h.svc.QueryMetricsRange(c.Request.Context(), q,
+				time.Now().Add(-2*time.Minute), time.Now(), "60s")
+			if err != nil {
+				resultCh <- queryResult{name: n, result: nil}
+				return
+			}
+			var res vmQueryResult
+			if err := json.Unmarshal(data, &res); err != nil {
+				resultCh <- queryResult{name: n, result: nil}
+				return
+			}
+			resultCh <- queryResult{name: n, result: &res}
+		}(name, query)
+	}
+
+	// 收集结果
+	results := make(map[string]*vmQueryResult)
+	for i := 0; i < len(queries); i++ {
+		r := <-resultCh
+		results[r.name] = r.result
+	}
+
+	// 解析 broker 信息
+	type brokerData struct {
+		host       string
+		leader     int
+		replica    int
+		controller bool
+	}
+	brokers := make(map[string]*brokerData)
+
+	// 从 broker_info 获取 broker 列表
+	if info := results["info"]; info != nil {
+		for _, r := range info.Data.Result {
+			id := r.Metric["broker_id"]
+			if id == "" {
+				continue
+			}
+			if _, exists := brokers[id]; !exists {
+				brokers[id] = &brokerData{
+					host: r.Metric["broker_host"],
+				}
+			}
+		}
+	}
+
+	// leader count
+	if leader := results["leader"]; leader != nil {
+		for _, r := range leader.Data.Result {
+			id := r.Metric["broker_id"]
+			if b, ok := brokers[id]; ok {
+				if v, err := parseFloat(r.Value[1]); err == nil {
+					b.leader = int(v)
+				}
+			}
+		}
+	}
+
+	// replica count
+	if replica := results["replica"]; replica != nil {
+		for _, r := range replica.Data.Result {
+			id := r.Metric["broker_id"]
+			if b, ok := brokers[id]; ok {
+				if v, err := parseFloat(r.Value[1]); err == nil {
+					b.replica = int(v)
+				}
+			}
+		}
+	}
+
+	// controller
+	if controller := results["controller"]; controller != nil {
+		for _, r := range controller.Data.Result {
+			id := r.Metric["broker_id"]
+			if b, ok := brokers[id]; ok {
+				if v, err := parseFloat(r.Value[1]); err == nil {
+					b.controller = v > 0
+				}
+			}
+		}
+	}
+
+	// 构建响应
+	var items []BrokerOverviewItem
+	for id, b := range brokers {
+		brokerID, _ := strconv.Atoi(id)
+		leaderPercent := 0.0
+		if b.replica > 0 {
+			leaderPercent = float64(b.leader) / float64(b.replica) * 100
+		}
+		items = append(items, BrokerOverviewItem{
+			BrokerID:      brokerID,
+			BrokerHost:    b.host,
+			LeaderCount:   b.leader,
+			ReplicaCount:  b.replica,
+			LeaderPercent: leaderPercent,
+			IsController:  b.controller,
+		})
+	}
+
+	// 按 broker_id 排序
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].BrokerID < items[j].BrokerID
+	})
+
+	c.JSON(200, BrokerOverviewResponse{Data: items})
+}
+
+// parseFloat 解析 VM value 字段
+func parseFloat(v interface{}) (float64, error) {
+	switch val := v.(type) {
+	case string:
+		return strconv.ParseFloat(val, 64)
+	case float64:
+		return val, nil
+	default:
+		return 0, fmt.Errorf("cannot parse %v", v)
+	}
 }
 
 // parseInt64Param 解析 int64 参数

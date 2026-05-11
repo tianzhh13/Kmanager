@@ -68,10 +68,11 @@ type UpdateTopicConfigRequest struct {
 
 // ListTopicsRequest 列出 Topic 请求
 type ListTopicsRequest struct {
-	ClusterID int64  `json:"cluster_id"`
-	Search    string `json:"search"`
-	Offset    int    `json:"offset"`
-	Limit     int    `json:"limit"`
+	ClusterID     int64    `json:"cluster_id"`
+	Search        string   `json:"search"`
+	Offset        int      `json:"offset"`
+	Limit         int      `json:"limit"`
+	AllowedTopics []string `json:"-"` // 普通用户有权限的 Topic 列表，为空表示无限制
 }
 
 // ListTopicsResponse 列出 Topic 响应
@@ -241,8 +242,11 @@ func (s *Service) ListTopics(ctx context.Context, req *ListTopicsRequest) (*List
 	var total int64
 	var err error
 
-	// 根据是否有搜索条件选择合适的查询方法
-	if req.Search != "" {
+	// 如果有 Topic 权限限制（普通用户），使用过滤查询
+	if len(req.AllowedTopics) > 0 {
+		topics, total, err = s.topicRepo.ListByNames(ctx, req.ClusterID, req.AllowedTopics, req.Offset, req.Limit)
+	} else if req.Search != "" {
+		// 根据是否有搜索条件选择合适的查询方法
 		topics, total, err = s.topicRepo.Search(ctx, req.ClusterID, req.Search, req.Offset, req.Limit)
 	} else {
 		topics, total, err = s.topicRepo.List(ctx, req.ClusterID, req.Offset, req.Limit)

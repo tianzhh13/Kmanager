@@ -254,6 +254,10 @@ func (w *SyncWorker) SyncCluster(ctx context.Context, clusterID int64) error {
 		if err := w.collectAndWriteMetrics(ctx, cluster); err != nil {
 			log.Printf("Failed to collect metrics for cluster %d: %v", clusterID, err)
 		}
+		// 采集 Per-Broker 指标
+		if err := w.collectPerBrokerMetrics(ctx, cluster); err != nil {
+			log.Printf("Failed to collect per-broker metrics for cluster %d: %v", clusterID, err)
+		}
 	}
 
 	log.Printf("Cluster %d synced successfully", clusterID)
@@ -490,6 +494,198 @@ func (w *SyncWorker) RemoveAdminClient(clusterID int64) {
 	}
 }
 
+// collectPerBrokerMetrics 采集 Per-Broker 指标并写入 VictoriaMetrics
+func (w *SyncWorker) collectPerBrokerMetrics(ctx context.Context, cluster *models.Cluster) error {
+	if cluster.JMXExporterURLs == "" {
+		return nil
+	}
+
+	urls := monitor.ParseJMXExporterURLs(cluster.JMXExporterURLs)
+	if len(urls) == 0 {
+		return nil
+	}
+
+	baseLabels := map[string]string{
+		"cluster_id":   strconv.FormatInt(cluster.ClusterID, 10),
+		"cluster_name": cluster.ClusterName,
+	}
+
+	multiClient := monitor.NewMultiJMXClient(urls)
+
+	// 1. 获取原始 JMX 指标（request latency, replica lag 等）
+	rawMetrics, err := multiClient.FetchAllBrokerRawMetrics(ctx)
+	if err != nil {
+		log.Printf("[SyncWorker] Failed to fetch raw broker metrics: %v", err)
+	} else {
+		var vmMetrics []victoriametrics.Metric
+		for _, broker := range rawMetrics {
+			brokerLabels := make(map[string]string)
+			for k, v := range baseLabels {
+				brokerLabels[k] = v
+			}
+			brokerLabels["broker_id"] = strconv.Itoa(broker.BrokerID)
+			brokerLabels["broker_host"] = broker.BrokerHost
+
+			for _, m := range broker.Metrics {
+				switch m.Name {
+				// 请求延迟指标（99分位）
+				case "kafka_network_requestmetrics_totaltimems":
+					if quantile, ok := m.Labels["quantile"]; ok && quantile == "0.99" {
+						if request, ok := m.Labels["request"]; ok {
+							latencyLabels := make(map[string]string)
+							for k, v := range brokerLabels {
+								latencyLabels[k] = v
+							}
+							latencyLabels["request"] = request
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_broker_request_latency_ms",
+								Value:  m.Value,
+								Labels: latencyLabels,
+							})
+						}
+					}
+
+				// 副本同步延迟
+				case "kafka_server_replicafetchermanager_maxlag":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_replica_max_lag",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Controller 状态
+				case "kafka_controller_kafkacontroller_activecontrollercount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_active_controller",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 字节流入（累计计数器，PromQL 用 rate() 算速率）
+				case "kafka_server_brokertopicmetrics_bytesin_total", "kafka_server_BrokerTopicMetrics_BytesInPersec":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_bytes_in_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 字节流出
+				case "kafka_server_brokertopicmetrics_bytesout_total", "kafka_server_BrokerTopicMetrics_BytesOutPersec":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_bytes_out_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 消息流入速率
+				case "kafka_server_brokertopicmetrics_messagesin_total", "kafka_server_BrokerTopicMetrics_MessagesInPersec":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_messages_in_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 未同步分区
+				case "kafka_server_replicamanager_underreplicatedpartitions", "kafka_server_ReplicaManager_UnderReplicatedPartitions":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_under_replicated_partitions",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 离线分区
+				case "kafka_controller_kafkacontroller_offlinepartitionscount", "kafka_controller_KafkaController_OfflinePartitionsCount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_offline_partitions",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 生产请求速率
+				case "kafka_server_brokertopicmetrics_totalproducerequests_total", "kafka_server_BrokerTopicMetrics_TotalProduceRequestsPersec":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_produce_requests_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 消费请求速率
+				case "kafka_server_brokertopicmetrics_totalfetchrequests_total", "kafka_server_BrokerTopicMetrics_TotalFetchRequestsPersec":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_fetch_requests_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 请求队列大小
+				case "kafka_network_requestchannel_requestqueuesize":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_request_queue_size",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+				}
+			}
+		}
+
+		if len(vmMetrics) > 0 {
+			if err := w.vmClient.Write(ctx, vmMetrics); err != nil {
+				log.Printf("[SyncWorker] Failed to write per-broker JMX metrics: %v", err)
+			}
+		}
+	}
+
+	// 2. 从分区详情计算 Per-Broker Leader/Replica 数量
+	partitionDetails, err := w.monitorSvc.GetTopicPartitionDetails(ctx, cluster.ClusterID)
+	if err != nil {
+		log.Printf("[SyncWorker] Failed to get partition details for per-broker stats: %v", err)
+		return nil
+	}
+
+	// 统计每个 Broker 的 Leader 数和 Replica 数
+	leaderCount := make(map[int32]int)
+	replicaCount := make(map[int32]int)
+	for _, pd := range partitionDetails {
+		leaderCount[pd.Leader]++
+		for _, replica := range pd.Replicas {
+			replicaCount[replica]++
+		}
+	}
+
+	// 获取集群元数据以拿到 broker 列表
+	metadata, err := w.monitorSvc.GetClusterMetadata(ctx, cluster.ClusterID)
+	if err != nil {
+		log.Printf("[SyncWorker] Failed to get cluster metadata for per-broker stats: %v", err)
+		return nil
+	}
+
+	var vmMetrics []victoriametrics.Metric
+	for _, broker := range metadata.Brokers {
+		brokerLabels := make(map[string]string)
+		for k, v := range baseLabels {
+			brokerLabels[k] = v
+		}
+		brokerLabels["broker_id"] = strconv.FormatInt(int64(broker.ID), 10)
+		brokerLabels["broker_host"] = broker.Host
+
+		lc := float64(leaderCount[broker.ID])
+		rc := float64(replicaCount[broker.ID])
+
+		vmMetrics = append(vmMetrics,
+			victoriametrics.Metric{Name: "kafka_broker_leader_count", Value: lc, Labels: brokerLabels},
+			victoriametrics.Metric{Name: "kafka_broker_replica_count", Value: rc, Labels: brokerLabels},
+		)
+	}
+
+	if len(vmMetrics) > 0 {
+		if err := w.vmClient.Write(ctx, vmMetrics); err != nil {
+			log.Printf("[SyncWorker] Failed to write per-broker leader/replica metrics: %v", err)
+		}
+	}
+
+	return nil
+}
+
 // ManualSync 手动触发同步
 func (w *SyncWorker) ManualSync(clusterID int64) error {
 	ctx := context.Background()
@@ -518,21 +714,8 @@ func (w *SyncWorker) collectAndWriteMetrics(ctx context.Context, cluster *models
 
 	var vmMetrics []victoriametrics.Metric
 
-	// 1. 写入 Broker 指标（来自 JMX Exporter）
-	if metrics.BrokerMetrics != nil {
-		vmMetrics = append(vmMetrics,
-			victoriametrics.Metric{Name: "kafka_messages_in_per_sec", Value: metrics.BrokerMetrics.MessagesInPerSec, Labels: baseLabels},
-			victoriametrics.Metric{Name: "kafka_bytes_in_per_sec", Value: metrics.BrokerMetrics.BytesInPerSec, Labels: baseLabels},
-			victoriametrics.Metric{Name: "kafka_bytes_out_per_sec", Value: metrics.BrokerMetrics.BytesOutPerSec, Labels: baseLabels},
-			victoriametrics.Metric{Name: "kafka_under_replicated_partitions", Value: metrics.BrokerMetrics.UnderReplicatedPartitions, Labels: baseLabels},
-			victoriametrics.Metric{Name: "kafka_offline_partitions_count", Value: metrics.BrokerMetrics.OfflinePartitionsCount, Labels: baseLabels},
-			victoriametrics.Metric{Name: "kafka_active_controller_count", Value: metrics.BrokerMetrics.ActiveControllerCount, Labels: baseLabels},
-			// 新增指标
-			victoriametrics.Metric{Name: "kafka_produce_requests_per_sec", Value: metrics.BrokerMetrics.TotalProduceRequestsPerSec, Labels: baseLabels},
-			victoriametrics.Metric{Name: "kafka_fetch_requests_per_sec", Value: metrics.BrokerMetrics.TotalFetchRequestsPerSec, Labels: baseLabels},
-			victoriametrics.Metric{Name: "kafka_request_queue_size", Value: metrics.BrokerMetrics.RequestQueueSize, Labels: baseLabels},
-		)
-	}
+	// 1. JMX Broker 指标已全部改由 collectPerBrokerMetrics 写入 per-broker 粒度
+	//    集群级聚合由前端 PromQL (sum/max) 完成
 
 	// 2. 写入集群级别元数据指标
 	vmMetrics = append(vmMetrics,

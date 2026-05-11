@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"strconv"
 
+	"kafka-management-platform/internal/middleware"
+	"kafka-management-platform/internal/models"
+	"kafka-management-platform/internal/service/auth"
 	"kafka-management-platform/internal/service/topic"
 
 	"github.com/gin-gonic/gin"
@@ -11,13 +14,15 @@ import (
 
 // TopicHandler Topic 处理器
 type TopicHandler struct {
-	topicSvc *topic.Service
+	topicSvc      *topic.Service
+	permissionSvc *auth.PermissionService
 }
 
 // NewTopicHandler 创建 Topic 处理器实例
-func NewTopicHandler(topicSvc *topic.Service) *TopicHandler {
+func NewTopicHandler(topicSvc *topic.Service, permissionSvc *auth.PermissionService) *TopicHandler {
 	return &TopicHandler{
-		topicSvc: topicSvc,
+		topicSvc:      topicSvc,
+		permissionSvc: permissionSvc,
 	}
 }
 
@@ -117,6 +122,25 @@ func (h *TopicHandler) ListTopics(c *gin.Context) {
 		req.Limit = limit
 	} else {
 		req.Limit = 20 // 默认每页 20 条
+	}
+
+	// 获取当前用户信息
+	userID := middleware.GetUserID(c)
+	userRole := middleware.GetUserRole(c)
+
+	// 普通用户需要过滤 Topic
+	if userRole == string(models.RoleNormalUser) && req.ClusterID > 0 {
+		allowedTopics, err := h.permissionSvc.GetAllowedTopics(c.Request.Context(), userID, req.ClusterID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		// 如果用户没有任何 Topic 权限，返回空列表
+		if len(allowedTopics) == 0 {
+			c.JSON(http.StatusOK, gin.H{"data": []interface{}{}, "total": 0})
+			return
+		}
+		req.AllowedTopics = allowedTopics
 	}
 
 	resp, err := h.topicSvc.ListTopics(c.Request.Context(), &req)

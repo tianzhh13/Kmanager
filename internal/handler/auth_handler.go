@@ -1,6 +1,10 @@
 package handler
 
 import (
+	"net/http"
+
+	"kafka-management-platform/internal/cache"
+	"kafka-management-platform/internal/middleware"
 	"kafka-management-platform/internal/service/auth"
 
 	"github.com/gin-gonic/gin"
@@ -8,13 +12,15 @@ import (
 
 // AuthHandler 认证处理器
 type AuthHandler struct {
-	authSvc *auth.Service
+	authSvc        *auth.Service
+	blacklistCache *cache.TokenBlacklistCache
 }
 
 // NewAuthHandler 创建认证处理器实例
-func NewAuthHandler(authSvc *auth.Service) *AuthHandler {
+func NewAuthHandler(authSvc *auth.Service, blacklistCache *cache.TokenBlacklistCache) *AuthHandler {
 	return &AuthHandler{
-		authSvc: authSvc,
+		authSvc:        authSvc,
+		blacklistCache: blacklistCache,
 	}
 }
 
@@ -99,4 +105,30 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		"username": username,
 		"role":     role,
 	})
+}
+
+// Logout 退出登录
+// @Summary 退出登录
+// @Tags 认证
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /api/v1/auth/logout [post]
+func (h *AuthHandler) Logout(c *gin.Context) {
+	token := middleware.GetRawToken(c)
+	if token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no token found"})
+		return
+	}
+
+	// 将 Token 加入黑名单
+	if h.blacklistCache != nil {
+		if err := h.blacklistCache.AddToBlacklist(c.Request.Context(), token); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke token"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "logged out successfully"})
 }

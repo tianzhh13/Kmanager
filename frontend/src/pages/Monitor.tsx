@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Card, Row, Col, Select, Spin, message, Statistic, Table, Tabs, Space, Tag, Alert, DatePicker, Button, Checkbox } from 'antd'
 import { CalendarOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
@@ -27,6 +28,7 @@ interface PartitionMetric {
 }
 
 const Monitor: React.FC = () => {
+  const [searchParams] = useSearchParams()
   const [loading, setLoading] = useState(false)
   const [clusters, setClusters] = useState<ClusterOption[]>([])
   const [selectedCluster, setSelectedCluster] = useState<ClusterOption | null>(null)
@@ -51,6 +53,17 @@ const Monitor: React.FC = () => {
     consumeRate: PartitionMetric[]
     lag: PartitionMetric[]
   }>({ produceRate: [], consumeRate: [], lag: [] })
+
+  // Broker 监控 - 状态
+  const [brokerOverviewData, setBrokerOverviewData] = useState<any[]>([])
+  const [brokerOverviewLoading, setBrokerOverviewLoading] = useState(false)
+  const [selectedBroker, setSelectedBroker] = useState<string>('all')
+  const [brokerList, setBrokerList] = useState<{ id: string; host: string }[]>([])
+  const [brokerRequestLatencyData, setBrokerRequestLatencyData] = useState<Record<string, { times: string[], values: number[] }>>({})
+  const [brokerReplicaLagData, setBrokerReplicaLagData] = useState<{ times: string[], values: number[] }>({ times: [], values: [] })
+  const [brokerBytesInData, setBrokerBytesInData] = useState<Record<string, { times: string[], values: number[] }>>({})
+  const [brokerBytesOutData, setBrokerBytesOutData] = useState<Record<string, { times: string[], values: number[] }>>({})
+  const [brokerChartLoading, setBrokerChartLoading] = useState(false)
 
   // 集群概览 - 统计指标（从 VM 查询）
   const [overviewStats, setOverviewStats] = useState({
@@ -130,12 +143,52 @@ const Monitor: React.FC = () => {
     }
   }, [selectedTopic, selectedConsumerGroup, selectedCluster, quickRange, customRange, timeRange, activeTab])
 
+  // 当切换到 Broker 监控 Tab 时加载数据
+  useEffect(() => {
+    if (activeTab === 'broker' && selectedCluster) {
+      loadBrokerOverview()
+      loadBrokerChartData()
+    }
+  }, [activeTab, selectedCluster])
+
+  // Broker 选择或时间范围变化时重新加载图表
+  useEffect(() => {
+    if (activeTab === 'broker' && selectedCluster) {
+      loadBrokerChartData()
+    }
+  }, [selectedBroker, quickRange, customRange, timeRange])
+
   const loadClusters = async () => {
     try {
       const res = await clusterAPI.list()
       setClusters(res.data || [])
       if (res.data?.length > 0) {
-        setSelectedCluster(res.data[0])
+        // 读取 URL 参数
+        const clusterIdParam = searchParams.get('clusterId')
+        const tabParam = searchParams.get('tab')
+        const topicNameParam = searchParams.get('topicName')
+
+        // 根据 clusterId 参数选择集群，否则选第一个
+        if (clusterIdParam) {
+          const targetCluster = res.data.find((c: ClusterOption) => c.cluster_id === parseInt(clusterIdParam))
+          if (targetCluster) {
+            setSelectedCluster(targetCluster)
+          } else {
+            setSelectedCluster(res.data[0])
+          }
+        } else {
+          setSelectedCluster(res.data[0])
+        }
+
+        // 设置 Tab
+        if (tabParam && ['overview', 'broker', 'topic'].includes(tabParam)) {
+          setActiveTab(tabParam)
+        }
+
+        // 设置 Topic（需等待 topics 加载，这里只设置标记）
+        if (topicNameParam && tabParam === 'topic') {
+          setSelectedTopic(topicNameParam)
+        }
       }
     } catch (error) {
       message.error('加载集群列表失败')
@@ -190,6 +243,137 @@ const Monitor: React.FC = () => {
       console.error('Failed to load topics', error)
     } finally {
       setTopicLoading(false)
+    }
+  }
+
+  // 加载 Broker 总览数据
+  const loadBrokerOverview = async () => {
+    if (!selectedCluster) return
+    
+    setBrokerOverviewLoading(true)
+    try {
+      const res = await axios.get(`/metrics/broker-overview/${selectedCluster.cluster_id}`)
+      const data = res.data?.data || []
+      setBrokerOverviewData(data)
+      // 更新 broker 列表
+      const list = data.map((b: any) => ({ id: String(b.broker_id), host: b.broker_host }))
+      setBrokerList(list)
+    } catch (error) {
+      console.error('Failed to load broker overview', error)
+    } finally {
+      setBrokerOverviewLoading(false)
+    }
+  }
+
+  // 加载 Broker 图表数据
+  const loadBrokerChartData = async () => {
+    if (!selectedCluster) return
+    
+    setBrokerChartLoading(true)
+    try {
+      const { start, end, step } = getTimeRange()
+      const clusterId = selectedCluster.cluster_id
+      const brokerFilter = selectedBroker === 'all' ? '' : `,broker_id="${selectedBroker}"`
+
+      // 并行查询所有图表数据
+      const [proRes, fetchRes, followerRes, lagRes, bytesInRes, bytesOutRes] = await Promise.all([
+        queryVMMulti(
+          `kafka_broker_request_latency_ms{cluster_id="${clusterId}",request="Produce"${brokerFilter}}`,
+          start, end, step
+        ),
+        queryVMMulti(
+          `kafka_broker_request_latency_ms{cluster_id="${clusterId}",request="FetchConsumer"${brokerFilter}}`,
+          start, end, step
+        ),
+        queryVMMulti(
+          `kafka_broker_request_latency_ms{cluster_id="${clusterId}",request="FetchFollower"${brokerFilter}}`,
+          start, end, step
+        ),
+        queryVMMulti(
+          `kafka_broker_replica_max_lag{cluster_id="${clusterId}"${brokerFilter}}`,
+          start, end, step
+        ),
+        queryVMMulti(
+          `rate(kafka_broker_bytes_in_total{cluster_id="${clusterId}"${brokerFilter}}[30s])`,
+          start, end, step
+        ),
+        queryVMMulti(
+          `rate(kafka_broker_bytes_out_total{cluster_id="${clusterId}"${brokerFilter}}[30s])`,
+          start, end, step
+        ),
+      ])
+
+      // 请求延迟数据
+      setBrokerRequestLatencyData({
+        produce: proRes,
+        fetchConsumer: fetchRes,
+        fetchFollower: followerRes,
+      })
+
+      // 副本 Lag（取所有 broker 的 max）
+      if (selectedBroker === 'all' && lagRes.brokers && Object.keys(lagRes.brokers).length > 0) {
+        // 合并所有 broker 的 lag，取每个时间点的最大值
+        const allTimes = new Set<string>()
+        const lagBrokers = lagRes.brokers as Record<string, { times: string[], values: number[] }>
+        Object.values(lagBrokers).forEach((b: { times: string[], values: number[] }) => b.times.forEach(t => allTimes.add(t)))
+        const times = Array.from(allTimes).sort()
+        const values = times.map(t => {
+          let maxVal = 0
+          Object.values(lagBrokers).forEach((b: { times: string[], values: number[] }) => {
+            const idx = b.times.indexOf(t)
+            if (idx >= 0 && b.values[idx] > maxVal) maxVal = b.values[idx]
+          })
+          return maxVal
+        })
+        setBrokerReplicaLagData({ times, values })
+      } else {
+        setBrokerReplicaLagData(lagRes.single || { times: [], values: [] })
+      }
+
+      // 字节流入/流出
+      setBrokerBytesInData(bytesInRes)
+      setBrokerBytesOutData(bytesOutRes)
+
+    } catch (error) {
+      console.error('Failed to load broker chart data', error)
+    } finally {
+      setBrokerChartLoading(false)
+    }
+  }
+
+  // 查询多 series 的 VM 数据（按 broker 分组）
+  const queryVMMulti = async (query: string, start: Dayjs, end: Dayjs, step: string): Promise<any> => {
+    try {
+      const res = await axios.get<VMQueryResponse>('/metrics/history', {
+        params: { query, start: start.unix(), end: end.unix(), step }
+      })
+      if (res.data.status !== 'success') return { single: { times: [], values: [] }, brokers: {} }
+
+      const results = res.data.data.result
+      if (results.length === 0) return { single: { times: [], values: [] }, brokers: {} }
+      if (results.length === 1) {
+        return {
+          single: {
+            times: results[0].values.map((v: [number, string]) => dayjs.unix(v[0]).format('HH:mm')),
+            values: results[0].values.map((v: [number, string]) => parseFloat(v[1]) || 0),
+          },
+          brokers: {}
+        }
+      }
+
+      // 多 series：按 broker 分组
+      const brokers: Record<string, { times: string[], values: number[] }> = {}
+      results.forEach(r => {
+        const brokerId = r.metric.broker_id || 'unknown'
+        brokers[brokerId] = {
+          times: r.values.map((v: [number, string]) => dayjs.unix(v[0]).format('HH:mm')),
+          values: r.values.map((v: [number, string]) => parseFloat(v[1]) || 0),
+        }
+      })
+      return { single: null, brokers }
+    } catch (error) {
+      console.error('VM multi query failed:', query, error)
+      return { single: { times: [], values: [] }, brokers: {} }
     }
   }
 
@@ -434,8 +618,8 @@ const Monitor: React.FC = () => {
         queryVM(`sum(rate(kafka_topic_partition_current_offset{cluster_id="${clusterId}",topic!~"__.*"}[30s]))`, start, end, step),
         queryVM(`sum(rate(kafka_consumergroup_current_offset{cluster_id="${clusterId}"}[30s]))`, start, end, step),
         queryVM(`sum(kafka_consumergroup_lag_sum{cluster_id="${clusterId}"})`, start, end, step),
-        queryVM(`sum(rate(kafka_bytes_in_per_sec{cluster_id="${clusterId}"}[30s]))`, start, end, step),
-        queryVM(`sum(rate(kafka_bytes_out_per_sec{cluster_id="${clusterId}"}[30s]))`, start, end, step),
+        queryVM(`sum(rate(kafka_broker_bytes_in_total{cluster_id="${clusterId}"}[30s]))`, start, end, step),
+        queryVM(`sum(rate(kafka_broker_bytes_out_total{cluster_id="${clusterId}"}[30s]))`, start, end, step),
       ])
 
       const times = produceRateRes.map(v => dayjs.unix(v[0]).format('HH:mm'))
@@ -615,6 +799,107 @@ const Monitor: React.FC = () => {
     if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB'
     if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' KB'
     return bytes.toFixed(0) + ' B'
+  }
+
+  // 构建多 series 折线图配置
+  const buildMultiSeriesChartOption = (
+    title: string,
+    data: Record<string, { times: string[], values: number[] }>,
+    _color: string,
+    yAxisName: string,
+    tooltipFormatter?: (value: number) => string,
+  ) => {
+    const colors = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed1', '#13c2c2', '#eb2f96', '#fa8c16']
+    const entries = Object.entries(data)
+    if (entries.length === 0) {
+      return {
+        title: { text: title, left: 'center', textStyle: { fontSize: 14, color: '#999' } },
+        graphic: { type: 'text', left: 'center', top: 'middle', style: { text: '暂无数据', fill: '#999', fontSize: 14 } },
+        xAxis: { type: 'category', data: [] },
+        yAxis: { type: 'value' },
+        series: []
+      }
+    }
+
+    const allTimes = new Set<string>()
+    entries.forEach(([, d]) => d.times.forEach(t => allTimes.add(t)))
+    const times = Array.from(allTimes).sort()
+
+    return {
+      title: { text: title, left: 'center', textStyle: { fontSize: 14 } },
+      tooltip: {
+        trigger: 'axis',
+        formatter: (params: any[]) => {
+          if (!params || params.length === 0) return ''
+          let html = params[0].axisValue + '<br/>'
+          params.forEach((p: any) => {
+            const val = tooltipFormatter ? tooltipFormatter(p.value) : (p.value?.toFixed(2) ?? '0')
+            html += `${p.marker} Broker ${p.seriesName}: ${val}<br/>`
+          })
+          return html
+        }
+      },
+      legend: { data: entries.map(([id]) => `Broker ${id}`), top: 25, type: 'scroll' },
+      grid: { left: '3%', right: '4%', bottom: '3%', top: 60, containLabel: true },
+      xAxis: { type: 'category', boundaryGap: false, data: times },
+      yAxis: { type: 'value', name: yAxisName },
+      series: entries.map(([id, d], index) => ({
+        name: `Broker ${id}`,
+        type: 'line',
+        smooth: true,
+        data: times.map(t => {
+          const idx = d.times.indexOf(t)
+          return idx >= 0 ? d.values[idx] : null
+        }),
+        itemStyle: { color: colors[index % colors.length] },
+        connectNulls: true,
+      }))
+    }
+  }
+
+  // Broker - 请求延迟图表（单个 request 类型）
+  const getBrokerLatencyChartOption = (title: string, data: any) => {
+    if (!data || (!data.single && Object.keys(data.brokers || {}).length === 0)) {
+      return {
+        title: { text: title, left: 'center', textStyle: { fontSize: 14, color: '#999' } },
+        graphic: { type: 'text', left: 'center', top: 'middle', style: { text: '暂无数据', fill: '#999', fontSize: 14 } },
+        xAxis: { type: 'category', data: [] },
+        yAxis: { type: 'value' },
+        series: []
+      }
+    }
+    if (data.single) {
+      return {
+        title: { text: title, left: 'center', textStyle: { fontSize: 14 } },
+        tooltip: { trigger: 'axis', formatter: (params: any) => `${params[0].axisValue}<br/>${params[0].value?.toFixed(2) ?? 0} ms` },
+        grid: { left: '3%', right: '4%', bottom: '10%', top: '15%', containLabel: true },
+        xAxis: { type: 'category', boundaryGap: false, data: data.single.times },
+        yAxis: { type: 'value', name: 'ms' },
+        series: [{ type: 'line', smooth: true, data: data.single.values, itemStyle: { color: '#1890ff' }, areaStyle: { opacity: 0.1 } }]
+      }
+    }
+    return buildMultiSeriesChartOption(title, data.brokers, '#1890ff', 'ms')
+  }
+
+  // Broker - 副本 Lag 图表
+  const getBrokerReplicaLagChartOption = () => {
+    if (brokerReplicaLagData.times.length === 0) {
+      return {
+        title: { text: '副本同步 Lag', left: 'center', textStyle: { fontSize: 14, color: '#999' } },
+        graphic: { type: 'text', left: 'center', top: 'middle', style: { text: '暂无数据', fill: '#999', fontSize: 14 } },
+        xAxis: { type: 'category', data: [] },
+        yAxis: { type: 'value' },
+        series: []
+      }
+    }
+    return {
+      title: { text: '副本同步 Lag', left: 'center', textStyle: { fontSize: 14 } },
+      tooltip: { trigger: 'axis', formatter: (params: any) => `${params[0].axisValue}<br/>${(params[0].value ?? 0).toLocaleString()}` },
+      grid: { left: '3%', right: '4%', bottom: '10%', top: '15%', containLabel: true },
+      xAxis: { type: 'category', boundaryGap: false, data: brokerReplicaLagData.times },
+      yAxis: { type: 'value', name: 'Lag' },
+      series: [{ type: 'line', smooth: true, data: brokerReplicaLagData.values, itemStyle: { color: '#f5222d' }, areaStyle: { opacity: 0.1 } }]
+    }
   }
 
   // Topic 监控 - 生产速率折线图（按分区）
@@ -1099,11 +1384,153 @@ const Monitor: React.FC = () => {
       key: 'broker',
       label: 'Broker 监控',
       children: (
-        <Alert
-          message="开发中"
-          description="Broker 监控功能正在开发，需要支持按 Broker/Topic 维度筛选"
-          type="info"
-        />
+        <Spin spinning={brokerOverviewLoading || brokerChartLoading}>
+          {/* 1. Broker 选择器 */}
+          <Space style={{ marginBottom: 16 }} wrap>
+            <Select
+              placeholder="选择 Broker"
+              value={selectedBroker}
+              onChange={setSelectedBroker}
+              style={{ width: 200 }}
+              options={[
+                { label: '全部 Broker', value: 'all' },
+                ...brokerList.map(b => ({ label: `Broker ${b.id} (${b.host})`, value: b.id })),
+              ]}
+            />
+          </Space>
+
+          {/* 2. Broker 总览表格 */}
+          <Card size="small" title="Broker 总览" style={{ marginBottom: 16 }}>
+            <Table
+              size="small"
+              dataSource={brokerOverviewData}
+              loading={brokerOverviewLoading}
+              rowKey="broker_id"
+              pagination={false}
+              columns={[
+                { title: 'Broker ID', dataIndex: 'broker_id', key: 'broker_id', width: 100 },
+                { title: 'Host', dataIndex: 'broker_host', key: 'broker_host' },
+                {
+                  title: 'Leader Percent',
+                  dataIndex: 'leader_percent',
+                  key: 'leader_percent',
+                  width: 130,
+                  render: (val: number) => `${val?.toFixed(1) ?? 0}%`,
+                  sorter: (a: any, b: any) => a.leader_percent - b.leader_percent,
+                },
+                {
+                  title: 'Leader 个数',
+                  dataIndex: 'leader_count',
+                  key: 'leader_count',
+                  width: 110,
+                  sorter: (a: any, b: any) => a.leader_count - b.leader_count,
+                },
+                {
+                  title: 'Replicas 个数',
+                  dataIndex: 'replica_count',
+                  key: 'replica_count',
+                  width: 120,
+                  sorter: (a: any, b: any) => a.replica_count - b.replica_count,
+                },
+                {
+                  title: '角色',
+                  dataIndex: 'is_controller',
+                  key: 'is_controller',
+                  width: 100,
+                  render: (isController: boolean) => (
+                    <Tag color={isController ? 'red' : 'default'}>
+                      {isController ? 'Controller' : 'Follower'}
+                    </Tag>
+                  ),
+                },
+              ]}
+            />
+          </Card>
+
+          {/* 3. 请求延迟图表 */}
+          <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+            <Col span={8}>
+              <Card size="small">
+                <ReactECharts
+                  key={`broker-latency-produce-${selectedBroker}-${quickRange}`}
+                  option={getBrokerLatencyChartOption('生产请求延迟 P99', brokerRequestLatencyData.produce)}
+                  style={{ height: 280 }}
+                  notMerge={true}
+                />
+              </Card>
+            </Col>
+            <Col span={8}>
+              <Card size="small">
+                <ReactECharts
+                  key={`broker-latency-fetch-${selectedBroker}-${quickRange}`}
+                  option={getBrokerLatencyChartOption('消费请求延迟 P99', brokerRequestLatencyData.fetchConsumer)}
+                  style={{ height: 280 }}
+                  notMerge={true}
+                />
+              </Card>
+            </Col>
+            <Col span={8}>
+              <Card size="small">
+                <ReactECharts
+                  key={`broker-latency-follower-${selectedBroker}-${quickRange}`}
+                  option={getBrokerLatencyChartOption('副本同步延迟 P99', brokerRequestLatencyData.fetchFollower)}
+                  style={{ height: 280 }}
+                  notMerge={true}
+                />
+              </Card>
+            </Col>
+          </Row>
+
+          {/* 4. 副本 Lag + 字节速率 */}
+          <Row gutter={[16, 16]}>
+            <Col span={12}>
+              <Card size="small">
+                <ReactECharts
+                  key={`broker-replica-lag-${selectedBroker}-${quickRange}`}
+                  option={getBrokerReplicaLagChartOption()}
+                  style={{ height: 280 }}
+                  notMerge={true}
+                />
+              </Card>
+            </Col>
+            <Col span={12}>
+              <Card size="small">
+                <ReactECharts
+                  key={`broker-bytes-in-${selectedBroker}-${quickRange}`}
+                  option={buildMultiSeriesChartOption(
+                    '字节流入速率',
+                    (Object.keys(brokerBytesInData.brokers || {}).length > 0
+                      ? brokerBytesInData.brokers
+                      : (brokerBytesInData.single ? { [selectedBroker === 'all' ? '0' : selectedBroker]: brokerBytesInData.single } : {})) as Record<string, { times: string[], values: number[] }>,
+                    '#52c41a',
+                    'bytes/s',
+                    (v) => formatBytesForChart(v)
+                  )}
+                  style={{ height: 280 }}
+                  notMerge={true}
+                />
+              </Card>
+            </Col>
+            <Col span={12}>
+              <Card size="small">
+                <ReactECharts
+                  key={`broker-bytes-out-${selectedBroker}-${quickRange}`}
+                  option={buildMultiSeriesChartOption(
+                    '字节流出速率',
+                    (Object.keys(brokerBytesOutData.brokers || {}).length > 0
+                      ? brokerBytesOutData.brokers
+                      : (brokerBytesOutData.single ? { [selectedBroker === 'all' ? '0' : selectedBroker]: brokerBytesOutData.single } : {})) as Record<string, { times: string[], values: number[] }>,
+                    '#faad14',
+                    'bytes/s',
+                    (v) => formatBytesForChart(v)
+                  )}
+                  style={{ height: 280 }}
+                  notMerge={true}
+                />
+              </Card>
+            </Col>
+          </Row>
+        </Spin>
       )
     },
     {

@@ -398,6 +398,57 @@ func getFirstValue(metricMap map[string]map[string]float64, name string) float64
 	return 0
 }
 
+// BrokerRawMetrics 单个 Broker 的原始 JMX 指标集合
+type BrokerRawMetrics struct {
+	BrokerID   int
+	BrokerHost string
+	Metrics    []JMXMetric
+}
+
+// FetchAllBrokerRawMetrics 并行获取所有 Broker 的原始指标
+func (m *MultiJMXClient) FetchAllBrokerRawMetrics(ctx context.Context) ([]BrokerRawMetrics, error) {
+	if len(m.urls) == 0 {
+		return nil, fmt.Errorf("no jmx exporter urls configured")
+	}
+
+	var (
+		wg     sync.WaitGroup
+		mu     sync.Mutex
+		result []BrokerRawMetrics
+	)
+
+	for i, url := range m.urls {
+		wg.Add(1)
+		go func(index int, jmxURL string) {
+			defer wg.Done()
+
+			client := NewJMXClient(jmxURL)
+			metrics, err := client.FetchMetrics(ctx)
+			if err != nil {
+				return
+			}
+
+			host := extractHostFromURL(jmxURL)
+
+			mu.Lock()
+			result = append(result, BrokerRawMetrics{
+				BrokerID:   index + 1,
+				BrokerHost: host,
+				Metrics:    metrics,
+			})
+			mu.Unlock()
+		}(i, url)
+	}
+
+	wg.Wait()
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("all jmx exporters failed")
+	}
+
+	return result, nil
+}
+
 // HealthCheck 检查 JMX Exporter 是否可用
 func (c *JMXClient) HealthCheck(ctx context.Context) error {
 	if c.baseURL == "" {

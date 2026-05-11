@@ -57,6 +57,13 @@ export const refreshToken = createAsyncThunk(
   }
 )
 
+export const logoutAsync = createAsyncThunk(
+  'auth/logoutAsync',
+  async () => {
+    await authService.logout()
+  }
+)
+
 const authSlice = createSlice({
   name: 'auth',
   initialState,
@@ -92,6 +99,11 @@ const authSlice = createSlice({
         state.accessToken = action.payload.access_token
       })
       .addCase(refreshToken.rejected, (state) => {
+        state.isAuthenticated = false
+        state.user = null
+        state.accessToken = null
+      })
+      .addCase(logoutAsync.fulfilled, (state) => {
         state.isAuthenticated = false
         state.user = null
         state.accessToken = null

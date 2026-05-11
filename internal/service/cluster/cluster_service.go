@@ -524,6 +524,11 @@ func (s *Service) ListClusterUsers(ctx context.Context, clusterID int64) ([]*mod
 	return s.clusterUserRepo.ListUsersByCluster(ctx, clusterID)
 }
 
+// ListUserClusters 获取用户已授权的集群列表
+func (s *Service) ListUserClusters(ctx context.Context, userID int64) ([]*models.Cluster, error) {
+	return s.clusterUserRepo.ListClustersByUser(ctx, userID)
+}
+
 // TestConnection 测试集群连接
 func (s *Service) TestConnection(ctx context.Context, clusterID int64) error {
 	// 获取集群配置
