@@ -35,8 +35,16 @@ export const authService = {
     return response.data
   },
 
-  logout: () => {
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('refresh_token')
+  logout: async () => {
+    try {
+      // 调用后端退出登录 API，将 Token 加入黑名单
+      await api.post('/auth/logout')
+    } catch (error) {
+      // 即使后端调用失败，也要清除本地存储
+      console.error('Logout API failed:', error)
+    } finally {
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('refresh_token')
+    }
   },
 }

@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"strings"
 
+	"kafka-management-platform/internal/cache"
 	"kafka-management-platform/internal/models"
+	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/pkg/jwt"
 
 	"github.com/gin-gonic/gin"
@@ -17,10 +19,12 @@ const (
 	ContextKeyUsername = "username"
 	// ContextKeyUserRole 用户角色键名
 	ContextKeyUserRole = "user_role"
+	// ContextKeyToken 原始 Token 键名
+	ContextKeyToken = "raw_token"
 )
 
 // AuthMiddleware JWT 认证中间件
-func AuthMiddleware(jwtSvc *jwt.Service) gin.HandlerFunc {
+func AuthMiddleware(jwtSvc *jwt.Service, blacklistCache *cache.TokenBlacklistCache, userRepo repository.UserRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 从 Header 获取 Token
 		authHeader := c.GetHeader("Authorization")
@@ -40,6 +44,16 @@ func AuthMiddleware(jwtSvc *jwt.Service) gin.HandlerFunc {
 
 		tokenString := parts[1]
 
+		// 检查 Token 是否在黑名单中
+		if blacklistCache != nil {
+			isBlacklisted, err := blacklistCache.IsBlacklisted(c.Request.Context(), tokenString)
+			if err == nil && isBlacklisted {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "token has been revoked"})
+				c.Abort()
+				return
+			}
+		}
+
 		// 验证 Token
 		claims, err := jwtSvc.ValidateToken(tokenString)
 		if err != nil {
@@ -48,10 +62,21 @@ func AuthMiddleware(jwtSvc *jwt.Service) gin.HandlerFunc {
 			return
 		}
 
+		// 检查用户状态（禁用用户无法访问）
+		if userRepo != nil {
+			user, err := userRepo.FindByID(c.Request.Context(), claims.UserID)
+			if err != nil || user.Status != models.UserStatusActive {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "account is disabled"})
+				c.Abort()
+				return
+			}
+		}
+
 		// 将用户信息注入 Context
 		c.Set(ContextKeyUserID, claims.UserID)
 		c.Set(ContextKeyUsername, claims.Username)
 		c.Set(ContextKeyUserRole, claims.Role)
+		c.Set(ContextKeyToken, tokenString) // 保存原始 Token，用于退出登录时加入黑名单
 
 		c.Next()
 	}
@@ -84,6 +109,14 @@ func GetUserRole(c *gin.Context) string {
 		if role, ok := v.(string); ok {
 			return role
 		}
+	}
+	return ""
+}
+
+// GetRawToken 获取当前请求的原始 Token
+func GetRawToken(c *gin.Context) string {
+	if v, exists := c.Get(ContextKeyToken); exists {
+		return v.(string)
 	}
 	return ""
 }

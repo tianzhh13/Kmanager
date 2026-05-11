@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Table, Button, Space, Modal, Form, Input, Select, InputNumber, message } from 'antd'
-import { PlusOutlined, DeleteOutlined, SyncOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, SyncOutlined, LineChartOutlined } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchTopics, createTopic, deleteTopic } from '../store/slices/topicSlice'
 import { clusterAPI } from '../services/cluster'
@@ -13,7 +14,10 @@ interface Cluster {
 
 const TopicList: React.FC = () => {
   const dispatch = useAppDispatch()
+  const navigate = useNavigate()
   const { topics, total, loading } = useAppSelector((state) => state.topics)
+  const { user } = useAppSelector((state) => state.auth)
+  const isNormalUser = user?.role === 'normal_user'
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [form] = Form.useForm()
   const [page, setPage] = useState(1)
@@ -170,17 +174,41 @@ const TopicList: React.FC = () => {
     }
   }
 
+  // 跳转到监控页面
+  const handleGoToMonitor = (topicName: string) => {
+    if (!selectedClusterId) return
+    navigate(`/monitor?clusterId=${selectedClusterId}&tab=topic&topicName=${encodeURIComponent(topicName)}`)
+  }
+
   const columns = [
-    { title: 'Topic 名称', dataIndex: 'topic_name', key: 'topic_name' },
+    {
+      title: 'Topic 名称',
+      dataIndex: 'topic_name',
+      key: 'topic_name',
+      render: (text: string) => (
+        <Space>
+          <a onClick={() => handleGoToMonitor(text)} style={{ color: '#1890ff' }}>{text}</a>
+          <Button
+            type="link"
+            size="small"
+            icon={<LineChartOutlined />}
+            onClick={() => handleGoToMonitor(text)}
+            title="查看监控"
+          />
+        </Space>
+      )
+    },
     { title: '分区数', dataIndex: 'partitions', key: 'partitions', width: 100 },
     { title: '副本数', dataIndex: 'replication_factor', key: 'replication_factor', width: 100 },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at' },
     { title: '操作', key: 'action', width: 150,
       render: (_: any, record: any) => (
         <Space>
-          <Button type="link" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.topic_name)}>
-            删除
-          </Button>
+          {!isNormalUser && (
+            <Button type="link" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.topic_name)}>
+              删除
+            </Button>
+          )}
         </Space>
       )
     },
@@ -202,22 +230,26 @@ const TopicList: React.FC = () => {
               <Select.Option key={c.cluster_id} value={c.cluster_id}>{c.cluster_name}</Select.Option>
             ))}
           </Select>
-          <Button 
-            icon={<SyncOutlined spin={syncing} />} 
-            onClick={handleSync}
-            loading={syncing}
-            disabled={!selectedClusterId}
-          >
-            同步
-          </Button>
-          <Button 
-            type="primary" 
-            icon={<PlusOutlined />} 
-            onClick={handleOpenModal}
-            disabled={!selectedClusterId}
-          >
-            创建 Topic
-          </Button>
+          {!isNormalUser && (
+            <>
+              <Button 
+                icon={<SyncOutlined spin={syncing} />} 
+                onClick={handleSync}
+                loading={syncing}
+                disabled={!selectedClusterId}
+              >
+                同步
+              </Button>
+              <Button 
+                type="primary" 
+                icon={<PlusOutlined />} 
+                onClick={handleOpenModal}
+                disabled={!selectedClusterId}
+              >
+                创建 Topic
+              </Button>
+            </>
+          )}
         </Space>
       </div>
       

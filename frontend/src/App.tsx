@@ -10,6 +10,15 @@ import Monitor from './pages/Monitor'
 import AuditLog from './pages/AuditLog'
 import UserManagement from './pages/UserManagement'
 
+// 路由权限守卫
+const RequireRole: React.FC<{ allowedRoles: string[]; children: React.ReactNode }> = ({ allowedRoles, children }) => {
+  const { user } = useAppSelector((state) => state.auth)
+  if (!user || !allowedRoles.includes(user.role)) {
+    return <Navigate to="/dashboard" replace />
+  }
+  return <>{children}</>
+}
+
 function App() {
   const { isAuthenticated } = useAppSelector((state) => state.auth)
 
@@ -24,12 +33,32 @@ function App() {
               <Routes>
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/clusters" element={<ClusterList />} />
                 <Route path="/topics" element={<TopicList />} />
-                <Route path="/acls" element={<ACLList />} />
                 <Route path="/monitor" element={<Monitor />} />
-                <Route path="/audit-logs" element={<AuditLog />} />
-                <Route path="/users" element={<UserManagement />} />
+                {/* 集群管理：超级管理员 + 集群管理员 */}
+                <Route path="/clusters" element={
+                  <RequireRole allowedRoles={['super_admin', 'cluster_admin']}>
+                    <ClusterList />
+                  </RequireRole>
+                } />
+                {/* ACL 管理：仅超级管理员 */}
+                <Route path="/acls" element={
+                  <RequireRole allowedRoles={['super_admin']}>
+                    <ACLList />
+                  </RequireRole>
+                } />
+                {/* 审计日志：超级管理员 + 集群管理员 */}
+                <Route path="/audit-logs" element={
+                  <RequireRole allowedRoles={['super_admin', 'cluster_admin']}>
+                    <AuditLog />
+                  </RequireRole>
+                } />
+                {/* 用户管理：仅超级管理员 */}
+                <Route path="/users" element={
+                  <RequireRole allowedRoles={['super_admin']}>
+                    <UserManagement />
+                  </RequireRole>
+                } />
               </Routes>
             </Layout>
           ) : (

@@ -9,6 +9,8 @@ import { clusterAPI } from '../services/cluster'
 const ClusterList: React.FC = () => {
   const dispatch = useAppDispatch()
   const { clusters, total, loading } = useAppSelector((state) => state.clusters)
+  const { user } = useAppSelector((state) => state.auth)
+  const isSuperAdmin = user?.role === 'super_admin'
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [isEditModal, setIsEditModal] = useState(false)
   const [editingCluster, setEditingCluster] = useState<Cluster | null>(null)
@@ -195,21 +197,25 @@ const ClusterList: React.FC = () => {
     { title: '操作', key: 'action', width: 150,
       render: (_: any, record: Cluster) => (
         <Space>
-          <Button 
-            type="link" 
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-          >
-            编辑
-          </Button>
-          <Button 
-            type="link" 
-            danger 
-            icon={<DeleteOutlined />}
-            onClick={() => handleDelete(record.cluster_id)}
-          >
-            删除
-          </Button>
+          {isSuperAdmin && (
+            <>
+              <Button 
+                type="link" 
+                icon={<EditOutlined />}
+                onClick={() => handleEdit(record)}
+              >
+                编辑
+              </Button>
+              <Button 
+                type="link" 
+                danger 
+                icon={<DeleteOutlined />}
+                onClick={() => handleDelete(record.cluster_id)}
+              >
+                删除
+              </Button>
+            </>
+          )}
         </Space>
       )
     },
@@ -380,9 +386,11 @@ const ClusterList: React.FC = () => {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <h1>集群管理</h1>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)}>
-          创建集群
-        </Button>
+        {isSuperAdmin && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)}>
+            创建集群
+          </Button>
+        )}
       </div>
       
       <Table

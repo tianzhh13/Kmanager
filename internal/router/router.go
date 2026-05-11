@@ -1,6 +1,9 @@
 package router
 
 import (
+	"time"
+
+	"kafka-management-platform/internal/cache"
 	"kafka-management-platform/internal/config"
 	"kafka-management-platform/internal/handler"
 	"kafka-management-platform/internal/middleware"
@@ -54,11 +57,12 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	// 初始化 Repository
 	userRepo := repository.NewUserRepository(db)
 	clusterRepo := repository.NewClusterRepository(db)
-	clusterUserRepo := repository.NewClusterUserRepository(db)
 	topicRepo := repository.NewTopicRepository(db)
 	aclRepo := repository.NewACLRepository(db)
 	auditLogRepo := repository.NewAuditLogRepository(db)
+	clusterUserRepo := repository.NewClusterUserRepository(db)
 	scramUserRepo := repository.NewScramUserRepository(db)
+	topicPermRepo := repository.NewTopicPermissionRepository(db)
 
 	// 初始化 VictoriaMetrics 客户端
 	vmClient := victoriametrics.NewClient(
@@ -73,7 +77,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 
 	// 初始化 Service
 	authSvc := auth.NewService(userRepo, jwtSvc)
-	permissionSvc := auth.NewPermissionService(userRepo, clusterUserRepo)
+	permissionSvc := auth.NewPermissionService(userRepo, clusterUserRepo, topicPermRepo)
 	clusterSvc := cluster.NewService(clusterRepo, clusterUserRepo, encryptionSvc, kerberosMgr)
 	topicSvc := topic.NewService(topicRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
 	aclSvc := acl.NewService(aclRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
@@ -82,10 +86,14 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	userSvc := user.NewService(userRepo)
 	scramSvc := scram.NewService(scramUserRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
 
+	// 初始化 Token 黑名单缓存
+	memoryCache := cache.NewMemoryCache(24 * time.Hour)
+	tokenBlacklistCache := cache.NewTokenBlacklistCache(memoryCache)
+
 	// 初始化 Handler
-	authHandler := handler.NewAuthHandler(authSvc)
-	clusterHandler := handler.NewClusterHandler(clusterSvc)
-	topicHandler := handler.NewTopicHandler(topicSvc)
+	authHandler := handler.NewAuthHandler(authSvc, tokenBlacklistCache)
+	clusterHandler := handler.NewClusterHandler(clusterSvc, permissionSvc)
+	topicHandler := handler.NewTopicHandler(topicSvc, permissionSvc)
 	aclHandler := handler.NewACLHandler(aclSvc)
 	userHandler := handler.NewUserHandler(userSvc)
 	auditLogHandler := audit.NewHandler(auditSvc)
@@ -106,6 +114,13 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 		})
 	})
 
+	// 系统配置（公开接口，无需认证）
+	r.GET("/api/v1/system/config", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"idle_timeout": cfg.Session.IdleTimeout, // 无操作自动登出时间（分钟）
+		})
+	})
+
 	// API v1 路由组
 	v1 := r.Group("/api/v1")
 	{
@@ -119,10 +134,12 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 
 		// 需要认证的路由
 		authenticated := v1.Group("")
-		authenticated.Use(middleware.AuthMiddleware(jwtSvc))
+		authenticated.Use(middleware.AuthMiddleware(jwtSvc, tokenBlacklistCache, userRepo))
 		{
 			// 当前用户信息
 			authenticated.GET("/auth/me", authHandler.GetCurrentUser)
+			// 退出登录
+			authenticated.POST("/auth/logout", authHandler.Logout)
 
 			// 仪表盘统计
 			authenticated.GET("/dashboard/stats", dashboardHandler.GetStats)
@@ -154,9 +171,10 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				clusters.POST("/test-connection", permissionMiddleware.RequireSuperAdmin(), clusterHandler.TestConnectionForCreate)
 				// Keytab 文件上传
 				clusters.POST("/upload-keytab", permissionMiddleware.RequireSuperAdmin(), clusterHandler.UploadKeytab)
-				clusters.POST("/:id/grant", permissionMiddleware.RequireSuperAdmin(), clusterHandler.GrantAccess)
-				clusters.POST("/:id/revoke", permissionMiddleware.RequireSuperAdmin(), clusterHandler.RevokeAccess)
-				clusters.GET("/:id/users", permissionMiddleware.RequireSuperAdmin(), clusterHandler.ListClusterUsers)
+				clusters.POST("/:id/grant", middleware.RequireSuperAdminOrClusterAdmin(), clusterHandler.GrantAccess)
+				clusters.POST("/:id/revoke", middleware.RequireSuperAdminOrClusterAdmin(), clusterHandler.RevokeAccess)
+				clusters.GET("/:id/users", middleware.RequireSuperAdminOrClusterAdmin(), clusterHandler.ListClusterUsers)
+				clusters.GET("/user/:userId", middleware.RequireSuperAdminOrClusterAdmin(), clusterHandler.ListUserClusters)
 			}
 
 			// Topic 路由
@@ -198,6 +216,8 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				metrics.GET("/cluster/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetClusterMetrics)
 				// Broker 级别指标（来自 JMX Exporter）
 				metrics.GET("/broker/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetBrokerMetrics)
+				// Broker 总览数据（来自 VictoriaMetrics）
+				metrics.GET("/broker-overview/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetBrokerOverview)
 				// 消费者组 Lag（来自内置 Kafka Exporter）
 				metrics.GET("/consumer-groups/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetConsumerGroupLags)
 				// 单个消费者组详情
@@ -212,6 +232,17 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				auditLogs.GET("", auditLogHandler.ListAuditLogs)
 				auditLogs.GET("/export", auditLogHandler.CleanLogs)  // 暂用 CleanLogs 替代导出
 				auditLogs.GET("/:id", auditLogHandler.ListAuditLogs) // 暂用列表替代详情
+			}
+
+			// Topic 权限管理路由
+			topicPermHandler := handler.NewTopicPermissionHandler(auth.NewTopicPermissionService(topicPermRepo, clusterUserRepo, userRepo, clusterRepo))
+			topicPerms := authenticated.Group("/topic-permissions")
+			{
+				topicPerms.POST("", middleware.RequireSuperAdminOrClusterAdmin(), topicPermHandler.AssignTopicPermission)
+				topicPerms.POST("/batch", middleware.RequireSuperAdminOrClusterAdmin(), topicPermHandler.BatchAssignTopicPermission)
+				topicPerms.DELETE("", middleware.RequireSuperAdminOrClusterAdmin(), topicPermHandler.RevokeTopicPermission)
+				topicPerms.GET("/user/:userId", topicPermHandler.GetUserTopicPermissions)
+				topicPerms.GET("/user/:userId/cluster/:clusterId", topicPermHandler.GetUserClusterTopicPermissions)
 			}
 		}
 	}

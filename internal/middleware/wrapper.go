@@ -89,8 +89,13 @@ func (c *ClusterPermissionMiddlewareWrapper) RequireClusterAccess() gin.HandlerF
 			return
 		}
 
-		// 检查集群权限
-		hasPermission, err := c.permissionSvc.CheckClusterPermission(ctx.Request.Context(), userID, clusterID)
+		// 普通用户使用读权限检查（检查 cluster_user_relation）
+		var hasPermission bool
+		if userRole == string(models.RoleNormalUser) {
+			hasPermission, err = c.permissionSvc.CheckClusterReadPermission(ctx.Request.Context(), userID, clusterID)
+		} else {
+			hasPermission, err = c.permissionSvc.CheckClusterPermission(ctx.Request.Context(), userID, clusterID)
+		}
 		if err != nil || !hasPermission {
 			ctx.JSON(http.StatusForbidden, gin.H{
 				"error": "no permission for this cluster",

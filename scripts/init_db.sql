@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS `user` (
     `username` VARCHAR(64) NOT NULL UNIQUE,
     `password_hash` VARCHAR(128) NOT NULL,
     `email` VARCHAR(128),
-    `role` VARCHAR(32) NOT NULL,
+    `role` VARCHAR(32) NOT NULL COMMENT '角色：super_admin(超级管理员)/cluster_admin(集群管理员)/normal_user(普通用户)',
     `status` VARCHAR(32) NOT NULL DEFAULT 'active',
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -125,6 +125,21 @@ CREATE TABLE IF NOT EXISTS `scram_users` (
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX `idx_cluster_id` (`cluster_id`),
     UNIQUE INDEX `uk_cluster_username` (`cluster_id`, `username`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 用户 Topic 权限表（普通用户只能看到被分配的 Topic）
+CREATE TABLE IF NOT EXISTS `user_topic_permission` (
+    `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+    `user_id` BIGINT NOT NULL,
+    `cluster_id` BIGINT NOT NULL,
+    `topic_name` VARCHAR(255) NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `created_by` BIGINT NOT NULL COMMENT '分配人ID',
+    UNIQUE KEY `uk_user_cluster_topic` (`user_id`, `cluster_id`, `topic_name`),
+    INDEX `idx_user_id` (`user_id`),
+    INDEX `idx_cluster_id` (`cluster_id`),
+    FOREIGN KEY (`user_id`) REFERENCES `user`(`user_id`) ON DELETE CASCADE,
+    FOREIGN KEY (`cluster_id`) REFERENCES `cluster`(`cluster_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 插入默认超级管理员用户

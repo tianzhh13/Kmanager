@@ -147,7 +147,7 @@ func setupTest(t *testing.T) *testSetup {
 	userRepo := NewMockUserRepository()
 	clusterUserRepo := NewMockClusterUserRepository()
 
-	permissionService := NewPermissionService(userRepo, clusterUserRepo)
+	permissionService := NewPermissionService(userRepo, clusterUserRepo, nil)
 
 	return &testSetup{
 		userRepo:          userRepo,
@@ -331,16 +331,16 @@ func TestClusterAdminPermissionsIsolation(t *testing.T) {
 	}
 }
 
-// TestReadOnlyUserPermissions 测试只读用户权限限制
-// 验证需求: 2.2 - 当用户角色为 Read_Only 时，系统应仅允许该用户执行查询操作
-func TestReadOnlyUserPermissions(t *testing.T) {
+// TestNormalUserPermissions 测试普通用户权限限制
+// 验证需求: 2.2 - 当用户角色为 Normal_User 时，系统应仅允许该用户执行查询操作
+func TestNormalUserPermissions(t *testing.T) {
 	setup := setupTest(t)
 	ctx := context.Background()
 
-	// 创建只读用户
-	readOnlyUser := createTestUser(t, setup, "readonly", models.RoleReadOnly, models.UserStatusActive)
+	// 创建普通用户
+	readOnlyUser := createTestUser(t, setup, "normaluser", models.RoleNormalUser, models.UserStatusActive)
 
-	// 测试只读权限
+	// 测试普通用户权限
 	readOperations := []struct {
 		name     string
 		resource string
@@ -391,48 +391,48 @@ func TestReadOnlyUserPermissions(t *testing.T) {
 	}
 }
 
-// TestReadOnlyUserNoClusterManagement 测试只读用户无集群管理权限
-// 验证需求: 2.2 - 只读用户不能管理任何集群
-func TestReadOnlyUserNoClusterManagement(t *testing.T) {
+// TestNormalUserNoClusterManagement 测试普通用户无集群管理权限
+// 验证需求: 2.2 - 普通用户不能管理任何集群
+func TestNormalUserNoClusterManagement(t *testing.T) {
 	setup := setupTest(t)
 	ctx := context.Background()
 
-	// 创建只读用户
-	readOnlyUser := createTestUser(t, setup, "readonly", models.RoleReadOnly, models.UserStatusActive)
+	// 创建普通用户
+	readOnlyUser := createTestUser(t, setup, "normaluser", models.RoleNormalUser, models.UserStatusActive)
 
-	// 授权只读用户访问集群（只读访问）
+	// 授权普通用户访问集群（只读访问）
 	grantClusterAccess(t, setup, 1, readOnlyUser.UserID)
 
-	// 只读用户对集群没有管理权限
+	// 普通用户对集群没有管理权限
 	hasPermission, err := setup.permissionService.CheckClusterPermission(ctx, readOnlyUser.UserID, 1)
 	assert.NoError(t, err)
-	assert.False(t, hasPermission, "只读用户不应该有集群管理权限")
+	assert.False(t, hasPermission, "普通用户不应该有集群管理权限")
 
 	// 但有读权限
 	hasReadPermission, err := setup.permissionService.CheckClusterReadPermission(ctx, readOnlyUser.UserID, 1)
 	assert.NoError(t, err)
-	assert.True(t, hasReadPermission, "只读用户应该有集群读权限")
+	assert.True(t, hasReadPermission, "普通用户应该有集群读权限")
 }
 
-// TestReadOnlyUserCannotManageAnyCluster 测试只读用户不能管理任何集群
-// 验证需求: 2.2 - 只读用户即使被授权访问集群，也没有管理权限
-func TestReadOnlyUserCannotManageAnyCluster(t *testing.T) {
+// TestNormalUserCannotManageAnyCluster 测试普通用户不能管理任何集群
+// 验证需求: 2.2 - 普通用户即使被授权访问集群，也没有管理权限
+func TestNormalUserCannotManageAnyCluster(t *testing.T) {
 	setup := setupTest(t)
 	ctx := context.Background()
 
-	// 创建只读用户
-	readOnlyUser := createTestUser(t, setup, "readonly", models.RoleReadOnly, models.UserStatusActive)
+	// 创建普通用户
+	readOnlyUser := createTestUser(t, setup, "normaluser", models.RoleNormalUser, models.UserStatusActive)
 
-	// 授权只读用户访问所有集群
+	// 授权普通用户访问所有集群
 	grantClusterAccess(t, setup, 1, readOnlyUser.UserID)
 	grantClusterAccess(t, setup, 2, readOnlyUser.UserID)
 	grantClusterAccess(t, setup, 3, readOnlyUser.UserID)
 
-	// 只读用户对所有集群都没有管理权限
+	// 普通用户对所有集群都没有管理权限
 	for _, clusterID := range []int64{1, 2, 3} {
 		hasPermission, err := setup.permissionService.CheckClusterPermission(ctx, readOnlyUser.UserID, clusterID)
 		assert.NoError(t, err)
-		assert.False(t, hasPermission, "只读用户不应该有集群 %d 的管理权限", clusterID)
+		assert.False(t, hasPermission, "普通用户不应该有集群 %d 的管理权限", clusterID)
 	}
 }
 
@@ -465,7 +465,7 @@ func TestRoleCheckFunctions(t *testing.T) {
 	// 创建不同角色的用户
 	superAdmin := createTestUser(t, setup, "superadmin", models.RoleSuperAdmin, models.UserStatusActive)
 	clusterAdmin := createTestUser(t, setup, "clusteradmin", models.RoleClusterAdmin, models.UserStatusActive)
-	readOnlyUser := createTestUser(t, setup, "readonly", models.RoleReadOnly, models.UserStatusActive)
+	readOnlyUser := createTestUser(t, setup, "normaluser", models.RoleNormalUser, models.UserStatusActive)
 
 	// 测试 IsSuperAdmin
 	isSuperAdmin, err := setup.permissionService.IsSuperAdmin(ctx, superAdmin.UserID)
@@ -483,16 +483,16 @@ func TestRoleCheckFunctions(t *testing.T) {
 
 	isClusterAdmin, err = setup.permissionService.IsClusterAdmin(ctx, readOnlyUser.UserID)
 	assert.NoError(t, err)
-	assert.False(t, isClusterAdmin, "只读用户不应该被识别为集群管理员")
+	assert.False(t, isClusterAdmin, "普通用户不应该被识别为集群管理员")
 
 	// 测试 IsReadOnly
 	isReadOnly, err := setup.permissionService.IsReadOnly(ctx, readOnlyUser.UserID)
 	assert.NoError(t, err)
-	assert.True(t, isReadOnly, "只读用户应该被识别")
+	assert.True(t, isReadOnly, "普通用户应该被识别")
 
 	isReadOnly, err = setup.permissionService.IsReadOnly(ctx, superAdmin.UserID)
 	assert.NoError(t, err)
-	assert.False(t, isReadOnly, "超级管理员不应该被识别为只读用户")
+	assert.False(t, isReadOnly, "超级管理员不应该被识别为普通用户")
 }
 
 // TestClusterAdminWithMultipleClusters 测试集群管理员管理多个集群
@@ -554,7 +554,7 @@ func TestInactiveUserPermissions(t *testing.T) {
 }
 
 // TestClusterPermissionReadWrite 测试集群读写权限分离
-// 验证需求: 2.2, 2.3 - 集群管理员和只读用户对集群的读写权限应该正确分离
+// 验证需求: 2.2, 2.3 - 集群管理员和普通用户对集群的读写权限应该正确分离
 func TestClusterPermissionReadWrite(t *testing.T) {
 	setup := setupTest(t)
 	ctx := context.Background()
@@ -562,8 +562,8 @@ func TestClusterPermissionReadWrite(t *testing.T) {
 	// 创建集群管理员
 	clusterAdmin := createTestUser(t, setup, "clusteradmin", models.RoleClusterAdmin, models.UserStatusActive)
 
-	// 创建只读用户
-	readOnlyUser := createTestUser(t, setup, "readonly", models.RoleReadOnly, models.UserStatusActive)
+	// 创建普通用户
+	readOnlyUser := createTestUser(t, setup, "normaluser", models.RoleNormalUser, models.UserStatusActive)
 
 	// 授权 clusterAdmin 管理 cluster
 	grantClusterAccess(t, setup, 1, clusterAdmin.UserID)
@@ -581,13 +581,13 @@ func TestClusterPermissionReadWrite(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, hasReadPermission, "集群管理员应该有集群读权限")
 
-	// 只读用户没有管理权限
+	// 普通用户没有管理权限
 	hasMgmtPermission, err = setup.permissionService.CheckClusterPermission(ctx, readOnlyUser.UserID, 1)
 	assert.NoError(t, err)
-	assert.False(t, hasMgmtPermission, "只读用户不应该有集群管理权限")
+	assert.False(t, hasMgmtPermission, "普通用户不应该有集群管理权限")
 
-	// 只读用户有读权限
+	// 普通用户有读权限
 	hasReadPermission, err = setup.permissionService.CheckClusterReadPermission(ctx, readOnlyUser.UserID, 1)
 	assert.NoError(t, err)
-	assert.True(t, hasReadPermission, "只读用户应该有集群读权限")
+	assert.True(t, hasReadPermission, "普通用户应该有集群读权限")
 }

@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"net/http"
 	"strconv"
 
 	"kafka-management-platform/internal/middleware"
 	"kafka-management-platform/internal/models"
+	"kafka-management-platform/internal/service/auth"
 	"kafka-management-platform/internal/service/cluster"
 
 	"github.com/gin-gonic/gin"
@@ -12,13 +14,15 @@ import (
 
 // ClusterHandler 集群处理器
 type ClusterHandler struct {
-	clusterSvc *cluster.Service
+	clusterSvc    *cluster.Service
+	permissionSvc *auth.PermissionService
 }
 
 // NewClusterHandler 创建集群处理器实例
-func NewClusterHandler(clusterSvc *cluster.Service) *ClusterHandler {
+func NewClusterHandler(clusterSvc *cluster.Service, permissionSvc *auth.PermissionService) *ClusterHandler {
 	return &ClusterHandler{
-		clusterSvc: clusterSvc,
+		clusterSvc:    clusterSvc,
+		permissionSvc: permissionSvc,
 	}
 }
 
@@ -167,6 +171,17 @@ func (h *ClusterHandler) GrantAccess(c *gin.Context) {
 		return
 	}
 
+	// 集群管理员只能操作自己管理的集群
+	userRole := middleware.GetUserRole(c)
+	if userRole == string(models.RoleClusterAdmin) {
+		userID := middleware.GetUserID(c)
+		hasAccess, err := h.permissionSvc.CheckClusterPermission(c.Request.Context(), userID, clusterID)
+		if err != nil || !hasAccess {
+			c.JSON(http.StatusForbidden, gin.H{"error": "no permission for this cluster"})
+			return
+		}
+	}
+
 	var req struct {
 		UserID int64 `json:"user_id" binding:"required"`
 	}
@@ -189,6 +204,17 @@ func (h *ClusterHandler) RevokeAccess(c *gin.Context) {
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid cluster id"})
 		return
+	}
+
+	// 集群管理员只能操作自己管理的集群
+	userRole := middleware.GetUserRole(c)
+	if userRole == string(models.RoleClusterAdmin) {
+		userID := middleware.GetUserID(c)
+		hasAccess, err := h.permissionSvc.CheckClusterPermission(c.Request.Context(), userID, clusterID)
+		if err != nil || !hasAccess {
+			c.JSON(http.StatusForbidden, gin.H{"error": "no permission for this cluster"})
+			return
+		}
 	}
 
 	var req struct {
@@ -222,6 +248,23 @@ func (h *ClusterHandler) ListClusterUsers(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"data": users})
+}
+
+// ListUserClusters 获取用户已授权的集群列表
+func (h *ClusterHandler) ListUserClusters(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("userId"), 10, 64)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid user id"})
+		return
+	}
+
+	clusters, err := h.clusterSvc.ListUserClusters(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"data": clusters})
 }
 
 // TestConnection 测试集群连接
