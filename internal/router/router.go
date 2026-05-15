@@ -91,7 +91,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	tokenBlacklistCache := cache.NewTokenBlacklistCache(memoryCache)
 
 	// 初始化 Handler
-	authHandler := handler.NewAuthHandler(authSvc, tokenBlacklistCache)
+	authHandler := handler.NewAuthHandler(authSvc, tokenBlacklistCache, auditSvc)
 	clusterHandler := handler.NewClusterHandler(clusterSvc, permissionSvc)
 	topicHandler := handler.NewTopicHandler(topicSvc, permissionSvc)
 	aclHandler := handler.NewACLHandler(aclSvc)
@@ -104,7 +104,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	// 初始化中间件
 	permissionMiddleware := middleware.NewPermissionMiddleware(permissionSvc)
 	clusterPermissionMiddleware := middleware.NewClusterPermissionMiddleware(permissionSvc)
-	_ = middleware.NewAuditMiddleware(auditSvc) // 审计中间件（当前未使用）
+	auditMiddleware := middleware.NewAuditMiddleware(auditSvc) // 审计中间件
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {
@@ -135,6 +135,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 		// 需要认证的路由
 		authenticated := v1.Group("")
 		authenticated.Use(middleware.AuthMiddleware(jwtSvc, tokenBlacklistCache, userRepo))
+		authenticated.Use(auditMiddleware.Audit()) // 启用审计中间件
 		{
 			// 当前用户信息
 			authenticated.GET("/auth/me", authHandler.GetCurrentUser)
@@ -230,8 +231,9 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			auditLogs := authenticated.Group("/audit-logs")
 			{
 				auditLogs.GET("", auditLogHandler.ListAuditLogs)
-				auditLogs.GET("/export", auditLogHandler.CleanLogs)  // 暂用 CleanLogs 替代导出
-				auditLogs.GET("/:id", auditLogHandler.ListAuditLogs) // 暂用列表替代详情
+				auditLogs.GET("/export", auditLogHandler.ExportLogs)
+				auditLogs.GET("/:id", auditLogHandler.GetAuditLogDetail)
+				auditLogs.DELETE("/clean", permissionMiddleware.RequireSuperAdmin(), auditLogHandler.CleanLogs)
 			}
 
 			// Topic 权限管理路由

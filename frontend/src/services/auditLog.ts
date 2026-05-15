@@ -13,7 +13,7 @@ export interface AuditLogParams {
 }
 
 export interface AuditLog {
-  id: number
+  log_id: number
   user_id: number
   username: string
   action: string
@@ -46,13 +46,13 @@ export const auditLogAPI = {
   
   // 获取单条审计日志
   get: (id: number) => 
-    axios.get<AuditLog>(`/audit-logs/${id}`),
+    axios.get<{ data: AuditLog }>(`/audit-logs/${id}`),
   
   // 导出审计日志
   export: (params: ExportParams) => 
-    axios.get<string>('/audit-logs/export', { params }),
+    axios.get('/audit-logs/export', { params, responseType: 'blob' }),
   
   // 清理过期日志
   clean: (days: number) => 
-    axios.post('/audit-logs/clean', null, { params: { days } })
+    axios.delete('/audit-logs/clean', { params: { days } })
 }

@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"io"
+	"log"
 	"time"
 
 	"kafka-management-platform/internal/service/audit"
@@ -13,6 +14,13 @@ import (
 // AuditMiddleware 审计日志中间件
 func AuditMiddleware(auditSvc *audit.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 跳过监控查询接口（会产生大量日志）
+		path := c.Request.URL.Path
+		if contains(path, "/metrics") && c.Request.Method == "GET" {
+			c.Next()
+			return
+		}
+
 		// 记录请求开始时间
 		startTime := time.Now()
 
@@ -64,7 +72,7 @@ func AuditMiddleware(auditSvc *audit.Service) gin.HandlerFunc {
 				status = "failed"
 			}
 
-			_ = auditSvc.Log(c.Request.Context(), &audit.LogRequest{
+			if err := auditSvc.Log(c.Request.Context(), &audit.LogRequest{
 				UserID:       userID,
 				Username:     username,
 				Action:       action,
@@ -74,7 +82,9 @@ func AuditMiddleware(auditSvc *audit.Service) gin.HandlerFunc {
 				IPAddress:    c.ClientIP(),
 				UserAgent:    c.Request.UserAgent(),
 				Status:       status,
-			})
+			}); err != nil {
+				log.Printf("[AuditMiddleware] Failed to log: %v, action=%s, resource=%s", err, action, resourceType)
+			}
 		}()
 	}
 }
@@ -92,12 +102,18 @@ func getResourceType(path string) string {
 		return "topic"
 	case contains(path, "/acls"):
 		return "acl"
+	case contains(path, "/scram-users"):
+		return "scram_user"
 	case contains(path, "/metrics"):
 		return "monitor"
 	case contains(path, "/audit-logs"):
 		return "audit_log"
+	case contains(path, "/topic-permissions"):
+		return "topic_permission"
+	case contains(path, "/dashboard"):
+		return "dashboard"
 	default:
-		return "unknown"
+		return "system"
 	}
 }
 
