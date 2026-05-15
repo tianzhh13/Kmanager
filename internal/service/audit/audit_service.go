@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,36 +30,64 @@ var (
 
 // ValidActions 有效的操作类型
 var ValidActions = map[string]bool{
-	"login":                true,
-	"logout":               true,
-	"create_cluster":       true,
-	"update_cluster":       true,
-	"delete_cluster":       true,
-	"create_topic":         true,
-	"update_topic":         true,
-	"delete_topic":         true,
-	"create_acl":           true,
-	"delete_acl":           true,
-	"batch_delete_acl":     true,
-	"create_user":          true,
-	"update_user":          true,
-	"delete_user":          true,
-	"disable_user":         true,
-	"grant_cluster_access": true,
+	// 认证
+	"login":  true,
+	"logout": true,
+	// 用户管理
+	"create_user":     true,
+	"update_user":     true,
+	"delete_user":     true,
+	"disable_user":    true,
+	"enable_user":     true,
+	"update_password": true,
+	// 集群管理
+	"create_cluster":        true,
+	"update_cluster":        true,
+	"delete_cluster":        true,
+	"test_connection":       true,
+	"grant_cluster_access":  true,
 	"revoke_cluster_access": true,
-	"test_connection":      true,
-	"sync_topics":          true,
-	"sync_acls":            true,
-	"export_logs":          true,
+	"upload_keytab":         true,
+	// Topic 管理
+	"create_topic": true,
+	"update_topic": true,
+	"delete_topic": true,
+	"sync_topics":  true,
+	// ACL 管理
+	"create_acl":       true,
+	"delete_acl":       true,
+	"batch_delete_acl": true,
+	"sync_acls":        true,
+	// SCRAM 用户管理
+	"create_scram_user": true,
+	"delete_scram_user": true,
+	"sync_scram_users":  true,
+	// Topic 权限管理
+	"assign_topic_permission":       true,
+	"revoke_topic_permission":       true,
+	"batch_assign_topic_permission": true,
+	// 审计日志
+	"export_logs": true,
+	"clean_logs":  true,
+	// 监控
+	"view_metrics": true,
+	// 仪表盘
+	"view_dashboard": true,
 }
 
 // ValidResourceTypes 有效的资源类型
 var ValidResourceTypes = map[string]bool{
-	"user":    true,
-	"cluster": true,
-	"topic":   true,
-	"acl":     true,
-	"system":  true,
+	"user":             true,
+	"cluster":          true,
+	"topic":            true,
+	"acl":              true,
+	"scram_user":       true,
+	"system":           true,
+	"auth":             true,
+	"monitor":          true,
+	"audit_log":        true,
+	"topic_permission": true,
+	"dashboard":        true,
 }
 
 // ValidStatuses 有效的状态
@@ -69,16 +98,16 @@ var ValidStatuses = map[string]bool{
 
 // LogRequest 审计日志请求
 type LogRequest struct {
-	UserID       int64                  `json:"user_id"`
-	Username     string                 `json:"username"`
-	Action       string                 `json:"action"`
-	ResourceType string                 `json:"resource_type"`
-	ResourceID   string                 `json:"resource_id"`
-	ClusterID    *int64                 `json:"cluster_id,omitempty"`
-	Details      interface{}            `json:"details,omitempty"`
-	IPAddress    string                 `json:"ip_address"`
-	UserAgent    string                 `json:"user_agent"`
-	Status       string                 `json:"status"`
+	UserID       int64       `json:"user_id"`
+	Username     string      `json:"username"`
+	Action       string      `json:"action"`
+	ResourceType string      `json:"resource_type"`
+	ResourceID   string      `json:"resource_id"`
+	ClusterID    *int64      `json:"cluster_id,omitempty"`
+	Details      interface{} `json:"details,omitempty"`
+	IPAddress    string      `json:"ip_address"`
+	UserAgent    string      `json:"user_agent"`
+	Status       string      `json:"status"`
 }
 
 // Service 审计服务
@@ -133,7 +162,7 @@ func (s *Service) LogGin(ctx *gin.Context, operation string, resourceType string
 
 	userID := int64(0)
 	username := ""
-	
+
 	if ctx != nil {
 		if v, exists := ctx.Get("user_id"); exists {
 			userID = v.(int64)
@@ -144,15 +173,15 @@ func (s *Service) LogGin(ctx *gin.Context, operation string, resourceType string
 	}
 
 	auditLog := &models.AuditLog{
-		UserID:       userID,
-		Username:     username,
-		Action:       operation,
-		Resource:     resourceType,
-		ResourceID:   resourceID,
-		Details:      details,
-		IPAddress:    getClientIP(ctx),
-		UserAgent:    getUserAgent(ctx),
-		Status:       models.AuditStatusSuccess,
+		UserID:     userID,
+		Username:   username,
+		Action:     operation,
+		Resource:   resourceType,
+		ResourceID: resourceID,
+		Details:    details,
+		IPAddress:  getClientIP(ctx),
+		UserAgent:  getUserAgent(ctx),
+		Status:     models.AuditStatusSuccess,
 	}
 
 	return s.auditLogRepo.Create(nil, auditLog)
@@ -167,7 +196,7 @@ func (s *Service) LogError(ctx *gin.Context, operation string, resourceType stri
 
 	userID := int64(0)
 	username := ""
-	
+
 	if ctx != nil {
 		if v, exists := ctx.Get("user_id"); exists {
 			userID = v.(int64)
@@ -183,16 +212,16 @@ func (s *Service) LogError(ctx *gin.Context, operation string, resourceType stri
 	}
 
 	auditLog := &models.AuditLog{
-		UserID:       userID,
-		Username:     username,
-		Action:       operation,
-		Resource:     resourceType,
-		ResourceID:   resourceID,
-		Details:      details,
-		IPAddress:    getClientIP(ctx),
-		UserAgent:    getUserAgent(ctx),
-		Status:       models.AuditStatusFailed,
-		ErrorMsg:     errMsg,
+		UserID:     userID,
+		Username:   username,
+		Action:     operation,
+		Resource:   resourceType,
+		ResourceID: resourceID,
+		Details:    details,
+		IPAddress:  getClientIP(ctx),
+		UserAgent:  getUserAgent(ctx),
+		Status:     models.AuditStatusFailed,
+		ErrorMsg:   errMsg,
 	}
 
 	return s.auditLogRepo.Create(nil, auditLog)
@@ -206,16 +235,16 @@ func (s *Service) LogWithDetails(userID int64, username, operation, resourceType
 	}
 
 	auditLog := &models.AuditLog{
-		UserID:       userID,
-		Username:     username,
-		Action:       operation,
-		Resource:     resourceType,
-		ResourceID:   resourceID,
-		ClusterID:    clusterID,
-		Details:      details,
-		IPAddress:    ipAddress,
-		UserAgent:    userAgent,
-		Status:       models.AuditStatus(status),
+		UserID:     userID,
+		Username:   username,
+		Action:     operation,
+		Resource:   resourceType,
+		ResourceID: resourceID,
+		ClusterID:  clusterID,
+		Details:    details,
+		IPAddress:  ipAddress,
+		UserAgent:  userAgent,
+		Status:     models.AuditStatus(status),
 	}
 
 	return s.auditLogRepo.Create(nil, auditLog)
@@ -223,9 +252,12 @@ func (s *Service) LogWithDetails(userID int64, username, operation, resourceType
 
 // validateAuditLogFields 验证审计日志字段完整性
 func (s *Service) validateAuditLogFields(userID int64, username, action, resourceType, status string) error {
-	// 验证操作类型
+	// 验证操作类型（允许 HTTP 方法+路径格式或标准 action 格式）
 	if action != "" && !ValidActions[action] {
-		return fmt.Errorf("%w: %s", ErrInvalidAction, action)
+		// 如果不是标准 action 格式，检查是否是 HTTP 方法+路径格式
+		if !isHTTPMethodAction(action) {
+			return fmt.Errorf("%w: %s", ErrInvalidAction, action)
+		}
 	}
 
 	// 验证资源类型
@@ -239,6 +271,17 @@ func (s *Service) validateAuditLogFields(userID int64, username, action, resourc
 	}
 
 	return nil
+}
+
+// isHTTPMethodAction 检查是否是 HTTP 方法+路径格式
+func isHTTPMethodAction(action string) bool {
+	methods := []string{"GET ", "POST ", "PUT ", "DELETE ", "PATCH "}
+	for _, method := range methods {
+		if len(action) > len(method) && action[:len(method)] == method {
+			return true
+		}
+	}
+	return false
 }
 
 // QueryLogs 查询审计日志
@@ -263,7 +306,7 @@ func (s *Service) CleanExpiredLogs(ctx context.Context, days int) (int64, error)
 	if days <= 0 {
 		days = 180
 	}
-	
+
 	cutoffTime := time.Now().AddDate(0, 0, -days)
 	return s.auditLogRepo.DeleteBefore(ctx, cutoffTime)
 }
@@ -278,7 +321,7 @@ func getClientIP(ctx *gin.Context) string {
 	if ctx == nil {
 		return ""
 	}
-	
+
 	// 优先从 X-Forwarded-For 获取
 	if ip := ctx.GetHeader("X-Forwarded-For"); ip != "" {
 		return ip
@@ -379,4 +422,109 @@ func (h *Handler) CleanLogs(c *gin.Context) {
 		"message":       "logs cleaned successfully",
 		"deleted_count": deleted,
 	})
+}
+
+// ExportLogs 处理导出审计日志请求（CSV 格式）
+func (h *Handler) ExportLogs(c *gin.Context) {
+	// 解析查询参数（与 ListAuditLogs 相同）
+	var userID *int64
+	if userIDStr := c.Query("user_id"); userIDStr != "" {
+		id, err := fmt.Sscanf(userIDStr, "%d", &userID)
+		if err != nil || id == 0 {
+			userID = nil
+		}
+	}
+
+	username := c.Query("username")
+	operation := c.Query("operation")
+	resourceType := c.Query("resource_type")
+	status := c.Query("status")
+
+	var startTime, endTime *time.Time
+	if startStr := c.Query("start_time"); startStr != "" {
+		if t, err := time.Parse(time.RFC3339, startStr); err == nil {
+			startTime = &t
+		}
+	}
+	if endStr := c.Query("end_time"); endStr != "" {
+		if t, err := time.Parse(time.RFC3339, endStr); err == nil {
+			endTime = &t
+		}
+	}
+
+	// 导出最多 10000 条
+	pageSize := 10000
+	logs, _, err := h.svc.QueryLogs(
+		c.Request.Context(),
+		userID,
+		&username,
+		&operation,
+		&resourceType,
+		&status,
+		startTime,
+		endTime,
+		1,
+		pageSize,
+	)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 设置 CSV 响应头
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", "attachment; filename=audit_logs.csv")
+
+	// 写入 BOM（解决 Excel 中文乱码）
+	c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
+
+	writer := csv.NewWriter(c.Writer)
+	defer writer.Flush()
+
+	// 写入表头
+	writer.Write([]string{
+		"ID", "用户ID", "用户名", "操作", "资源类型", "资源ID",
+		"集群ID", "详情", "IP地址", "User-Agent", "状态", "错误信息", "创建时间",
+	})
+
+	// 写入数据
+	for _, log := range logs {
+		clusterID := ""
+		if log.ClusterID != nil {
+			clusterID = strconv.FormatInt(*log.ClusterID, 10)
+		}
+		writer.Write([]string{
+			strconv.FormatInt(log.LogID, 10),
+			strconv.FormatInt(log.UserID, 10),
+			log.Username,
+			log.Action,
+			log.Resource,
+			log.ResourceID,
+			clusterID,
+			log.Details,
+			log.IPAddress,
+			log.UserAgent,
+			string(log.Status),
+			log.ErrorMsg,
+			log.CreatedAt.Format(time.RFC3339),
+		})
+	}
+}
+
+// GetAuditLogDetail 处理获取单条审计日志详情请求
+func (h *Handler) GetAuditLogDetail(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid id"})
+		return
+	}
+
+	log, err := h.svc.GetAuditLog(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "audit log not found"})
+		return
+	}
+
+	c.JSON(200, gin.H{"data": log})
 }

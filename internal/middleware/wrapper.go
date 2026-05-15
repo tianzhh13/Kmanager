@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"kafka-management-platform/internal/models"
+	"kafka-management-platform/internal/service/audit"
 	"kafka-management-platform/internal/service/auth"
 
 	"github.com/gin-gonic/gin"
@@ -177,11 +178,11 @@ func (c *ClusterPermissionMiddlewareWrapper) RequireClusterWriteAccess() gin.Han
 
 // AuditMiddlewareWrapper 审计中间件包装器
 type AuditMiddlewareWrapper struct {
-	auditSvc any
+	auditSvc *audit.Service
 }
 
 // NewAuditMiddleware 创建审计中间件包装器
-func NewAuditMiddleware(auditSvc any) *AuditMiddlewareWrapper {
+func NewAuditMiddleware(auditSvc *audit.Service) *AuditMiddlewareWrapper {
 	return &AuditMiddlewareWrapper{
 		auditSvc: auditSvc,
 	}
@@ -189,9 +190,7 @@ func NewAuditMiddleware(auditSvc any) *AuditMiddlewareWrapper {
 
 // Audit 返回审计中间件
 func (a *AuditMiddlewareWrapper) Audit() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Next()
-	}
+	return AuditMiddleware(a.auditSvc)
 }
 
 // IPRateLimiter IP 级别限流器

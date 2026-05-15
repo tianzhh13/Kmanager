@@ -494,6 +494,15 @@ func (w *SyncWorker) RemoveAdminClient(clusterID int64) {
 	}
 }
 
+// copyLabels 复制标签 map
+func copyLabels(src map[string]string) map[string]string {
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
 // collectPerBrokerMetrics 采集 Per-Broker 指标并写入 VictoriaMetrics
 func (w *SyncWorker) collectPerBrokerMetrics(ctx context.Context, cluster *models.Cluster) error {
 	if cluster.JMXExporterURLs == "" {
@@ -553,10 +562,193 @@ func (w *SyncWorker) collectPerBrokerMetrics(ctx context.Context, cluster *model
 						Labels: brokerLabels,
 					})
 
+				// Follower 最小拉取速率
+				case "kafka_server_replicafetchermanager_minfetchrate":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_min_fetch_rate",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Follower 失败分区数
+				case "kafka_server_replicafetchermanager_failedpartitionscount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_failed_partitions_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Follower 死线程数
+				case "kafka_server_replicafetchermanager_deadthreadcount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_dead_thread_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ============ 批次2：请求延迟指标 ============
+
+				// 请求排队耗时
+				case "kafka_network_requestmetrics_requestqueuetimems":
+					if quantile, ok := m.Labels["quantile"]; ok && quantile == "0.99" {
+						if request, ok := m.Labels["request"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["request"] = request
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_broker_request_queue_time_ms",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// 本地处理耗时
+				case "kafka_network_requestmetrics_localtimems":
+					if quantile, ok := m.Labels["quantile"]; ok && quantile == "0.99" {
+						if request, ok := m.Labels["request"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["request"] = request
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_broker_request_local_time_ms",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// 远程等待耗时
+				case "kafka_network_requestmetrics_remotetimems":
+					if quantile, ok := m.Labels["quantile"]; ok && quantile == "0.99" {
+						if request, ok := m.Labels["request"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["request"] = request
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_broker_request_remote_time_ms",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// 响应排队耗时
+				case "kafka_network_requestmetrics_responsequeuetimems":
+					if quantile, ok := m.Labels["quantile"]; ok && quantile == "0.99" {
+						if request, ok := m.Labels["request"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["request"] = request
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_broker_response_queue_time_ms",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// 响应发送耗时
+				case "kafka_network_requestmetrics_responsesendtimems":
+					if quantile, ok := m.Labels["quantile"]; ok && quantile == "0.99" {
+						if request, ok := m.Labels["request"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["request"] = request
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_broker_response_send_time_ms",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// 限流耗时
+				case "kafka_network_requestmetrics_throttletimems":
+					if quantile, ok := m.Labels["quantile"]; ok && quantile == "0.99" {
+						if request, ok := m.Labels["request"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["request"] = request
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_broker_throttle_time_ms",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// 消息转换耗时
+				case "kafka_network_requestmetrics_messageconversionstimems":
+					if quantile, ok := m.Labels["quantile"]; ok && quantile == "0.99" {
+						if request, ok := m.Labels["request"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["request"] = request
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_broker_message_conversions_time_ms",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// 请求字节数
+				case "kafka_network_requestmetrics_requestbytes":
+					if quantile, ok := m.Labels["quantile"]; ok && quantile == "0.99" {
+						if request, ok := m.Labels["request"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["request"] = request
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_broker_request_bytes",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// 请求错误总数
+				case "kafka_network_requestmetrics_errors_total":
+					if request, ok := m.Labels["request"]; ok {
+						if errorType, ok := m.Labels["error"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["request"] = request
+							labels["error"] = errorType
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_broker_request_errors_total",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// 请求总数
+				case "kafka_network_requestmetrics_requests_total":
+					if request, ok := m.Labels["request"]; ok {
+						labels := copyLabels(brokerLabels)
+						labels["request"] = request
+						vmMetrics = append(vmMetrics, victoriametrics.Metric{
+							Name:   "kafka_broker_requests_total",
+							Value:  m.Value,
+							Labels: labels,
+						})
+					}
+
 				// Controller 状态
 				case "kafka_controller_kafkacontroller_activecontrollercount":
 					vmMetrics = append(vmMetrics, victoriametrics.Metric{
 						Name:   "kafka_broker_active_controller",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Controller 事件排队耗时
+				case "kafka_controller_controllereventmanager_eventqueuetimems":
+					if quantile, ok := m.Labels["quantile"]; ok && quantile == "0.99" {
+						vmMetrics = append(vmMetrics, victoriametrics.Metric{
+							Name:   "kafka_broker_controller_event_queue_time_ms",
+							Value:  m.Value,
+							Labels: brokerLabels,
+						})
+					}
+
+				// Unclean Leader 选举总数
+				case "kafka_controller_controllerstats_uncleanleaderelections_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_unclean_leader_elections_total",
 						Value:  m.Value,
 						Labels: brokerLabels,
 					})
@@ -581,6 +773,40 @@ func (w *SyncWorker) collectPerBrokerMetrics(ctx context.Context, cluster *model
 				case "kafka_server_brokertopicmetrics_messagesin_total", "kafka_server_BrokerTopicMetrics_MessagesInPersec":
 					vmMetrics = append(vmMetrics, victoriametrics.Metric{
 						Name:   "kafka_broker_messages_in_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ============ 批次3：额外流量指标 ============
+
+				// 副本同步流入
+				case "kafka_server_brokertopicmetrics_replicationbytesin_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_replication_bytes_in_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 副本同步流出
+				case "kafka_server_brokertopicmetrics_replicationbytesout_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_replication_bytes_out_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 分区迁移流入
+				case "kafka_server_brokertopicmetrics_reassignmentbytesin_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_reassignment_bytes_in_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 分区迁移流出
+				case "kafka_server_brokertopicmetrics_reassignmentbytesout_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_reassignment_bytes_out_total",
 						Value:  m.Value,
 						Labels: brokerLabels,
 					})
@@ -624,6 +850,733 @@ func (w *SyncWorker) collectPerBrokerMetrics(ctx context.Context, cluster *model
 						Value:  m.Value,
 						Labels: brokerLabels,
 					})
+
+				// ============ 批次1：集群概览指标 ============
+
+				// 活跃 Broker 数量
+				case "kafka_controller_kafkacontroller_activebrokercount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_active_broker_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Fenced Broker 数量
+				case "kafka_controller_kafkacontroller_fencedbrokercount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_fenced_broker_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 集群总分区数
+				case "kafka_controller_kafkacontroller_globalpartitioncount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_global_partition_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 集群总 Topic 数
+				case "kafka_controller_kafkacontroller_globaltopiccount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_global_topic_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Preferred 副本不均衡数
+				case "kafka_controller_kafkacontroller_preferredreplicaimbalancecount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_preferred_replica_imbalance",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 拒绝字节总量
+				case "kafka_server_brokertopicmetrics_bytesrejected_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_bytes_rejected_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ============ 批次4：额外请求/错误指标 ============
+
+				// 失败生产请求
+				case "kafka_server_brokertopicmetrics_failedproducerequests_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_failed_produce_requests_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 失败拉取请求
+				case "kafka_server_brokertopicmetrics_failedfetchrequests_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_failed_fetch_requests_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 生产消息转换
+				case "kafka_server_brokertopicmetrics_producemessageconversions_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_produce_message_conversions_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 拉取消息转换
+				case "kafka_server_brokertopicmetrics_fetchmessageconversions_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_fetch_message_conversions_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 无效 Magic Number
+				case "kafka_server_brokertopicmetrics_invalidmagicnumberrecords_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_invalid_magic_number_records_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 无效 CRC
+				case "kafka_server_brokertopicmetrics_invalidmessagecrcrecords_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_invalid_message_crc_records_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 无效 Offset/Sequence
+				case "kafka_server_brokertopicmetrics_invalidoffsetorsequencerecords_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_invalid_offset_or_sequence_records_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 无 Key Compact 记录
+				case "kafka_server_brokertopicmetrics_nokeycompactedtopicrecords_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_no_key_compacted_topic_records_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ============ 批次5：副本-detail 指标 ============
+
+				// Under MinISR 分区数
+				case "kafka_server_replicamanager_underminisrpartitioncount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_under_min_isr_partition_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// At MinISR 分区数
+				case "kafka_server_replicamanager_atminisrpartitioncount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_at_min_isr_partition_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 离线副本数
+				case "kafka_server_replicamanager_offlinereplicacount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_offline_replica_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ISR 收缩总数
+				case "kafka_server_replicamanager_isrshrinks_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_isr_shrinks_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ISR 扩展总数
+				case "kafka_server_replicamanager_isrexpands_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_isr_expands_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ISR 更新失败总数
+				case "kafka_server_replicamanager_failedisrupdates_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_isr_updates_failed_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 分区总数
+				case "kafka_server_replicamanager_partitioncount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_partition_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 正在迁移分区数
+				case "kafka_server_replicamanager_reassigningpartitions":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_reassigning_partitions",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ============ 批次5.5：延迟操作指标 ============
+
+				// 延迟操作数
+				case "kafka_server_delayedoperationpurgatory_numdelayedoperations":
+					if purgatoryName, ok := m.Labels["delayedOperation"]; ok {
+						labels := copyLabels(brokerLabels)
+						labels["purgatory"] = purgatoryName
+						vmMetrics = append(vmMetrics, victoriametrics.Metric{
+							Name:   "kafka_broker_delayed_operations",
+							Value:  m.Value,
+							Labels: labels,
+						})
+					}
+
+				// Purgatory 大小
+				case "kafka_server_delayedoperationpurgatory_purgatorysize":
+					if purgatoryName, ok := m.Labels["delayedOperation"]; ok {
+						labels := copyLabels(brokerLabels)
+						labels["purgatory"] = purgatoryName
+						vmMetrics = append(vmMetrics, victoriametrics.Metric{
+							Name:   "kafka_broker_purgatory_size",
+							Value:  m.Value,
+							Labels: labels,
+						})
+					}
+
+				// Fetch 延迟过期总数
+				case "kafka_server_delayedfetchmetrics_expires_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_delayed_fetch_expires_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ============ 批次6：网络/线程指标 ============
+
+				// 响应队列大小
+				case "kafka_network_requestchannel_responsequeuesize":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_response_queue_size",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Processor 空闲率
+				case "kafka_network_processor_idlepercent":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_processor_idle_percent",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 网络 Processor 平均空闲率
+				case "kafka_network_socketserver_networkprocessoravgidlepercent":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_network_processor_avg_idle_percent",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 请求处理线程空闲率
+				case "kafka_server_kafkarequesthandlerpool_requesthandleravgidle_percent":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_request_handler_avg_idle_percent",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 已过期连接数
+				case "kafka_network_socketserver_expiredconnectionskilledcount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_expired_connections_killed_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 内存池可用量
+				case "kafka_network_socketserver_memorypoolavailable":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_memory_pool_available",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 内存池已用量
+				case "kafka_network_socketserver_memorypoolused":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_memory_pool_used",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ============ 批次7：Broker 状态指标 ============
+
+				// Broker 状态
+				case "kafka_server_kafkaserver_brokerstate":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_state",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 磁盘读取速率
+				case "kafka_server_kafkaserver_linux_disk_read_bytes":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_disk_read_bytes",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 磁盘写入速率
+				case "kafka_server_kafkaserver_linux_disk_write_bytes":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_disk_write_bytes",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 离线日志目录数
+				case "kafka_log_logmanager_offlinelogdirectorycount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_offline_log_directory_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 日志目录离线状态
+				case "kafka_log_logmanager_logdirectoryoffline":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_log_directory_offline",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ============ 批次7.5：Log Flush 指标 ============
+
+				// 日志 Flush 耗时
+				case "kafka_log_logflushstats_logflushrateandtimems":
+					if quantile, ok := m.Labels["quantile"]; ok && quantile == "0.99" {
+						vmMetrics = append(vmMetrics, victoriametrics.Metric{
+							Name:   "kafka_broker_log_flush_time_ms",
+							Value:  m.Value,
+							Labels: brokerLabels,
+						})
+					}
+
+				// ============ 批次7.6：系统进程指标 ============
+
+				// 进程 CPU 使用
+				case "process_cpu_seconds_total":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_process_cpu_seconds_total",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 进程驻留内存
+				case "process_resident_memory_bytes":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_process_resident_memory_bytes",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 进程虚拟内存
+				case "process_virtual_memory_bytes":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_process_virtual_memory_bytes",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 进程启动时间
+				case "process_start_time_seconds":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_process_start_time_seconds",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 最大文件描述符
+				case "process_max_fds":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_process_max_fds",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 已用文件描述符
+				case "process_open_fds":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_process_open_fds",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ============ 批次7.7：Consumer Group 状态指标 ============
+
+				// Consumer Group 总数
+				case "kafka_coordinator_group_groupmetadatamanager_numgroups":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_consumer_group_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Stable 状态消费组数
+				case "kafka_coordinator_group_groupmetadatamanager_numgroupsstable":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_consumer_group_stable_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Empty 状态消费组数
+				case "kafka_coordinator_group_groupmetadatamanager_numgroupsempty":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_consumer_group_empty_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Preparing Rebalance 数
+				case "kafka_coordinator_group_groupmetadatamanager_numgroupspreparingrebalance":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_consumer_group_preparing_rebalance_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Completing Rebalance 数
+				case "kafka_coordinator_group_groupmetadatamanager_numgroupscompletingrebalance":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_consumer_group_completing_rebalance_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Dead 状态消费组数
+				case "kafka_coordinator_group_groupmetadatamanager_numgroupsdead":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_consumer_group_dead_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Offset 总数
+				case "kafka_coordinator_group_groupmetadatamanager_numoffsets":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_consumer_group_offsets_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ============ 批次8：Topic 分区级指标 ============
+
+				// Topic 日志大小
+				case "kafka_log_log_size":
+					if topic, ok := m.Labels["topic"]; ok {
+						if partition, ok := m.Labels["partition"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["topic"] = topic
+							labels["partition"] = partition
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_topic_log_size",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// Topic LogEndOffset
+				case "kafka_log_log_logendoffset":
+					if topic, ok := m.Labels["topic"]; ok {
+						if partition, ok := m.Labels["partition"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["topic"] = topic
+							labels["partition"] = partition
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_topic_log_end_offset",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// Topic LogStartOffset
+				case "kafka_log_log_logstartoffset":
+					if topic, ok := m.Labels["topic"]; ok {
+						if partition, ok := m.Labels["partition"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["topic"] = topic
+							labels["partition"] = partition
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_topic_log_start_offset",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// Topic 日志段数量
+				case "kafka_log_log_numlogsegments":
+					if topic, ok := m.Labels["topic"]; ok {
+						if partition, ok := m.Labels["partition"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["topic"] = topic
+							labels["partition"] = partition
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_topic_log_num_segments",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// Topic 分区 Under Replicated
+				case "kafka_cluster_partition_underreplicated":
+					if topic, ok := m.Labels["topic"]; ok {
+						if partition, ok := m.Labels["partition"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["topic"] = topic
+							labels["partition"] = partition
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_topic_partition_under_replicated",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// Topic 分区 Under MinISR
+				case "kafka_cluster_partition_underminisr":
+					if topic, ok := m.Labels["topic"]; ok {
+						if partition, ok := m.Labels["partition"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["topic"] = topic
+							labels["partition"] = partition
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_topic_partition_under_min_isr",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// Topic 分区 ISR 数
+				case "kafka_cluster_partition_insyncreplicascount":
+					if topic, ok := m.Labels["topic"]; ok {
+						if partition, ok := m.Labels["partition"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["topic"] = topic
+							labels["partition"] = partition
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_topic_partition_isr_count",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// Topic 分区副本数
+				case "kafka_cluster_partition_replicascount":
+					if topic, ok := m.Labels["topic"]; ok {
+						if partition, ok := m.Labels["partition"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["topic"] = topic
+							labels["partition"] = partition
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_topic_partition_replica_count",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
+
+				// ============ 批次9：Log Cleaner 指标 ============
+
+				// 最大脏比例
+				case "kafka_log_logcleanermanager_max_dirty_percent":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_log_cleaner_max_dirty_percent",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 上次清理间隔
+				case "kafka_log_logcleanermanager_time_since_last_run_ms":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_log_cleaner_time_since_last_run_ms",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 不可清理字节数
+				case "kafka_log_logcleanermanager_uncleanable_bytes":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_log_cleaner_uncleanable_bytes",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 不可清理分区数
+				case "kafka_log_logcleanermanager_uncleanable_partitions_count":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_log_cleaner_uncleanable_partitions_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Cleaner 重新复制比例
+				case "kafka_log_logcleaner_cleaner_recopy_percent":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_log_cleaner_recopy_percent",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Cleaner 死线程数
+				case "kafka_log_logcleaner_deadthreadcount":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_log_cleaner_dead_thread_count",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Cleaner 最大缓冲利用率
+				case "kafka_log_logcleaner_max_buffer_utilization_percent":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_log_cleaner_max_buffer_utilization_percent",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Cleaner 最大清理时间
+				case "kafka_log_logcleaner_max_clean_time_secs":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_log_cleaner_max_clean_time_secs",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Cleaner 最大压缩延迟
+				case "kafka_log_logcleaner_max_compaction_delay_secs":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_log_cleaner_max_compaction_delay_secs",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// ============ 批次10：JVM 指标 ============
+
+				// GC 耗时
+				case "jvm_gc_collection_seconds_sum":
+					if gc, ok := m.Labels["gc"]; ok {
+						labels := copyLabels(brokerLabels)
+						labels["gc"] = gc
+						vmMetrics = append(vmMetrics, victoriametrics.Metric{
+							Name:   "kafka_broker_jvm_gc_seconds_sum",
+							Value:  m.Value,
+							Labels: labels,
+						})
+					}
+
+				// GC 次数
+				case "jvm_gc_collection_seconds_count":
+					if gc, ok := m.Labels["gc"]; ok {
+						labels := copyLabels(brokerLabels)
+						labels["gc"] = gc
+						vmMetrics = append(vmMetrics, victoriametrics.Metric{
+							Name:   "kafka_broker_jvm_gc_count",
+							Value:  m.Value,
+							Labels: labels,
+						})
+					}
+
+				// 内存池已用
+				case "jvm_memory_pool_collection_used_bytes":
+					if pool, ok := m.Labels["pool"]; ok {
+						labels := copyLabels(brokerLabels)
+						labels["pool"] = pool
+						vmMetrics = append(vmMetrics, victoriametrics.Metric{
+							Name:   "kafka_broker_jvm_memory_pool_used_bytes",
+							Value:  m.Value,
+							Labels: labels,
+						})
+					}
+
+				// 内存池最大
+				case "jvm_memory_pool_collection_max_bytes":
+					if pool, ok := m.Labels["pool"]; ok {
+						labels := copyLabels(brokerLabels)
+						labels["pool"] = pool
+						vmMetrics = append(vmMetrics, victoriametrics.Metric{
+							Name:   "kafka_broker_jvm_memory_pool_max_bytes",
+							Value:  m.Value,
+							Labels: labels,
+						})
+					}
+
+				// 当前线程数
+				case "jvm_threads_current":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_jvm_threads_current",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// 死锁线程数
+				case "jvm_threads_deadlocked":
+					vmMetrics = append(vmMetrics, victoriametrics.Metric{
+						Name:   "kafka_broker_jvm_threads_deadlocked",
+						Value:  m.Value,
+						Labels: brokerLabels,
+					})
+
+				// Buffer 池已用
+				case "jvm_buffer_pool_used_bytes":
+					if pool, ok := m.Labels["pool"]; ok {
+						labels := copyLabels(brokerLabels)
+						labels["pool"] = pool
+						vmMetrics = append(vmMetrics, victoriametrics.Metric{
+							Name:   "kafka_broker_jvm_buffer_pool_used_bytes",
+							Value:  m.Value,
+							Labels: labels,
+						})
+					}
+
+				// ============ 批次10.5：分区 Last Stable Offset Lag ============
+
+				// 分区 Last Stable Offset Lag
+				case "kafka_cluster_partition_laststableoffsetlag":
+					if topic, ok := m.Labels["topic"]; ok {
+						if partition, ok := m.Labels["partition"]; ok {
+							labels := copyLabels(brokerLabels)
+							labels["topic"] = topic
+							labels["partition"] = partition
+							vmMetrics = append(vmMetrics, victoriametrics.Metric{
+								Name:   "kafka_topic_partition_last_stable_offset_lag",
+								Value:  m.Value,
+								Labels: labels,
+							})
+						}
+					}
 				}
 			}
 		}

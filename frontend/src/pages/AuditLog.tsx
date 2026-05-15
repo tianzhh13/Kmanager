@@ -8,7 +8,7 @@ const { RangePicker } = DatePicker
 const { Search } = Input
 
 interface AuditLog {
-  id: number
+  log_id: number
   user_id: number
   username: string
   action: string
@@ -218,12 +218,30 @@ const AuditLogPage: React.FC = () => {
     { label: '创建集群', value: 'create_cluster' },
     { label: '更新集群', value: 'update_cluster' },
     { label: '删除集群', value: 'delete_cluster' },
+    { label: '测试连接', value: 'test_connection' },
+    { label: '授权集群访问', value: 'grant_cluster_access' },
+    { label: '撤销集群访问', value: 'revoke_cluster_access' },
     { label: '创建Topic', value: 'create_topic' },
+    { label: '更新Topic', value: 'update_topic' },
     { label: '删除Topic', value: 'delete_topic' },
+    { label: '同步Topic', value: 'sync_topics' },
     { label: '创建ACL', value: 'create_acl' },
     { label: '删除ACL', value: 'delete_acl' },
+    { label: '批量删除ACL', value: 'batch_delete_acl' },
+    { label: '同步ACL', value: 'sync_acls' },
     { label: '创建用户', value: 'create_user' },
-    { label: '删除用户', value: 'delete_user' }
+    { label: '更新用户', value: 'update_user' },
+    { label: '删除用户', value: 'delete_user' },
+    { label: '禁用用户', value: 'disable_user' },
+    { label: '启用用户', value: 'enable_user' },
+    { label: '修改密码', value: 'update_password' },
+    { label: '创建SCRAM用户', value: 'create_scram_user' },
+    { label: '删除SCRAM用户', value: 'delete_scram_user' },
+    { label: '同步SCRAM用户', value: 'sync_scram_users' },
+    { label: '分配Topic权限', value: 'assign_topic_permission' },
+    { label: '撤销Topic权限', value: 'revoke_topic_permission' },
+    { label: '导出日志', value: 'export_logs' },
+    { label: '清理日志', value: 'clean_logs' },
   ]
 
   const resourceOptions = [
@@ -231,7 +249,13 @@ const AuditLogPage: React.FC = () => {
     { label: '集群', value: 'cluster' },
     { label: 'Topic', value: 'topic' },
     { label: 'ACL', value: 'acl' },
-    { label: '系统', value: 'system' }
+    { label: 'SCRAM用户', value: 'scram_user' },
+    { label: 'Topic权限', value: 'topic_permission' },
+    { label: '认证', value: 'auth' },
+    { label: '监控', value: 'monitor' },
+    { label: '审计日志', value: 'audit_log' },
+    { label: '仪表盘', value: 'dashboard' },
+    { label: '系统', value: 'system' },
   ]
 
   const statusOptions = [
@@ -301,7 +325,7 @@ const AuditLogPage: React.FC = () => {
         <Table
           columns={columns}
           dataSource={logs}
-          rowKey="id"
+          rowKey="log_id"
           loading={loading}
           pagination={{
             current: page,

@@ -5,6 +5,7 @@ import (
 
 	"kafka-management-platform/internal/cache"
 	"kafka-management-platform/internal/middleware"
+	"kafka-management-platform/internal/service/audit"
 	"kafka-management-platform/internal/service/auth"
 
 	"github.com/gin-gonic/gin"
@@ -14,13 +15,15 @@ import (
 type AuthHandler struct {
 	authSvc        *auth.Service
 	blacklistCache *cache.TokenBlacklistCache
+	auditSvc       *audit.Service
 }
 
 // NewAuthHandler 创建认证处理器实例
-func NewAuthHandler(authSvc *auth.Service, blacklistCache *cache.TokenBlacklistCache) *AuthHandler {
+func NewAuthHandler(authSvc *auth.Service, blacklistCache *cache.TokenBlacklistCache, auditSvc *audit.Service) *AuthHandler {
 	return &AuthHandler{
 		authSvc:        authSvc,
 		blacklistCache: blacklistCache,
+		auditSvc:       auditSvc,
 	}
 }
 
@@ -45,10 +48,35 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	resp, err := h.authSvc.Login(c.Request.Context(), &req)
 	if err != nil {
+		// 记录登录失败审计日志
+		if h.auditSvc != nil {
+			_ = h.auditSvc.Log(c.Request.Context(), &audit.LogRequest{
+				Username:     req.Username,
+				Action:       "login",
+				ResourceType: "auth",
+				IPAddress:    c.ClientIP(),
+				UserAgent:    c.Request.UserAgent(),
+				Status:       "failed",
+				Details:      map[string]interface{}{"error": err.Error()},
+			})
+		}
 		c.JSON(401, gin.H{
 			"error": err.Error(),
 		})
 		return
+	}
+
+	// 记录登录成功审计日志
+	if h.auditSvc != nil {
+		_ = h.auditSvc.Log(c.Request.Context(), &audit.LogRequest{
+			UserID:       resp.UserInfo.UserID,
+			Username:     resp.UserInfo.Username,
+			Action:       "login",
+			ResourceType: "auth",
+			IPAddress:    c.ClientIP(),
+			UserAgent:    c.Request.UserAgent(),
+			Status:       "success",
+		})
 	}
 
 	c.JSON(200, resp)
