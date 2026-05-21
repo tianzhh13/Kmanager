@@ -150,7 +150,7 @@ func (s *Service) Log(ctx context.Context, req *LogRequest) error {
 		Status:     models.AuditStatus(req.Status),
 	}
 
-	return s.auditLogRepo.Create(nil, auditLog)
+	return s.auditLogRepo.Create(ctx, auditLog)
 }
 
 // LogGin 记录审计日志（使用 gin.Context）
@@ -184,7 +184,7 @@ func (s *Service) LogGin(ctx *gin.Context, operation string, resourceType string
 		Status:     models.AuditStatusSuccess,
 	}
 
-	return s.auditLogRepo.Create(nil, auditLog)
+	return s.auditLogRepo.Create(ctx.Request.Context(), auditLog)
 }
 
 // LogError 记录错误操作的审计日志
@@ -224,7 +224,7 @@ func (s *Service) LogError(ctx *gin.Context, operation string, resourceType stri
 		ErrorMsg:   errMsg,
 	}
 
-	return s.auditLogRepo.Create(nil, auditLog)
+	return s.auditLogRepo.Create(ctx.Request.Context(), auditLog)
 }
 
 // LogWithDetails 记录带完整详情的审计日志
@@ -247,7 +247,7 @@ func (s *Service) LogWithDetails(userID int64, username, operation, resourceType
 		Status:     models.AuditStatus(status),
 	}
 
-	return s.auditLogRepo.Create(nil, auditLog)
+	return s.auditLogRepo.Create(context.Background(), auditLog)
 }
 
 // validateAuditLogFields 验证审计日志字段完整性

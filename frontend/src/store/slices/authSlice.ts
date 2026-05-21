@@ -1,58 +1,42 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit'
-import { authService, LoginRequest, LoginResponse } from '../../services/auth'
-
-interface User {
-  user_id: number
-  username: string
-  email: string
-  role: string
-}
+import { authService, LoginRequest, User as AuthUser } from '../../services/auth'
 
 interface AuthState {
   isAuthenticated: boolean
-  user: User | null
-  accessToken: string | null
+  user: AuthUser | null
   loading: boolean
   error: string | null
+  initialized: boolean
 }
 
 const initialState: AuthState = {
-  isAuthenticated: !!localStorage.getItem('access_token'),
+  isAuthenticated: false,
   user: null,
-  accessToken: localStorage.getItem('access_token'),
   loading: false,
   error: null,
+  initialized: false,
 }
 
-export const login = createAsyncThunk<LoginResponse, LoginRequest>(
+// 本地 User 类型（与 auth.ts 中的 User 对齐，避免引入 LoginResponse）
+export const login = createAsyncThunk<AuthUser, LoginRequest>(
   'auth/login',
   async (credentials, { rejectWithValue }) => {
     try {
       const response = await authService.login(credentials)
-      localStorage.setItem('access_token', response.access_token)
-      localStorage.setItem('refresh_token', response.refresh_token)
-      return response
+      return response.user_info // 只存储用户信息，不存储 token
     } catch (error: any) {
       return rejectWithValue(error.response?.data?.error || '登录失败')
     }
   }
 )
 
-export const refreshToken = createAsyncThunk(
-  'auth/refreshToken',
+export const checkAuth = createAsyncThunk<AuthUser>(
+  'auth/checkAuth',
   async (_, { rejectWithValue }) => {
     try {
-      const refresh_token = localStorage.getItem('refresh_token')
-      if (!refresh_token) {
-        throw new Error('No refresh token')
-      }
-      const response = await authService.refreshToken(refresh_token)
-      localStorage.setItem('access_token', response.access_token)
-      return response
+      return await authService.getCurrentUser()
     } catch (error: any) {
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('refresh_token')
-      return rejectWithValue('Token 刷新失败，请重新登录')
+      return rejectWithValue('认证已过期')
     }
   }
 )
@@ -71,9 +55,6 @@ const authSlice = createSlice({
     logout: (state) => {
       state.isAuthenticated = false
       state.user = null
-      state.accessToken = null
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('refresh_token')
     },
     clearError: (state) => {
       state.error = null
@@ -85,28 +66,29 @@ const authSlice = createSlice({
         state.loading = true
         state.error = null
       })
-      .addCase(login.fulfilled, (state, action: PayloadAction<LoginResponse>) => {
+      .addCase(login.fulfilled, (state, action: PayloadAction<AuthUser>) => {
         state.loading = false
         state.isAuthenticated = true
-        state.accessToken = action.payload.access_token
-        state.user = action.payload.user_info
+        state.user = action.payload
+        state.error = null
       })
       .addCase(login.rejected, (state, action) => {
         state.loading = false
         state.error = action.payload as string
       })
-      .addCase(refreshToken.fulfilled, (state, action) => {
-        state.accessToken = action.payload.access_token
+      .addCase(checkAuth.fulfilled, (state, action: PayloadAction<AuthUser>) => {
+        state.isAuthenticated = true
+        state.user = action.payload
+        state.initialized = true
       })
-      .addCase(refreshToken.rejected, (state) => {
+      .addCase(checkAuth.rejected, (state) => {
         state.isAuthenticated = false
         state.user = null
-        state.accessToken = null
+        state.initialized = true
       })
       .addCase(logoutAsync.fulfilled, (state) => {
         state.isAuthenticated = false
         state.user = null
-        state.accessToken = null
       })
   },
 })

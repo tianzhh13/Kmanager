@@ -1,16 +1,11 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Button, Space, message } from 'antd'
 import { EditOutlined, SaveOutlined, UndoOutlined } from '@ant-design/icons'
+import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 
-// @ts-ignore
-const ReactGridLayout = require('react-grid-layout')
-// @ts-ignore
-const Responsive = ReactGridLayout.Responsive
-// @ts-ignore
-const WidthProvider = ReactGridLayout.WidthProvider
-const ResponsiveGridLayout = WidthProvider(Responsive)
+// WidthProvider 已在 v2.x 中被移除，改用 useContainerWidth hook
 
 export interface GridItem {
   i: string
@@ -42,6 +37,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
   const [isEditing, setIsEditing] = useState(false)
   const [layouts, setLayouts] = useState<any>({})
   const [currentLayout, setCurrentLayout] = useState<any[]>([])
+  const { containerRef, width } = useContainerWidth({ initialWidth: 1280 })
 
   // 从 localStorage 加载布局
   const loadLayout = useCallback(() => {
@@ -102,8 +98,8 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
   }, [items, loadLayout])
 
   // 处理布局变化
-  const onLayoutChange = useCallback((layout: any[]) => {
-    setCurrentLayout(layout)
+  const onLayoutChange = useCallback((layout: any) => {
+    setCurrentLayout(Array.from(layout))
   }, [])
 
   // 合并 items 和 layout
@@ -124,7 +120,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
   }
 
   return (
-    <div>
+    <div ref={containerRef as any}>
       {/* 编辑模式切换 */}
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
         <Space>
@@ -161,17 +157,16 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
       {/* 网格布局 */}
       <ResponsiveGridLayout
         className="layout"
+        width={width}
         layouts={{ lg: getLayoutItems() }}
         breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
         cols={cols}
         rowHeight={rowHeight}
-        onLayoutChange={onLayoutChange}
-        isDraggable={isEditing}
-        isResizable={isEditing}
+        onLayoutChange={onLayoutChange as any}
+        dragConfig={{ enabled: isEditing, bounded: false, threshold: 3 }}
+        resizeConfig={{ enabled: isEditing, handles: ['se'] as any }}
         margin={[16, 16]}
         containerPadding={[0, 0]}
-        compactType="vertical"
-        useCSSTransforms={true}
       >
         {items.map(item => (
           <div key={item.i} style={{ overflow: 'auto' }}>

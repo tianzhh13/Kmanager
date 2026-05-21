@@ -15,7 +15,23 @@ type Config struct {
 	Log             LogConfig             `mapstructure:"log"`
 	VictoriaMetrics VictoriaMetricsConfig `mapstructure:"victoriametrics"`
 	SyncWorker      SyncWorkerConfig      `mapstructure:"syncworker"`
+	Collector       CollectorConfig       `mapstructure:"collector"`
 	Session         SessionConfig         `mapstructure:"session"`
+	Cookie          CookieConfig          `mapstructure:"cookie"`
+	CORS            CORSConfig            `mapstructure:"cors"`
+}
+
+// CookieConfig Cookie 配置
+type CookieConfig struct {
+	Domain   string `mapstructure:"domain"`    // Cookie 域名，空则自动使用请求域名
+	Secure   bool   `mapstructure:"secure"`    // 是否仅 HTTPS 发送，生产环境应为 true
+	SameSite string `mapstructure:"same_site"` // Strict, Lax, None
+	Path     string `mapstructure:"path"`      // Cookie 路径，默认 /
+}
+
+// CORSConfig CORS 配置
+type CORSConfig struct {
+	AllowedOrigins []string `mapstructure:"allowed_origins"` // 允许的跨域来源列表
 }
 
 // SessionConfig 会话配置
@@ -26,6 +42,12 @@ type SessionConfig struct {
 // SyncWorkerConfig 数据同步 Worker 配置
 type SyncWorkerConfig struct {
 	Interval int `mapstructure:"interval"` // 同步间隔，单位秒，默认 30
+}
+
+// CollectorConfig 独立数据采集器配置
+type CollectorConfig struct {
+	Concurrency int `mapstructure:"concurrency"` // 并发采集集群数，默认 10
+	Interval    int `mapstructure:"interval"`    // 采集间隔，单位秒，默认 30
 }
 
 // ServerConfig 服务器配置
@@ -155,8 +177,20 @@ func setDefaults() {
 	// SyncWorker 默认配置
 	viper.SetDefault("syncworker.interval", 30)
 
+	// Collector 默认配置
+	viper.SetDefault("collector.concurrency", 10)
+	viper.SetDefault("collector.interval", 30)
+
 	// Session 默认配置
 	viper.SetDefault("session.idle_timeout", 15) // 15 分钟
+
+	// CORS 默认配置
+	viper.SetDefault("cors.allowed_origins", []string{})
+
+	// Cookie 默认配置
+	viper.SetDefault("cookie.path", "/")
+	viper.SetDefault("cookie.secure", false) // 开发环境 HTTP，生产环境应设为 true
+	viper.SetDefault("cookie.same_site", "Lax")
 }
 
 // validate 验证配置

@@ -101,6 +101,12 @@ func (h *ACLHandler) ListACLs(c *gin.Context) {
 	} else {
 		req.Limit = 20 // 默认每页 20 条
 	}
+	if req.Limit > 100 {
+		req.Limit = 100
+	}
+	if req.Limit < 1 {
+		req.Limit = 20
+	}
 
 	resp, err := h.aclSvc.ListACLs(c.Request.Context(), &req)
 	if err != nil {

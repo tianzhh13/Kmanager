@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"kafka-management-platform/internal/repository"
+	"kafka-management-platform/pkg/victoriametrics"
 
 	"github.com/gin-gonic/gin"
 )
@@ -13,6 +14,7 @@ type DashboardHandler struct {
 	clusterRepo   repository.ClusterRepository
 	topicRepo     repository.TopicRepository
 	scramUserRepo repository.ScramUserRepository
+	vmClient      *victoriametrics.Client
 }
 
 // NewDashboardHandler 创建仪表盘处理器实例
@@ -20,11 +22,13 @@ func NewDashboardHandler(
 	clusterRepo repository.ClusterRepository,
 	topicRepo repository.TopicRepository,
 	scramUserRepo repository.ScramUserRepository,
+	vmClient *victoriametrics.Client,
 ) *DashboardHandler {
 	return &DashboardHandler{
 		clusterRepo:   clusterRepo,
 		topicRepo:     topicRepo,
 		scramUserRepo: scramUserRepo,
+		vmClient:      vmClient,
 	}
 }
 
@@ -91,4 +95,39 @@ func (h *DashboardHandler) getClusterCount(ctx context.Context) (int64, error) {
 	}
 	_ = clusters // 忽略返回的数据，只需要 total
 	return total, nil
+}
+
+// MonitorStatusResponse 监控状态响应
+type MonitorStatusResponse struct {
+	Status    string `json:"status"`    // "正常", "异常", "未启用"
+	Enabled   bool   `json:"enabled"`   // VM 是否启用
+	Reachable bool   `json:"reachable"` // VM 是否可达
+}
+
+// GetMonitorStatus 获取 VictoriaMetrics 监控状态
+func (h *DashboardHandler) GetMonitorStatus(c *gin.Context) {
+	if h.vmClient == nil || !h.vmClient.IsEnabled() {
+		c.JSON(200, MonitorStatusResponse{
+			Status:    "未启用",
+			Enabled:   false,
+			Reachable: false,
+		})
+		return
+	}
+
+	ctx := c.Request.Context()
+	if err := h.vmClient.HealthCheck(ctx); err != nil {
+		c.JSON(200, MonitorStatusResponse{
+			Status:    "异常",
+			Enabled:   true,
+			Reachable: false,
+		})
+		return
+	}
+
+	c.JSON(200, MonitorStatusResponse{
+		Status:    "正常",
+		Enabled:   true,
+		Reachable: true,
+	})
 }

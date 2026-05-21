@@ -36,8 +36,30 @@ log:
   format: json  # json, console
   output_path: stdout  # stdout 或文件路径
 
+cors:
+  # 允许跨域的来源列表，仅在 server.mode: release 时生效
+  # 生产环境请填写前端实际访问的完整 Origin（必须包含协议，如 http:// 或 https://）
+  # 支持域名和 IP:Port 方式，多个来源可配置多条
+  allowed_origins:
+    - "http://192.168.1.100:8080"        # 示例：IP:Port 方式访问
+    # - "https://kmanager.yourcompany.com" # 示例：域名方式访问
+
+# 数据同步 Worker（Topic/ACL 元数据同步 + 审计日志清理）
+syncworker:
+  interval: 30  # 同步间隔，单位秒
+session:
+  idle_timeout: 15  # 单位：分钟
+
+# 独立数据采集器（指标采集，独立进程运行）
+# 启动方式: go run ./cmd/collector/main.go
+collector:
+  concurrency: 10  # 并发采集集群数（50+ 集群建议 10-15）
+  interval: 30     # 采集间隔，单位秒
+
 # 配置说明：
 # 1. JWT Secret: 用于签名 JWT Token，必须保密
 # 2. Encryption Key: 用于加密集群认证信息，必须是 32 字节（Base64 编码后 44 字符）
 # 3. 数据库密码: 请使用强密码
 # 4. 生产环境请将 server.mode 设置为 release
+# 5. 生产环境请配置 cors.allowed_origins 白名单
+# 6. 指标采集已拆分为独立进程，请单独启动 collector

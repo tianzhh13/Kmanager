@@ -239,6 +239,15 @@ func (s *Service) SaveTempKeytab(ctx context.Context, data []byte) (string, erro
 	return tempID, nil
 }
 
+// DeleteTempKeytab 删除临时 keytab 文件
+func (s *Service) DeleteTempKeytab(ctx context.Context, tempID string) error {
+	if tempID == "" {
+		return nil
+	}
+	globalTempKeytabStore.delete(tempID)
+	return nil
+}
+
 // prepareKerberosAuthConfigForCreate 准备 Kerberos 认证配置（用于测试连接）
 // 创建临时文件用于测试
 func (s *Service) prepareKerberosAuthConfigForCreate(authConfig map[string]interface{}, clusterID int64) (map[string]interface{}, error) {

@@ -3,6 +3,7 @@ package validator
 import (
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -93,6 +94,12 @@ func BootstrapServersValidator(servers string) error {
 			if c < '0' || c > '9' {
 				return ErrInvalidBootstrapURL
 			}
+		}
+
+		// 验证端口范围 1-65535
+		portNum, err := strconv.Atoi(port)
+		if err != nil || portNum < 1 || portNum > 65535 {
+			return ErrInvalidBootstrapURL
 		}
 	}
 

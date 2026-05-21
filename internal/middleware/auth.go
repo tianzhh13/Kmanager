@@ -26,23 +26,29 @@ const (
 // AuthMiddleware JWT 认证中间件
 func AuthMiddleware(jwtSvc *jwt.Service, blacklistCache *cache.TokenBlacklistCache, userRepo repository.UserRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 从 Header 获取 Token
+		var tokenString string
+
+		// 优先从 Authorization Header 获取 Token
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "authorization header required"})
+		if authHeader != "" {
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) == 2 && parts[0] == "Bearer" {
+				tokenString = parts[1]
+			}
+		}
+
+		// Header 中没有 Token，尝试从 httpOnly Cookie 读取
+		if tokenString == "" {
+			if cookie, err := c.Cookie("access_token"); err == nil && cookie != "" {
+				tokenString = cookie
+			}
+		}
+
+		if tokenString == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authorization required"})
 			c.Abort()
 			return
 		}
-
-		// 解析 Bearer Token
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header format"})
-			c.Abort()
-			return
-		}
-
-		tokenString := parts[1]
 
 		// 检查 Token 是否在黑名单中
 		if blacklistCache != nil {

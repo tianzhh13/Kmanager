@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -10,45 +11,96 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// limiterEntry 存储限流器及其最后访问时间
+type limiterEntry struct {
+	limiter    *rate.Limiter
+	lastAccess time.Time
+}
+
 // RateLimiter 限流器
 type RateLimiter struct {
-	limiters map[string]*rate.Limiter
-	mu       sync.RWMutex
-	rate     rate.Limit
-	burst    int
+	limiters    map[string]*limiterEntry
+	mu          sync.RWMutex
+	rate        rate.Limit
+	burst       int
+	cleanupDone chan struct{}
 }
 
 // NewRateLimiter 创建限流器
 // rate: 每秒请求数
 // burst: 突发流量上限
 func NewRateLimiter(rps float64, burst int) *RateLimiter {
-	return &RateLimiter{
-		limiters: make(map[string]*rate.Limiter),
-		rate:     rate.Limit(rps),
-		burst:    burst,
+	rl := &RateLimiter{
+		limiters:    make(map[string]*limiterEntry),
+		rate:        rate.Limit(rps),
+		burst:       burst,
+		cleanupDone: make(chan struct{}),
+	}
+
+	// 启动后台清理goroutine，每2分钟清理一次
+	go rl.cleanupLoop()
+
+	return rl
+}
+
+// cleanupLoop 后台清理循环
+func (r *RateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(2 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			r.cleanupStaleEntries()
+		case <-r.cleanupDone:
+			return
+		}
+	}
+}
+
+// cleanupStaleEntries 清理超过10分钟未访问的条目
+func (r *RateLimiter) cleanupStaleEntries() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	threshold := time.Now().Add(-10 * time.Minute)
+	for key, entry := range r.limiters {
+		if entry.lastAccess.Before(threshold) {
+			delete(r.limiters, key)
+		}
 	}
 }
 
 // getLimiter 获取或创建用户的限流器
 func (r *RateLimiter) getLimiter(key string) *rate.Limiter {
 	r.mu.RLock()
-	limiter, exists := r.limiters[key]
+	entry, exists := r.limiters[key]
 	r.mu.RUnlock()
 
 	if exists {
-		return limiter
+		// 更新最后访问时间
+		r.mu.Lock()
+		if entry, exists = r.limiters[key]; exists {
+			entry.lastAccess = time.Now()
+		}
+		r.mu.Unlock()
+		return entry.limiter
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	// 双重检查
-	if limiter, exists = r.limiters[key]; exists {
-		return limiter
+	if entry, exists = r.limiters[key]; exists {
+		entry.lastAccess = time.Now()
+		return entry.limiter
 	}
 
-	limiter = rate.NewLimiter(r.rate, r.burst)
-	r.limiters[key] = limiter
+	limiter := rate.NewLimiter(r.rate, r.burst)
+	r.limiters[key] = &limiterEntry{
+		limiter:    limiter,
+		lastAccess: time.Now(),
+	}
 	return limiter
 }
 
@@ -61,7 +113,7 @@ func RateLimitMiddleware() gin.HandlerFunc {
 		// 使用用户ID作为限流key，如果是匿名请求则使用IP
 		key := c.ClientIP()
 		if userID := GetUserID(c); userID > 0 {
-			key = "user:" + string(rune(userID))
+			key = "user:" + strconv.FormatInt(userID, 10)
 		}
 
 		if !limiter.getLimiter(key).Allow() {

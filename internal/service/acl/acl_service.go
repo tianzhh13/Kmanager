@@ -220,13 +220,17 @@ func (s *Service) DeleteACL(ctx context.Context, aclID int64) error {
 
 // BatchDeleteACL 批量删除 ACL 规则
 func (s *Service) BatchDeleteACL(ctx context.Context, aclIDs []int64) error {
+	var errs []error
 	for _, aclID := range aclIDs {
 		if err := s.DeleteACL(ctx, aclID); err != nil {
-			// 记录错误但继续处理其他 ACL
+			errMsg := fmt.Sprintf("failed to delete ACL id=%d: %v", aclID, err)
+			log.Printf("[BatchDeleteACL] %s", errMsg)
+			errs = append(errs, errors.New(errMsg))
 			continue
 		}
+		log.Printf("[BatchDeleteACL] Successfully deleted ACL id=%d", aclID)
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // ListACLs 列出 ACL 规则

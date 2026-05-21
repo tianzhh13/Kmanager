@@ -2,7 +2,9 @@ package handler
 
 import (
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"kafka-management-platform/internal/middleware"
 	"kafka-management-platform/internal/models"
@@ -35,6 +37,19 @@ func (h *ClusterHandler) UploadKeytab(c *gin.Context) {
 		return
 	}
 
+	// 验证文件大小 (最大 1MB)
+	if file.Size > 1048576 {
+		c.JSON(400, gin.H{"error": "keytab file size exceeds 1MB limit"})
+		return
+	}
+
+	// 验证文件扩展名 (必须是 .keytab)
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if ext != ".keytab" {
+		c.JSON(400, gin.H{"error": "keytab file must have .keytab extension"})
+		return
+	}
+
 	// 读取文件内容
 	f, err := file.Open()
 	if err != nil {
@@ -61,6 +76,20 @@ func (h *ClusterHandler) UploadKeytab(c *gin.Context) {
 		"temp_id": tempID,
 		"message": "keytab uploaded successfully",
 	})
+}
+
+// DeleteTempKeytab 删除临时 Keytab 文件
+func (h *ClusterHandler) DeleteTempKeytab(c *gin.Context) {
+	tempID := c.Query("temp_id")
+	if tempID == "" {
+		c.JSON(400, gin.H{"error": "temp_id is required"})
+		return
+	}
+	if err := h.clusterSvc.DeleteTempKeytab(c.Request.Context(), tempID); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "temp keytab deleted"})
 }
 
 // CreateCluster 创建集群
@@ -143,6 +172,15 @@ func (h *ClusterHandler) ListClusters(c *gin.Context) {
 	// 获取分页参数
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
 
 	offset := (page - 1) * pageSize
 
