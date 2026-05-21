@@ -7,8 +7,10 @@ import (
 	"log"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
+	"kafka-management-platform/internal/cache"
 	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/pkg/encryption"
 	"kafka-management-platform/pkg/kafka"
@@ -546,4 +548,121 @@ func parseInt64Param(param string) (int64, error) {
 	var result int64
 	_, err := fmt.Sscanf(param, "%d", &result)
 	return result, err
+}
+
+// ============================================================
+// Batch Query（批量查询 + 内存缓存）
+// ============================================================
+
+// batchQueryItem 单个查询请求
+type batchQueryItem struct {
+	ID    string `json:"id"`
+	Query string `json:"query"`
+	Start int64  `json:"start"`
+	End   int64  `json:"end"`
+	Step  string `json:"step"`
+}
+
+// batchQueryRequest 批量查询请求
+type batchQueryRequest struct {
+	Queries []batchQueryItem `json:"queries"`
+}
+
+// dedupedQuery 去重后的查询
+type dedupedQuery struct {
+	Key         string
+	Query       string
+	Start       time.Time
+	End         time.Time
+	Step        string
+	OriginalIDs []string
+}
+
+// metricsCache 全局 VM 查询缓存（30 秒 TTL）
+var metricsCache = cache.NewMemoryCache(30 * time.Second)
+
+// init 确保缓存初始化
+func init() {
+	if metricsCache == nil {
+		metricsCache = cache.NewMemoryCache(30 * time.Second)
+	}
+}
+
+// BatchQueryMetrics 批量查询指标（去重 + 缓存 + 并发查 VM）
+// 将前端 N 个独立请求合并为 1 个 POST，后端去重后只查 VM 一次，结果缓存 30 秒
+func (h *Handler) BatchQueryMetrics(c *gin.Context) {
+	var req batchQueryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	if len(req.Queries) == 0 {
+		c.JSON(400, gin.H{"error": "queries is empty"})
+		return
+	}
+
+	// 1. 去重：相同 query+start+end+step 只查一次
+	uniqueMap := make(map[string]int)
+	deduped := make([]dedupedQuery, 0, len(req.Queries))
+	for _, q := range req.Queries {
+		key := fmt.Sprintf("%s|%d|%d|%s", q.Query, q.Start, q.End, q.Step)
+		if idx, ok := uniqueMap[key]; ok {
+			deduped[idx].OriginalIDs = append(deduped[idx].OriginalIDs, q.ID)
+		} else {
+			uniqueMap[key] = len(deduped)
+			deduped = append(deduped, dedupedQuery{
+				Key:         key,
+				Query:       q.Query,
+				Start:       time.Unix(q.Start, 0),
+				End:         time.Unix(q.End, 0),
+				Step:        q.Step,
+				OriginalIDs: []string{q.ID},
+			})
+		}
+	}
+
+	// 2. 并发查询（缓存 + VM）
+	ctx := c.Request.Context()
+	results := make(map[string]json.RawMessage, len(req.Queries))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for i := range deduped {
+		dq := &deduped[i]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			// 检查缓存
+			if cached, err := metricsCache.Get(ctx, dq.Key); err == nil && cached != nil {
+				mu.Lock()
+				if data, ok := cached.([]byte); ok {
+					for _, id := range dq.OriginalIDs {
+						results[id] = json.RawMessage(data)
+					}
+				}
+				mu.Unlock()
+				return
+			}
+
+			// 查询 VM
+			result, err := h.svc.QueryMetricsRange(ctx, dq.Query, dq.Start, dq.End, dq.Step)
+			if err != nil {
+				result = []byte(`{"status":"error","data":{"result":[]}}`)
+			}
+
+			// 写入缓存
+			_ = metricsCache.Set(ctx, dq.Key, result, 0)
+
+			mu.Lock()
+			for _, id := range dq.OriginalIDs {
+				results[id] = json.RawMessage(result)
+			}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	c.JSON(200, gin.H{"results": results})
 }

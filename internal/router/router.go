@@ -91,7 +91,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	tokenBlacklistCache := cache.NewTokenBlacklistCache(memoryCache)
 
 	// 初始化 Handler
-	authHandler := handler.NewAuthHandler(authSvc, tokenBlacklistCache, auditSvc)
+	authHandler := handler.NewAuthHandler(authSvc, tokenBlacklistCache, auditSvc, &cfg.Cookie)
 	clusterHandler := handler.NewClusterHandler(clusterSvc, permissionSvc)
 	topicHandler := handler.NewTopicHandler(topicSvc, permissionSvc)
 	aclHandler := handler.NewACLHandler(aclSvc)
@@ -99,7 +99,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	auditLogHandler := audit.NewHandler(auditSvc)
 	monitorHandler := monitor.NewHandler(monitorSvc)
 	scramUserHandler := handler.NewScramUserHandler(scramSvc)
-	dashboardHandler := handler.NewDashboardHandler(clusterRepo, topicRepo, scramUserRepo)
+	dashboardHandler := handler.NewDashboardHandler(clusterRepo, topicRepo, scramUserRepo, vmClient)
 
 	// 初始化中间件
 	permissionMiddleware := middleware.NewPermissionMiddleware(permissionSvc)
@@ -144,6 +144,8 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 
 			// 仪表盘统计
 			authenticated.GET("/dashboard/stats", dashboardHandler.GetStats)
+			// 监控状态（VictoriaMetrics 可达性）
+			authenticated.GET("/dashboard/monitor-status", dashboardHandler.GetMonitorStatus)
 
 			// 用户路由 - 需要超级管理员权限
 			users := authenticated.Group("/users")
@@ -172,6 +174,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				clusters.POST("/test-connection", permissionMiddleware.RequireSuperAdmin(), clusterHandler.TestConnectionForCreate)
 				// Keytab 文件上传
 				clusters.POST("/upload-keytab", permissionMiddleware.RequireSuperAdmin(), clusterHandler.UploadKeytab)
+				clusters.DELETE("/upload-keytab", permissionMiddleware.RequireSuperAdmin(), clusterHandler.DeleteTempKeytab)
 				clusters.POST("/:id/grant", middleware.RequireSuperAdminOrClusterAdmin(), clusterHandler.GrantAccess)
 				clusters.POST("/:id/revoke", middleware.RequireSuperAdminOrClusterAdmin(), clusterHandler.RevokeAccess)
 				clusters.GET("/:id/users", middleware.RequireSuperAdminOrClusterAdmin(), clusterHandler.ListClusterUsers)
@@ -223,12 +226,15 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				metrics.GET("/consumer-groups/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetConsumerGroupLags)
 				// 单个消费者组详情
 				metrics.GET("/consumer-group/:id", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetConsumerGroupInfo)
-				// 历史指标（代理 VictoriaMetrics 查询）
-				metrics.GET("/history", monitorHandler.GetMetricsHistory)
+				// 历史指标（代理 VictoriaMetrics 查询，需集群权限）
+				metrics.GET("/history", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.GetMetricsHistory)
+				// 批量查询指标（去重 + 缓存，减少 VM 请求）
+				metrics.POST("/batch-query", clusterPermissionMiddleware.RequireClusterAccess(), monitorHandler.BatchQueryMetrics)
 			}
 
-			// 审计日志路由
+			// 审计日志路由（仅管理员可见）
 			auditLogs := authenticated.Group("/audit-logs")
+			auditLogs.Use(middleware.RequireSuperAdminOrClusterAdmin())
 			{
 				auditLogs.GET("", auditLogHandler.ListAuditLogs)
 				auditLogs.GET("/export", auditLogHandler.ExportLogs)
@@ -239,6 +245,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			// Topic 权限管理路由
 			topicPermHandler := handler.NewTopicPermissionHandler(auth.NewTopicPermissionService(topicPermRepo, clusterUserRepo, userRepo, clusterRepo))
 			topicPerms := authenticated.Group("/topic-permissions")
+			topicPerms.Use(middleware.RequireSuperAdminOrClusterAdmin())
 			{
 				topicPerms.POST("", middleware.RequireSuperAdminOrClusterAdmin(), topicPermHandler.AssignTopicPermission)
 				topicPerms.POST("/batch", middleware.RequireSuperAdminOrClusterAdmin(), topicPermHandler.BatchAssignTopicPermission)

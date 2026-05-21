@@ -25,8 +25,9 @@ export const authService = {
     return response.data
   },
 
-  refreshToken: async (refreshToken: string): Promise<{ access_token: string }> => {
-    const response = await api.post('/auth/refresh', { refresh_token: refreshToken })
+  refreshToken: async (): Promise<{ access_token: string }> => {
+    // refresh_token 通过 httpOnly Cookie 自动发送
+    const response = await api.post('/auth/refresh')
     return response.data
   },
 
@@ -37,14 +38,11 @@ export const authService = {
 
   logout: async () => {
     try {
-      // 调用后端退出登录 API，将 Token 加入黑名单
+      // 调用后端退出登录 API，清除 Cookie 并将 Token 加入黑名单
       await api.post('/auth/logout')
     } catch (error) {
-      // 即使后端调用失败，也要清除本地存储
       console.error('Logout API failed:', error)
-    } finally {
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('refresh_token')
     }
+    // Token 存储在 httpOnly Cookie 中，后端已清除，无需前端操作
   },
 }

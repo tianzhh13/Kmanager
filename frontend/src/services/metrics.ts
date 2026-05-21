@@ -1,4 +1,5 @@
 import axios from './api'
+import dayjs from 'dayjs'
 
 // ============================================================
 // Broker 指标（来自 JMX Exporter）
@@ -69,6 +70,98 @@ export interface MetricsHistoryItem {
 }
 
 // ============================================================
+// VictoriaMetrics 查询类型
+// ============================================================
+
+export interface VMQueryResponse {
+  status: string
+  data: {
+    result: Array<{
+      metric: Record<string, string>
+      values: Array<[number, string]>
+    }>
+  }
+}
+
+// ============================================================
+// 批量查询类型
+// ============================================================
+
+export interface BatchQueryItem {
+  id: string
+  query: string
+  start: number   // unix timestamp
+  end: number     // unix timestamp
+  step: string
+}
+
+export interface BatchQueryResponse {
+  results: Record<string, VMQueryResponse>
+}
+
+// ============================================================
+// 批量查询结果提取工具函数
+// ============================================================
+
+/** 提取即时值（取最后一个数据点） */
+export function extractInstantValue(response: VMQueryResponse | undefined): number {
+  if (!response || response.status !== 'success' || response.data.result.length === 0) return 0
+  const values = response.data.result[0].values
+  if (values.length === 0) return 0
+  return parseFloat(values[values.length - 1][1]) || 0
+}
+
+/** 提取范围值（时间序列） */
+export function extractRangeValues(response: VMQueryResponse | undefined): Array<[number, string]> {
+  if (!response || response.status !== 'success' || response.data.result.length === 0) return []
+  return response.data.result[0].values
+}
+
+/** 提取多 series 值（按 broker_id 分组） */
+export function extractMultiSeries(response: VMQueryResponse | undefined): {
+  single: { times: string[]; values: number[] } | null
+  brokers: Record<string, { times: string[]; values: number[] }>
+} {
+  if (!response || response.status !== 'success') return { single: null, brokers: {} }
+  const results = response.data.result
+  if (results.length === 0) return { single: null, brokers: {} }
+
+  const brokers: Record<string, { times: string[]; values: number[] }> = {}
+  results.forEach(r => {
+    const brokerId = r.metric.broker_id || 'unknown'
+    brokers[brokerId] = {
+      times: r.values.map(v => dayjs.unix(v[0]).format('HH:mm')),
+      values: r.values.map(v => parseFloat(v[1]) || 0),
+    }
+  })
+
+  // 保留 single 字段向后兼容（getBrokerLatencyChartOption / 副本 Lag 使用）
+  if (results.length === 1) {
+    return {
+      single: brokers[Object.keys(brokers)[0]] || null,
+      brokers,
+    }
+  }
+  return { single: null, brokers }
+}
+
+/** 提取错误速率数据（按 request/error 分组） */
+export function extractErrorRate(response: VMQueryResponse | undefined): Record<string, { times: string[]; values: number[] }> {
+  if (!response || response.status !== 'success') return {}
+  const results = response.data.result
+  if (results.length === 0) return {}
+  const groups: Record<string, { times: string[]; values: number[] }> = {}
+  results.forEach(r => {
+    const key = `${r.metric.request || 'unknown'}/${r.metric.error || 'unknown'}`
+    groups[key] = {
+      times: r.values.map(v => dayjs.unix(v[0]).format('HH:mm')),
+      values: r.values.map(v => parseFloat(v[1]) || 0),
+    }
+  })
+  return groups
+}
+
+// ============================================================
 // API
 // ============================================================
 
@@ -92,4 +185,8 @@ export const metricsAPI = {
   // 获取历史指标（用于折线图）
   getMetricsHistory: (clusterId: number, duration: string = '1h') =>
     axios.get<MetricsHistoryItem[]>(`/metrics/history/${clusterId}`, { params: { duration } }),
+
+  // 批量查询指标（去重 + 缓存，替代多次 /metrics/history）
+  batchQuery: (queries: BatchQueryItem[]) =>
+    axios.post<BatchQueryResponse>('/metrics/batch-query', { queries }),
 }

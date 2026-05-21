@@ -9,24 +9,41 @@ interface DashboardStats {
   scram_user_count: number
 }
 
+interface MonitorStatus {
+  status: string    // "正常", "异常", "未启用"
+  enabled: boolean
+  reachable: boolean
+}
+
+const monitorStatusColor: Record<string, string> = {
+  '正常': '#52c41a',
+  '异常': '#ff4d4f',
+  '未启用': '#d9d9d9',
+}
+
 const DashboardPage: React.FC = () => {
   const [stats, setStats] = useState<DashboardStats>({
     cluster_count: 0,
     topic_count: 0,
     scram_user_count: 0,
   })
+  const [monitorStatus, setMonitorStatus] = useState<MonitorStatus | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetchStats()
+    fetchData()
   }, [])
 
-  const fetchStats = async () => {
+  const fetchData = async () => {
     try {
-      const res = await api.get<DashboardStats>('/dashboard/stats')
-      setStats(res.data)
+      const [statsRes, statusRes] = await Promise.all([
+        api.get<DashboardStats>('/dashboard/stats'),
+        api.get<MonitorStatus>('/dashboard/monitor-status'),
+      ])
+      setStats(statsRes.data)
+      setMonitorStatus(statusRes.data)
     } catch (error) {
-      console.error('Failed to fetch stats:', error)
+      console.error('Failed to fetch dashboard data:', error)
     } finally {
       setLoading(false)
     }
@@ -70,9 +87,9 @@ const DashboardPage: React.FC = () => {
           <Card loading={loading}>
             <Statistic
               title="监控状态"
-              value="正常"
+              value={monitorStatus?.status ?? '检测中'}
               prefix={<DashboardOutlined />}
-              valueStyle={{ color: '#faad14' }}
+              valueStyle={{ color: monitorStatus ? monitorStatusColor[monitorStatus.status] || '#faad14' : '#d9d9d9' }}
             />
           </Card>
         </Col>

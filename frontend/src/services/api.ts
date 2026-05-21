@@ -8,15 +8,21 @@ const baseURL = import.meta.env.DEV ? '/api/v1' : '/api/v1'
 const api = axios.create({
   baseURL,
   timeout: 30000,
+  withCredentials: true, // 跨域时携带 Cookie
 })
 
-// 请求拦截器 - 添加 Token
+// Token刷新Promise单例，用于防止并发刷新请求
+// 当多个请求同时收到401时，共享同一个刷新Promise，避免重复刷新
+let refreshPromise: Promise<void> | null = null
+
+// 请求拦截器 - 添加 CSRF 保护头
+// Token 通过 httpOnly Cookie 自动发送，无需手动添加 Authorization
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('access_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
+    // CSRF 保护：X-Requested-With 头
+    // 配合 SameSite=Strict/Lax Cookie 使用，可防止 CSRF 攻击
+    // 后端应验证此头存在且值为 XMLHttpRequest
+    config.headers['X-Requested-With'] = 'XMLHttpRequest'
     return config
   },
   (error) => {
@@ -33,26 +39,45 @@ api.interceptors.response.use(
     const originalRequest = error.config
 
     // 如果是 401 且没有重试过，尝试刷新 Token
+    // 但 /auth/me 和 /auth/refresh 本身返回 401 不应触发刷新（避免死循环）
     if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true
+      const url = originalRequest.url || ''
+      const isAuthEndpoint = url.includes('/auth/me') || url.includes('/auth/refresh')
 
-      try {
-        const refreshToken = localStorage.getItem('refresh_token')
-        if (refreshToken) {
-          const response = await axios.post('/api/v1/auth/refresh', {
-            refresh_token: refreshToken,
-          })
-          const { access_token } = response.data
-          localStorage.setItem('access_token', access_token)
+      if (!isAuthEndpoint) {
+        originalRequest._retry = true
 
-          originalRequest.headers.Authorization = `Bearer ${access_token}`
-          return api(originalRequest)
+        // 如果已有刷新请求在进行中，等待它完成
+        if (refreshPromise) {
+          try {
+            await refreshPromise
+            return api(originalRequest)
+          } catch {
+            return Promise.reject(error)
+          }
         }
-      } catch (refreshError) {
-        localStorage.removeItem('access_token')
-        localStorage.removeItem('refresh_token')
-        window.location.href = '/login'
-        return Promise.reject(refreshError)
+
+        // 刷新 Token（refresh_token 在 Cookie 中，后端自动读取）
+        refreshPromise = axios.post('/api/v1/auth/refresh', {}, {
+          withCredentials: true,
+        }).then(() => {
+          // 刷新成功
+        }).finally(() => {
+          // 清除Promise引用，允许后续刷新
+          refreshPromise = null
+        })
+
+        try {
+          await refreshPromise
+          // 刷新成功，新 access_token 已通过 Cookie 设置，重试原请求
+          return api(originalRequest)
+        } catch {
+          // 刷新失败，使用 history 替换当前 URL（不触发全页刷新）
+          if (window.location.pathname !== '/login') {
+            window.history.replaceState(null, '', '/login')
+          }
+          return Promise.reject(error)
+        }
       }
     }
 

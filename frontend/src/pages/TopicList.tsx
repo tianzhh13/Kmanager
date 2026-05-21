@@ -33,14 +33,10 @@ const TopicList: React.FC = () => {
       setClustersLoading(true)
       try {
         const res = await clusterAPI.list(1, 100)
-        console.log('=== DEBUG: Cluster API response ===', res)
         const clusterList = res.data || []
-        console.log('=== DEBUG: Cluster list ===', clusterList)
-        console.log('=== DEBUG: First cluster ===', clusterList[0])
         setClusters(clusterList)
         // 默认选择第一个集群
         if (clusterList.length > 0) {
-          console.log('=== DEBUG: Setting selectedClusterId to ===', clusterList[0].cluster_id)
           setSelectedClusterId(clusterList[0].cluster_id)
         }
       } catch (err) {
@@ -71,17 +67,11 @@ const TopicList: React.FC = () => {
   // Modal 打开后设置表单值
   useEffect(() => {
     if (isModalVisible && selectedClusterId) {
-      console.log('=== DEBUG: Setting form values, selectedClusterId ===', selectedClusterId)
       form.setFieldsValue({
         cluster_id: selectedClusterId,
         partitions: 1,
         replication_factor: 1,
       })
-      // 验证设置是否成功
-      setTimeout(() => {
-        const allValues = form.getFieldsValue()
-        console.log('=== DEBUG: Form values after setFieldsValue ===', allValues)
-      }, 100)
     }
   }, [isModalVisible, selectedClusterId, form])
 
@@ -89,13 +79,8 @@ const TopicList: React.FC = () => {
   const handleCreate = async () => {
     try {
       const values = await form.validateFields()
-      console.log('=== DEBUG: Form values ===', values)
-      console.log('=== DEBUG: selectedClusterId ===', selectedClusterId)
-      console.log('=== DEBUG: typeof cluster_id ===', typeof values.cluster_id)
       
       const clusterId = Number(values.cluster_id)
-      console.log('=== DEBUG: clusterId after Number() ===', clusterId)
-      console.log('=== DEBUG: isNaN(clusterId) ===', isNaN(clusterId))
       
       if (isNaN(clusterId) || clusterId <= 0) {
         message.error('请选择有效的集群')
@@ -108,7 +93,6 @@ const TopicList: React.FC = () => {
         partitions: Number(values.partitions),
         replication_factor: Number(values.replication_factor),
       }
-      console.log('=== DEBUG: Final payload ===', JSON.stringify(payload, null, 2))
       
       await dispatch(createTopic(payload)).unwrap()
       message.success('创建成功')
@@ -119,7 +103,6 @@ const TopicList: React.FC = () => {
         dispatch(fetchTopics({ page, pageSize, clusterId: selectedClusterId }))
       }
     } catch (error: any) {
-      console.error('=== DEBUG: Create topic error ===', error)
       const errorMsg = typeof error === 'string' 
         ? error 
         : (error?.message || error?.error || '创建失败')
@@ -152,21 +135,17 @@ const TopicList: React.FC = () => {
 
   // 同步 Topic
   const handleSync = async () => {
-    console.log('=== DEBUG: handleSync called, selectedClusterId ===', selectedClusterId)
     if (!selectedClusterId) {
       message.warning('请先选择集群')
       return
     }
     setSyncing(true)
     try {
-      console.log('=== DEBUG: Calling topicService.sync ===')
       await topicService.sync(selectedClusterId)
-      console.log('=== DEBUG: sync completed ===')
       message.success('同步成功')
       // 刷新列表
       dispatch(fetchTopics({ page, pageSize, clusterId: selectedClusterId }))
     } catch (error: any) {
-      console.error('=== DEBUG: sync error ===', error)
       const errorMsg = error?.response?.data?.error || error?.message || '同步失败'
       message.error(errorMsg)
     } finally {

@@ -99,15 +99,25 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   }, [dispatch, navigate])
 
   useEffect(() => {
-    // 监听用户活动事件
-    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click']
+    // 优化：仅监听低频事件，避免 mousemove/scroll 的性能开销
+    // visibilitychange 负责检测 Tab 切换，click/keydown 负责检测用户活跃
     const handleActivity = () => resetIdleTimer()
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        // Tab 恢复可见时重置计时器（避免切 Tab 期间超时被踢）
+        resetIdleTimer()
+      }
+    }
 
-    events.forEach(event => window.addEventListener(event, handleActivity))
-    resetIdleTimer() // 初始化定时器
+    window.addEventListener('click', handleActivity)
+    window.addEventListener('keydown', handleActivity)
+    document.addEventListener('visibilitychange', handleVisibility)
+    resetIdleTimer()
 
     return () => {
-      events.forEach(event => window.removeEventListener(event, handleActivity))
+      window.removeEventListener('click', handleActivity)
+      window.removeEventListener('keydown', handleActivity)
+      document.removeEventListener('visibilitychange', handleVisibility)
       if (idleTimerRef.current) {
         clearTimeout(idleTimerRef.current)
       }

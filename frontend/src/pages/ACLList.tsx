@@ -109,7 +109,6 @@ const ACLList: React.FC = () => {
     const loadClusters = async () => {
       try {
         const res = await clusterAPI.list(1, 100)
-        console.log('=== DEBUG: Cluster list ===', res)
         const clusterList = res.data || []
         // 只过滤 SCRAM-SHA-256/512 集群（支持动态用户和 ACL 管理）
         const scramClusters = clusterList.filter((c: Cluster) => 
@@ -137,12 +136,9 @@ const ACLList: React.FC = () => {
     if (!selectedClusterId) return
     setLoading(true)
     try {
-      console.log('=== DEBUG: Fetching users for cluster ===', selectedClusterId)
       const res = await scramUserService.list(selectedClusterId)
-      console.log('=== DEBUG: User list response ===', res)
       setUsers(res?.data || [])
     } catch (error: any) {
-      console.error('=== DEBUG: Fetch users error ===', error)
       message.error('获取用户列表失败')
     } finally {
       setLoading(false)
@@ -165,7 +161,6 @@ const ACLList: React.FC = () => {
   // 创建用户
   const handleCreateUser = async (values: any) => {
     try {
-      console.log('=== DEBUG: Create user form values ===', values)
       await scramUserService.create({
         cluster_id: selectedClusterId!,
         username: values.username,
@@ -177,7 +172,6 @@ const ACLList: React.FC = () => {
       createUserForm.resetFields()
       fetchUsers()
     } catch (error: any) {
-      console.error('=== DEBUG: Create user error ===', error)
       const errorMsg = error?.response?.data?.error || error?.message || '创建用户失败'
       message.error(errorMsg)
     }
@@ -198,7 +192,6 @@ const ACLList: React.FC = () => {
           message.success('删除成功')
           fetchUsers()
         } catch (error: any) {
-          console.error('=== DEBUG: Delete user error ===', error)
           const errorMsg = error?.response?.data?.error || error?.message || '删除失败'
           message.error(errorMsg)
         }
@@ -218,7 +211,6 @@ const ACLList: React.FC = () => {
       message.success('同步成功')
       fetchUsers()
     } catch (error: any) {
-      console.error('=== DEBUG: Sync users error ===', error)
       const errorMsg = error?.response?.data?.error || error?.message || '同步失败'
       message.error(errorMsg)
     } finally {
@@ -261,7 +253,6 @@ const ACLList: React.FC = () => {
       const acls = await getUserACLsFromKafka(selectedClusterId!, principal)
       setUserAcls(acls)
     } catch (error: any) {
-      console.error('=== DEBUG: View ACLs error ===', error)
       message.error('获取权限列表失败')
       setUserAcls([])
     } finally {
@@ -291,7 +282,6 @@ const ACLList: React.FC = () => {
           const acls = await getUserACLsFromKafka(selectedClusterId!, principal)
           setUserAcls(acls)
         } catch (error: any) {
-          console.error('=== DEBUG: Delete ACL error ===', error)
           const errorMsg = error?.response?.data?.error || error?.message || '删除失败'
           message.error(errorMsg)
         }
@@ -317,7 +307,6 @@ const ACLList: React.FC = () => {
           operation: op,
           permission_type: values.permission,
         }
-        console.log('=== DEBUG: Create ACL payload ===', payload)
         await createACL(payload)
       }
       
@@ -325,7 +314,6 @@ const ACLList: React.FC = () => {
       setAclModalVisible(false)
       aclForm.resetFields()
     } catch (error: any) {
-      console.error('=== DEBUG: Create ACL error ===', error)
       const errorMsg = error?.response?.data?.error || error?.message || '权限设置失败'
       message.error(errorMsg)
     }

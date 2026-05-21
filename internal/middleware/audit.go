@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log"
 	"time"
@@ -62,9 +63,10 @@ func AuditMiddleware(auditSvc *audit.Service) gin.HandlerFunc {
 				"user_agent": c.Request.UserAgent(),
 			}
 
-			// 添加请求体（如果存在）
+			// 添加请求体（如果存在），并对敏感路由进行脱敏处理
 			if len(requestBody) > 0 {
-				details["request_body"] = string(requestBody)
+				sanitizedBody := sanitizeRequestBody(c.Request.URL.Path, requestBody)
+				details["request_body"] = string(sanitizedBody)
 			}
 
 			status := "success"
@@ -128,4 +130,73 @@ func containsAt(s, substr string, start int) bool {
 		}
 	}
 	return false
+}
+
+// isSensitiveRoute checks if the route may contain passwords
+func isSensitiveRoute(method, path string) bool {
+	switch {
+	// POST /api/v1/auth/login
+	case method == "POST" && contains(path, "/api/v1/auth/login"):
+		return true
+	// POST /api/v1/auth/change-password
+	case method == "POST" && contains(path, "/api/v1/auth/change-password"):
+		return true
+	// POST /api/v1/clusters (may contain SCRAM password)
+	case method == "POST" && contains(path, "/api/v1/clusters"):
+		return true
+	// PUT /api/v1/clusters/:id
+	case method == "PUT" && contains(path, "/api/v1/clusters/"):
+		return true
+	// POST /api/v1/scram-users
+	case method == "POST" && contains(path, "/api/v1/scram-users"):
+		return true
+	// PUT /api/v1/scram-users/:id
+	case method == "PUT" && contains(path, "/api/v1/scram-users/"):
+		return true
+	default:
+		return false
+	}
+}
+
+// sanitizeRequestBody replaces sensitive fields with "******" for logging
+func sanitizeRequestBody(path string, body []byte) []byte {
+	if len(body) == 0 {
+		return body
+	}
+
+	// Check if path matches sensitive patterns
+	isSensitive := contains(path, "/api/v1/auth/login") ||
+		contains(path, "/api/v1/auth/change-password") ||
+		contains(path, "/api/v1/clusters") ||
+		contains(path, "/api/v1/scram-users")
+
+	if !isSensitive {
+		return body
+	}
+
+	// Try to parse as JSON
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		// Not valid JSON, return as-is
+		return body
+	}
+
+	// Fields to sanitize
+	sensitiveFields := []string{"password", "scram_password", "new_password", "old_password"}
+
+	// Replace sensitive fields
+	for _, field := range sensitiveFields {
+		if _, ok := data[field]; ok {
+			data[field] = "******"
+		}
+	}
+
+	// Re-serialize
+	sanitized, err := json.Marshal(data)
+	if err != nil {
+		// If marshaling fails, return original
+		return body
+	}
+
+	return sanitized
 }

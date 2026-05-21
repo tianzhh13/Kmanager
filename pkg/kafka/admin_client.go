@@ -316,11 +316,9 @@ func (c *AdminClient) GetTopicPartitionOffsets(topicPartitions map[string][]int3
 			// sarama.OffsetNewest = -1 表示获取最新的 offset
 			offset, err := c.client.GetOffset(topic, partition, sarama.OffsetNewest)
 			if err != nil {
-				fmt.Printf("[WARN] Failed to get offset for topic=%s partition=%d: %v\n", topic, partition, err)
 				continue
 			}
 			result[topic][partition] = offset
-			fmt.Printf("[DEBUG] Got offset: topic=%s, partition=%d, offset=%d\n", topic, partition, offset)
 		}
 	}
 

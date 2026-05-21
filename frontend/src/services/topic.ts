@@ -37,7 +37,6 @@ export const topicService = {
   },
 
   create: async (data: CreateTopicRequest): Promise<Topic> => {
-    console.log('=== DEBUG: topicService.create called with ===', JSON.stringify(data, null, 2))
     const response = await api.post('/topics', data)
     return response.data
   },
@@ -53,9 +52,7 @@ export const topicService = {
   },
 
   sync: async (clusterId: number): Promise<void> => {
-    console.log('=== DEBUG: topicService.sync called, clusterId ===', clusterId)
     const response = await api.post(`/topics/sync/${clusterId}`)
-    console.log('=== DEBUG: sync response ===', response)
     return response.data
   },
 }

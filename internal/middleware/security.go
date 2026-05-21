@@ -1,9 +1,9 @@
 package middleware
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
-	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,7 +21,7 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 		c.Header("Cache-Control", "no-store, no-cache, must-revalidate, private")
 		c.Header("Pragma", "no-cache")
 		// 内容安全策略
-		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'")
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'")
 
 		c.Next()
 	}
@@ -58,7 +58,9 @@ func RequestIDMiddleware() gin.HandlerFunc {
 
 // generateRequestID 生成请求 ID
 func generateRequestID() string {
-	return strconv.FormatInt(time.Now().UnixNano(), 10)
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // HSTSMiddleware HSTS 中间件（生产环境使用）

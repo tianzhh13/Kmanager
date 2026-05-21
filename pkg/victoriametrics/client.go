@@ -118,7 +118,7 @@ func (c *Client) Query(ctx context.Context, query string) ([]byte, error) {
 		return nil, fmt.Errorf("query metrics failed: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024)) // 限制 50MB
 }
 
 // QueryRange 范围查询
@@ -151,7 +151,7 @@ func (c *Client) QueryRange(ctx context.Context, query string, start, end time.T
 		return nil, fmt.Errorf("query range failed: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024)) // 限制 50MB
 }
 
 // HealthCheck 检查连接

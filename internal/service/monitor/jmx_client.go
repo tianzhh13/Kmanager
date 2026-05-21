@@ -12,6 +12,9 @@ import (
 	"time"
 )
 
+// promMetricPattern 预编译的 Prometheus 格式匹配正则
+var promMetricPattern = regexp.MustCompile(`^([a-zA-Z_:][a-zA-Z0-9_:]*)((?:\{[^}]*\})?)?\s+([0-9eE.+-]+|NaN|\+Inf|-Inf)$`)
+
 // JMXMetric JMX 指标
 type JMXMetric struct {
 	Name   string            `json:"name"`
@@ -100,7 +103,7 @@ func (c *JMXClient) FetchMetrics(ctx context.Context) ([]JMXMetric, error) {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024)) // 限制 10MB
 	if err != nil {
 		return nil, fmt.Errorf("read response body failed: %w", err)
 	}
@@ -253,7 +256,8 @@ func parsePrometheusMetrics(data string) []JMXMetric {
 	lines := strings.Split(data, "\n")
 
 	// 匹配 Prometheus 格式: metric_name{label1="value1",label2="value2"} value
-	metricPattern := regexp.MustCompile(`^([a-zA-Z_:][a-zA-Z0-9_:]*)((?:\{[^}]*\})?)?\s+([0-9eE.+-]+|NaN|\+Inf|-Inf)$`)
+	// 使用预编译的包级正则
+	_ = promMetricPattern
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -261,7 +265,7 @@ func parsePrometheusMetrics(data string) []JMXMetric {
 			continue
 		}
 
-		matches := metricPattern.FindStringSubmatch(line)
+		matches := promMetricPattern.FindStringSubmatch(line)
 		if len(matches) != 4 {
 			continue
 		}

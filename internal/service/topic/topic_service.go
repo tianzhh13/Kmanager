@@ -25,6 +25,8 @@ var (
 	ErrInvalidPartitions = errors.New("invalid partitions")
 	// ErrInvalidReplicationFactor 无效的副本数
 	ErrInvalidReplicationFactor = errors.New("invalid replication factor")
+	// ErrFeatureNotImplemented 功能未实现
+	ErrFeatureNotImplemented = errors.New("feature not implemented")
 )
 
 // Service Topic 管理服务
@@ -223,8 +225,8 @@ func (s *Service) UpdateTopicConfig(ctx context.Context, req *UpdateTopicConfigR
 
 	// TODO: 实现 Topic 配置更新逻辑
 	// Sarama 的 AlterConfig API 需要额外实现
-
-	return nil
+	// 当前返回明确错误，避免前端误以为操作成功
+	return ErrFeatureNotImplemented
 }
 
 // GetTopic 获取 Topic 详情

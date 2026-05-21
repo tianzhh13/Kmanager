@@ -79,6 +79,10 @@ export const clusterAPI = {
     return response.data.temp_id
   },
 
+  deleteTempKeytab: async (tempId: string): Promise<void> => {
+    await api.delete('/clusters/upload-keytab', { params: { temp_id: tempId } })
+  },
+
   grantAccess: async (id: number, userId: number): Promise<void> => {
     await api.post(`/clusters/${id}/grant`, { user_id: userId })
   },

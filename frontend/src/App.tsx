@@ -1,14 +1,27 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { useAppSelector } from './store/hooks'
+import { lazy, Suspense, useEffect } from 'react'
+import { Spin } from 'antd'
+import { useAppSelector, useAppDispatch } from './store/hooks'
+import { checkAuth } from './store/slices/authSlice'
 import Layout from './components/Layout'
-import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
-import ClusterList from './pages/ClusterList'
-import TopicList from './pages/TopicList'
-import ACLList from './pages/ACLList'
-import Monitor from './pages/Monitor'
-import AuditLog from './pages/AuditLog'
-import UserManagement from './pages/UserManagement'
+import ErrorBoundary from './components/ErrorBoundary'
+
+// 懒加载页面组件
+const Login = lazy(() => import('./pages/Login'))
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const ClusterList = lazy(() => import('./pages/ClusterList'))
+const TopicList = lazy(() => import('./pages/TopicList'))
+const ACLList = lazy(() => import('./pages/ACLList'))
+const Monitor = lazy(() => import('./pages/Monitor'))
+const AuditLog = lazy(() => import('./pages/AuditLog'))
+const UserManagement = lazy(() => import('./pages/UserManagement'))
+
+// 懒加载 fallback
+const LazyFallback = () => (
+  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', minHeight: 200 }}>
+    <Spin size="large" />
+  </div>
+)
 
 // 路由权限守卫
 const RequireRole: React.FC<{ allowedRoles: string[]; children: React.ReactNode }> = ({ allowedRoles, children }) => {
@@ -20,53 +33,62 @@ const RequireRole: React.FC<{ allowedRoles: string[]; children: React.ReactNode 
 }
 
 function App() {
-  const { isAuthenticated } = useAppSelector((state) => state.auth)
+  const { isAuthenticated, initialized } = useAppSelector((state) => state.auth)
+  const dispatch = useAppDispatch()
+
+  useEffect(() => {
+    if (!initialized) {
+      dispatch(checkAuth())
+    }
+  }, [dispatch, initialized])
 
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route
-        path="/*"
-        element={
-          isAuthenticated ? (
-            <Layout>
-              <Routes>
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/topics" element={<TopicList />} />
-                <Route path="/monitor" element={<Monitor />} />
-                {/* 集群管理：超级管理员 + 集群管理员 */}
-                <Route path="/clusters" element={
-                  <RequireRole allowedRoles={['super_admin', 'cluster_admin']}>
-                    <ClusterList />
-                  </RequireRole>
-                } />
-                {/* ACL 管理：仅超级管理员 */}
-                <Route path="/acls" element={
-                  <RequireRole allowedRoles={['super_admin']}>
-                    <ACLList />
-                  </RequireRole>
-                } />
-                {/* 审计日志：超级管理员 + 集群管理员 */}
-                <Route path="/audit-logs" element={
-                  <RequireRole allowedRoles={['super_admin', 'cluster_admin']}>
-                    <AuditLog />
-                  </RequireRole>
-                } />
-                {/* 用户管理：仅超级管理员 */}
-                <Route path="/users" element={
-                  <RequireRole allowedRoles={['super_admin']}>
-                    <UserManagement />
-                  </RequireRole>
-                } />
-              </Routes>
-            </Layout>
-          ) : (
-            <Navigate to="/login" replace />
-          )
-        }
-      />
-    </Routes>
+    <ErrorBoundary>
+      <Suspense fallback={<LazyFallback />}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route
+            path="/*"
+            element={
+              !initialized ? (
+                <LazyFallback />
+              ) : isAuthenticated ? (
+                <Layout>
+                  <Routes>
+                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                    <Route path="/dashboard" element={<Dashboard />} />
+                    <Route path="/topics" element={<TopicList />} />
+                    <Route path="/monitor" element={<Monitor />} />
+                    <Route path="/clusters" element={
+                      <RequireRole allowedRoles={['super_admin', 'cluster_admin']}>
+                        <ClusterList />
+                      </RequireRole>
+                    } />
+                    <Route path="/acls" element={
+                      <RequireRole allowedRoles={['super_admin']}>
+                        <ACLList />
+                      </RequireRole>
+                    } />
+                    <Route path="/audit-logs" element={
+                      <RequireRole allowedRoles={['super_admin', 'cluster_admin']}>
+                        <AuditLog />
+                      </RequireRole>
+                    } />
+                    <Route path="/users" element={
+                      <RequireRole allowedRoles={['super_admin']}>
+                        <UserManagement />
+                      </RequireRole>
+                    } />
+                  </Routes>
+                </Layout>
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
   )
 }
 

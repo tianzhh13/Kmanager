@@ -411,7 +411,10 @@ const ClusterList: React.FC = () => {
         title="创建集群"
         open={isModalVisible}
         onOk={handleCreate}
-        onCancel={() => { 
+        onCancel={() => {
+          if (keytabTempId) {
+            clusterAPI.deleteTempKeytab(keytabTempId).catch(() => {})
+          }
           setIsModalVisible(false)
           form.resetFields()
           setAuthType('none')

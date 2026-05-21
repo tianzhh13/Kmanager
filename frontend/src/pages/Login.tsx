@@ -39,7 +39,6 @@ const Login: React.FC = () => {
           form={form}
           onFinish={handleSubmit}
           layout="vertical"
-          initialValues={{ username: 'admin', password: 'admin123' }}
         >
           <Form.Item
             name="username"
