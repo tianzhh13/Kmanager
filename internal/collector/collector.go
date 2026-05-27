@@ -3,11 +3,11 @@ package collector
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
 	"kafka-management-platform/internal/config"
+	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/internal/service/monitor"
@@ -40,7 +40,7 @@ func NewCollector(cfg *config.Config, clusterRepo repository.ClusterRepository) 
 		var err error
 		encryptSvc, err = encryption.NewService(cfg.Encryption.Key)
 		if err != nil {
-			log.Printf("Warning: failed to create encryption service: %v, auth config will not be decrypted", err)
+			logger.Warn("Failed to create encryption service, auth config will not be decrypted", "error", err)
 			encryptSvc = nil
 		}
 	}
@@ -65,7 +65,7 @@ func NewCollector(cfg *config.Config, clusterRepo repository.ClusterRepository) 
 	}
 	syncInterval := time.Duration(interval) * time.Second
 
-	log.Printf("Collector config: concurrency=%d, interval=%v", concurrency, syncInterval)
+	logger.Info("Collector config", "concurrency", concurrency, "interval", syncInterval)
 
 	return &Collector{
 		cfg:             cfg,
@@ -83,16 +83,16 @@ func NewCollector(cfg *config.Config, clusterRepo repository.ClusterRepository) 
 
 // Start 启动 Collector
 func (c *Collector) Start() error {
-	log.Println("Starting collector...")
+	logger.Info("Starting collector...")
 	c.wg.Add(1)
 	go c.runLoop()
-	log.Println("Collector started")
+	logger.Info("Collector started")
 	return nil
 }
 
 // Stop 停止 Collector
 func (c *Collector) Stop() error {
-	log.Println("Stopping collector...")
+	logger.Info("Stopping collector...")
 
 	// 关闭所有 Admin Client
 	c.adminPool.Range(func(key, value interface{}) bool {
@@ -105,7 +105,7 @@ func (c *Collector) Stop() error {
 
 	close(c.stopCh)
 	c.wg.Wait()
-	log.Println("Collector stopped")
+	logger.Info("Collector stopped")
 	return nil
 }
 
@@ -138,7 +138,7 @@ func (c *Collector) collectAll() {
 	ctx := context.Background()
 	clusters, _, err := c.clusterRepo.List(ctx, 0, 1000)
 	if err != nil {
-		log.Printf("[Collector] Failed to list clusters: %v", err)
+		logger.Error("Failed to list clusters", "error", err)
 		return
 	}
 
@@ -147,7 +147,7 @@ func (c *Collector) collectAll() {
 	}
 
 	startTime := time.Now()
-	log.Printf("[Collector] Starting collection for %d clusters (concurrency=%d)", len(clusters), c.concurrency)
+	logger.Info("Starting collection", "clusters", len(clusters), "concurrency", c.concurrency)
 
 	var (
 		mu           sync.Mutex
@@ -166,7 +166,7 @@ func (c *Collector) collectAll() {
 
 			metricCount, err := c.collectCluster(ctx, cl)
 			if err != nil {
-				log.Printf("[Collector] Failed to collect cluster %d (%s): %v", cl.ClusterID, cl.ClusterName, err)
+				logger.Error("Failed to collect cluster", "cluster_id", cl.ClusterID, "cluster_name", cl.ClusterName, "error", err)
 				mu.Lock()
 				fail++
 				mu.Unlock()
@@ -181,8 +181,7 @@ func (c *Collector) collectAll() {
 	wg.Wait()
 
 	elapsed := time.Since(startTime)
-	log.Printf("[Collector] Collection completed: %d/%d clusters success, %d metrics written in %v",
-		success, len(clusters), totalMetrics, elapsed)
+	logger.Info("Collection completed", "success", success, "total", len(clusters), "metrics", totalMetrics, "elapsed", elapsed)
 }
 
 // collectCluster 采集单个集群的指标（AdminClient + JMX 并行，合并写入 VM）
@@ -190,7 +189,7 @@ func (c *Collector) collectCluster(ctx context.Context, cluster *models.Cluster)
 	// 预获取共享数据：分区详情（Admin 和 JMX 都需要，只请求一次）
 	partitionDetails, err := c.monitorSvc.GetTopicPartitionDetails(ctx, cluster.ClusterID)
 	if err != nil {
-		log.Printf("[Collector] Failed to get partition details for cluster %d: %v", cluster.ClusterID, err)
+		logger.Warn("Failed to get partition details", "cluster_id", cluster.ClusterID, "error", err)
 		partitionDetails = nil
 	}
 
@@ -205,7 +204,7 @@ func (c *Collector) collectCluster(ctx context.Context, cluster *models.Cluster)
 	}()
 	go func() {
 		defer wg.Done()
-		jmxMetrics = c.collectJMXMetrics(ctx, cluster, partitionDetails)
+		jmxMetrics = c.collectJMXMetrics(ctx, cluster)
 	}()
 	wg.Wait()
 

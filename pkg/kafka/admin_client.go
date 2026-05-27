@@ -239,6 +239,14 @@ func (c *AdminClient) DescribeTopics(topics []string) ([]*sarama.TopicMetadata, 
 	return c.admin.DescribeTopics(topics)
 }
 
+// DescribeTopicConfig 获取 Topic 配置
+func (c *AdminClient) DescribeTopicConfig(topic string) ([]sarama.ConfigEntry, error) {
+	return c.admin.DescribeConfig(sarama.ConfigResource{
+		Type: sarama.TopicResource,
+		Name: topic,
+	})
+}
+
 // ListAllTopicMetadata 获取所有 Topic 的元数据
 func (c *AdminClient) ListAllTopicMetadata() ([]*sarama.TopicMetadata, error) {
 	// 传入 nil 表示获取所有 Topic

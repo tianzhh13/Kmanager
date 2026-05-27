@@ -141,6 +141,29 @@ func (c *Collector) collectAdminMetrics(ctx context.Context, cluster *models.Clu
 		}
 	}
 
+	// 5.1 Per-Broker Leader/Replica 数量（纯 AdminClient 计算指标，不依赖 JMX）
+	if len(partitionDetails) > 0 {
+		leaderCount := make(map[int32]int)
+		replicaCount := make(map[int32]int)
+		for _, pd := range partitionDetails {
+			leaderCount[pd.Leader]++
+			for _, replica := range pd.Replicas {
+				replicaCount[replica]++
+			}
+		}
+
+		for _, broker := range metrics.Brokers {
+			brokerLabels := copyLabels(baseLabels)
+			brokerLabels["broker_id"] = strconv.FormatInt(int64(broker.ID), 10)
+			brokerLabels["broker_host"] = broker.Host
+
+			vmMetrics = append(vmMetrics,
+				victoriametrics.Metric{Name: "kafka_broker_leader_count", Value: float64(leaderCount[broker.ID]), Labels: brokerLabels},
+				victoriametrics.Metric{Name: "kafka_broker_replica_count", Value: float64(replicaCount[broker.ID]), Labels: brokerLabels},
+			)
+		}
+	}
+
 	// 6. 消费者组详细指标
 	var totalLag int64
 	for _, cg := range metrics.ConsumerGroups {

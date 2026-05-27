@@ -30,18 +30,21 @@ func NewAuthHandler(authSvc *auth.Service, blacklistCache *cache.TokenBlacklistC
 	}
 }
 
-// setTokenCookie 设置 Token 为 httpOnly Cookie
-func (h *AuthHandler) setTokenCookie(c *gin.Context, name, value string, maxAge int64) {
-	cookiePath := "/"
-	if h.cookieCfg != nil && h.cookieCfg.Path != "" {
-		cookiePath = h.cookieCfg.Path
-	}
-	cookieDomain := ""
-	if h.cookieCfg != nil && h.cookieCfg.Domain != "" {
-		cookieDomain = h.cookieCfg.Domain
-	}
-	sameSite := http.SameSiteLaxMode
-	if h.cookieCfg != nil && h.cookieCfg.SameSite != "" {
+// getCookieConfig 获取 Cookie 基础配置
+func (h *AuthHandler) getCookieConfig() (path, domain string, secure bool, sameSite http.SameSite) {
+	path = "/"
+	domain = ""
+	secure = false
+	sameSite = http.SameSiteLaxMode
+
+	if h.cookieCfg != nil {
+		if h.cookieCfg.Path != "" {
+			path = h.cookieCfg.Path
+		}
+		if h.cookieCfg.Domain != "" {
+			domain = h.cookieCfg.Domain
+		}
+		secure = h.cookieCfg.Secure
 		switch h.cookieCfg.SameSite {
 		case "Strict":
 			sameSite = http.SameSiteStrictMode
@@ -49,15 +52,17 @@ func (h *AuthHandler) setTokenCookie(c *gin.Context, name, value string, maxAge 
 			sameSite = http.SameSiteNoneMode
 		}
 	}
-	secure := false
-	if h.cookieCfg != nil && h.cookieCfg.Secure {
-		secure = h.cookieCfg.Secure
-	}
+	return
+}
+
+// setTokenCookie 设置 Token 为 httpOnly Cookie
+func (h *AuthHandler) setTokenCookie(c *gin.Context, name, value string, maxAge int64) {
+	path, domain, secure, sameSite := h.getCookieConfig()
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     name,
 		Value:    value,
-		Path:     cookiePath,
-		Domain:   cookieDomain,
+		Path:     path,
+		Domain:   domain,
 		MaxAge:   int(maxAge),
 		HttpOnly: true,
 		Secure:   secure,
@@ -67,23 +72,12 @@ func (h *AuthHandler) setTokenCookie(c *gin.Context, name, value string, maxAge 
 
 // clearTokenCookie 清除 Token Cookie
 func (h *AuthHandler) clearTokenCookie(c *gin.Context, name string) {
-	cookiePath := "/"
-	if h.cookieCfg != nil && h.cookieCfg.Path != "" {
-		cookiePath = h.cookieCfg.Path
-	}
-	cookieDomain := ""
-	if h.cookieCfg != nil && h.cookieCfg.Domain != "" {
-		cookieDomain = h.cookieCfg.Domain
-	}
-	secure := false
-	if h.cookieCfg != nil && h.cookieCfg.Secure {
-		secure = h.cookieCfg.Secure
-	}
+	path, domain, secure, _ := h.getCookieConfig()
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     name,
 		Value:    "",
-		Path:     cookiePath,
-		Domain:   cookieDomain,
+		Path:     path,
+		Domain:   domain,
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   secure,
@@ -110,11 +104,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 				IPAddress:    c.ClientIP(),
 				UserAgent:    c.Request.UserAgent(),
 				Status:       "failed",
-				Details:      map[string]interface{}{"error": err.Error()},
+				Details:      map[string]interface{}{"error": "invalid credentials"},
 			})
 		}
 		c.JSON(401, gin.H{
-			"error": err.Error(),
+			"error": "invalid username or password",
 		})
 		return
 	}
@@ -150,15 +144,24 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 			RefreshToken string `json:"refresh_token" binding:"required"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(400, gin.H{"error": "invalid request: " + err.Error()})
+			c.JSON(400, gin.H{"error": "invalid request"})
 			return
 		}
 		refreshToken = req.RefreshToken
 	}
 
+	// 检查 refresh_token 是否已被加入黑名单（用户 Logout 后旧的 refresh_token 不可用）
+	if h.blacklistCache != nil {
+		blacklisted, err := h.blacklistCache.IsBlacklisted(c.Request.Context(), refreshToken)
+		if err == nil && blacklisted {
+			c.JSON(401, gin.H{"error": "refresh token has been revoked"})
+			return
+		}
+	}
+
 	resp, err := h.authSvc.RefreshToken(c.Request.Context(), refreshToken)
 	if err != nil {
-		c.JSON(401, gin.H{"error": err.Error()})
+		c.JSON(401, gin.H{"error": "invalid or expired refresh token"})
 		return
 	}
 
@@ -172,7 +175,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	username, _ := c.Get("username")
-	role, _ := c.Get("role")
+	role, _ := c.Get("user_role")
 
 	c.JSON(200, gin.H{
 		"user_id":  userID,

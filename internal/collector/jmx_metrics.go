@@ -7,12 +7,11 @@ import (
 
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/service/monitor"
-	"kafka-management-platform/pkg/kafka"
 	"kafka-management-platform/pkg/victoriametrics"
 )
 
-// collectJMXMetrics 采集 JMX Exporter 指标（per-broker 粒度）+ Per-Broker Leader/Replica 统计
-func (c *Collector) collectJMXMetrics(ctx context.Context, cluster *models.Cluster, partitionDetails []kafka.TopicPartitionInfo) []victoriametrics.Metric {
+// collectJMXMetrics 采集 JMX Exporter 指标（per-broker 粒度）
+func (c *Collector) collectJMXMetrics(ctx context.Context, cluster *models.Cluster) []victoriametrics.Metric {
 	if cluster.JMXExporterURLs == "" {
 		return nil
 	}
@@ -196,41 +195,6 @@ func (c *Collector) collectJMXMetrics(ctx context.Context, cluster *models.Clust
 						Name: vmName, Value: m.Value, Labels: brokerLabels,
 					})
 				}
-			}
-		}
-	}
-
-	// 2. 从分区详情计算 Per-Broker Leader/Replica 数量
-	if len(partitionDetails) > 0 {
-		leaderCount := make(map[int32]int)
-		replicaCount := make(map[int32]int)
-		for _, pd := range partitionDetails {
-			leaderCount[pd.Leader]++
-			for _, replica := range pd.Replicas {
-				replicaCount[replica]++
-			}
-		}
-
-		// 获取集群元数据以拿到 broker 列表
-		metadata, err := c.monitorSvc.GetClusterMetadata(ctx, cluster.ClusterID)
-		if err != nil {
-			log.Printf("[Collector] Failed to get cluster metadata for cluster %d: %v", cluster.ClusterID, err)
-		} else {
-			for _, broker := range metadata.Brokers {
-				brokerLabels := make(map[string]string)
-				for k, v := range baseLabels {
-					brokerLabels[k] = v
-				}
-				brokerLabels["broker_id"] = strconv.FormatInt(int64(broker.ID), 10)
-				brokerLabels["broker_host"] = broker.Host
-
-				lc := float64(leaderCount[broker.ID])
-				rc := float64(replicaCount[broker.ID])
-
-				vmMetrics = append(vmMetrics,
-					victoriametrics.Metric{Name: "kafka_broker_leader_count", Value: lc, Labels: brokerLabels},
-					victoriametrics.Metric{Name: "kafka_broker_replica_count", Value: rc, Labels: brokerLabels},
-				)
 			}
 		}
 	}

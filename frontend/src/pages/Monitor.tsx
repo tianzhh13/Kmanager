@@ -22,12 +22,10 @@ const Monitor: React.FC = () => {
   const [metrics, setMetrics] = useState<ClusterMetricsResponse | null>(null)
   const [activeTab, setActiveTab] = useState('overview')
 
-  // 时间范围选择
   const [timeRange, setTimeRange] = useState<'quick' | 'custom'>('quick')
   const [quickRange, setQuickRange] = useState<string>('1h')
   const [customRange, setCustomRange] = useState<[Dayjs, Dayjs] | null>(null)
 
-  // 加载集群列表
   useEffect(() => {
     const loadClusters = async () => {
       try {
@@ -36,7 +34,6 @@ const Monitor: React.FC = () => {
         if (res.data?.length > 0) {
           const clusterIdParam = searchParams.get('clusterId')
           const tabParam = searchParams.get('tab')
-          const topicNameParam = searchParams.get('topicName')
 
           if (clusterIdParam) {
             const targetCluster = res.data.find((c: ClusterOption) => c.cluster_id === parseInt(clusterIdParam))
@@ -48,10 +45,6 @@ const Monitor: React.FC = () => {
           if (tabParam && ['overview', 'broker', 'topic'].includes(tabParam)) {
             setActiveTab(tabParam)
           }
-
-          if (topicNameParam && tabParam === 'topic') {
-            // TopicMonitor 会根据 activeTab 和 selectedTopic 自行处理
-          }
         }
       } catch (error) {
         message.error('加载集群列表失败')
@@ -60,7 +53,6 @@ const Monitor: React.FC = () => {
     loadClusters()
   }, [])
 
-  // 加载实时监控数据
   useEffect(() => {
     const loadMetrics = async () => {
       if (!selectedCluster) return
@@ -88,6 +80,7 @@ const Monitor: React.FC = () => {
           quickRange={quickRange}
           customRange={customRange}
           metrics={metrics}
+          jmxAvailable={metrics?.jmx_exporter_available ?? false}
         />
       ) : null,
     },
@@ -101,6 +94,7 @@ const Monitor: React.FC = () => {
           quickRange={quickRange}
           customRange={customRange}
           activeTab={activeTab}
+          jmxAvailable={metrics?.jmx_exporter_available ?? false}
         />
       ) : null,
     },
@@ -115,15 +109,21 @@ const Monitor: React.FC = () => {
           customRange={customRange}
           metrics={metrics}
           activeTab={activeTab}
+          jmxAvailable={metrics?.jmx_exporter_available ?? false}
         />
       ) : null,
     },
   ]
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
+      <div className="page-header">
+        <h1>监控中心</h1>
+        <div className="page-accent-line" />
+      </div>
+
       <Card
-        title="集群监控"
+        title={null}
         extra={
           <MonitorControls
             selectedCluster={selectedCluster?.cluster_id}

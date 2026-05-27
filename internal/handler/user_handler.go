@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"net/http"
@@ -26,13 +26,13 @@ func NewUserHandler(userSvc *user.Service) *UserHandler {
 func (h *UserHandler) CreateUser(c *gin.Context) {
 	var req user.CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
 	result, err := h.userSvc.CreateUser(c.Request.Context(), &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -66,13 +66,13 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 
 	var req user.UpdateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
 	result, err := h.userSvc.UpdateUser(c.Request.Context(), userID, &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -90,7 +90,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 	currentUserID := middleware.GetUserID(c)
 
 	if err := h.userSvc.DeleteUser(c.Request.Context(), userID, currentUserID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -107,12 +107,12 @@ func (h *UserHandler) UpdatePassword(c *gin.Context) {
 
 	var req user.UpdatePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
 	if err := h.userSvc.UpdatePassword(c.Request.Context(), userID, &req); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *UserHandler) DisableUser(c *gin.Context) {
 	currentUserID := middleware.GetUserID(c)
 
 	if err := h.userSvc.DisableUser(c.Request.Context(), userID, currentUserID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -146,7 +146,7 @@ func (h *UserHandler) EnableUser(c *gin.Context) {
 	}
 
 	if err := h.userSvc.EnableUser(c.Request.Context(), userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -173,7 +173,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 
 	users, total, err := h.userSvc.ListUsers(c.Request.Context(), offset, pageSize, keyword)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 

@@ -37,6 +37,9 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORSMiddleware())
 	r.Use(middleware.SecurityHeadersMiddleware())
+	r.Use(middleware.HSTSMiddleware())
+	r.Use(middleware.RefererPolicyMiddleware())
+	r.Use(middleware.PermissionsPolicyMiddleware())
 	r.Use(middleware.RequestBodySizeLimitMiddleware(10 * 1024 * 1024)) // 10MB
 	r.Use(middleware.RequestIDMiddleware())
 	r.Use(middleware.RateLimitMiddleware())
@@ -99,7 +102,6 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	auditLogHandler := audit.NewHandler(auditSvc)
 	monitorHandler := monitor.NewHandler(monitorSvc)
 	scramUserHandler := handler.NewScramUserHandler(scramSvc)
-	dashboardHandler := handler.NewDashboardHandler(clusterRepo, topicRepo, scramUserRepo, vmClient)
 
 	// 初始化中间件
 	permissionMiddleware := middleware.NewPermissionMiddleware(permissionSvc)
@@ -142,11 +144,6 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			// 退出登录
 			authenticated.POST("/auth/logout", authHandler.Logout)
 
-			// 仪表盘统计
-			authenticated.GET("/dashboard/stats", dashboardHandler.GetStats)
-			// 监控状态（VictoriaMetrics 可达性）
-			authenticated.GET("/dashboard/monitor-status", dashboardHandler.GetMonitorStatus)
-
 			// 用户路由 - 需要超级管理员权限
 			users := authenticated.Group("/users")
 			users.Use(permissionMiddleware.RequireSuperAdmin())
@@ -187,6 +184,8 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				topics.GET("", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.ListTopics)
 				topics.POST("", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.CreateTopic)
 				topics.GET("/:name", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.GetTopic)
+				topics.GET("/:name/config", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.GetTopicConfig)
+				topics.GET("/:name/consumer-groups", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.GetTopicConsumerGroups)
 				topics.DELETE("/:name", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.DeleteTopic)
 				topics.PUT("/:name/config", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.UpdateTopicConfig)
 				topics.POST("/sync/:id", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.SyncTopics)

@@ -20,7 +20,7 @@ const MULTI_SERIES_COLORS = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed
  */
 export const buildLineChartOption = (
   title: string,
-  data: { times: string[]; values: number[] },
+  data: { times: string[]; values: (number | null)[] },
   color: string = '#1890ff',
   unit: string = '',
   formatter?: (value: number) => string,
@@ -60,6 +60,7 @@ export const buildLineChartOption = (
       type: 'line',
       smooth: true,
       data: data.values,
+      connectNulls: true,
       itemStyle: { color },
       areaStyle: { opacity: 0.1 },
     }],
@@ -101,6 +102,7 @@ export const buildMultiSeriesChartOption = (
   _color: string,
   yAxisName: string,
   tooltipFormatter?: (value: number) => string,
+  fullTimes?: string[],
 ): Record<string, any> => {
   // 安全处理：data 可能是 undefined 或格式不对
   let safeData: Record<string, { times: string[]; values: number[] }> = {}
@@ -123,7 +125,11 @@ export const buildMultiSeriesChartOption = (
   }
 
   const allTimes = new Set<string>()
-  entries.forEach(([, d]) => d.times.forEach(t => allTimes.add(t)))
+  if (fullTimes) {
+    fullTimes.forEach(t => allTimes.add(t))
+  } else {
+    entries.forEach(([, d]) => d.times.forEach(t => allTimes.add(t)))
+  }
   const times = Array.from(allTimes).sort()
 
   return {

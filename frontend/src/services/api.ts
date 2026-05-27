@@ -1,9 +1,8 @@
 import axios from 'axios'
 
-// 简单的baseURL配置
 // 开发环境：Vite代理到 localhost:18080
 // 生产环境：前端和后端在同一域名下，使用相对路径
-const baseURL = import.meta.env.DEV ? '/api/v1' : '/api/v1'
+const baseURL = '/api/v1'
 
 const api = axios.create({
   baseURL,
@@ -58,9 +57,7 @@ api.interceptors.response.use(
         }
 
         // 刷新 Token（refresh_token 在 Cookie 中，后端自动读取）
-        refreshPromise = axios.post('/api/v1/auth/refresh', {}, {
-          withCredentials: true,
-        }).then(() => {
+        refreshPromise = api.post('/auth/refresh').then(() => {
           // 刷新成功
         }).finally(() => {
           // 清除Promise引用，允许后续刷新

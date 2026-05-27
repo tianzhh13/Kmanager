@@ -229,6 +229,136 @@ func (s *Service) UpdateTopicConfig(ctx context.Context, req *UpdateTopicConfigR
 	return ErrFeatureNotImplemented
 }
 
+// TopicConfigEntry Topic 配置项
+type TopicConfigEntry struct {
+	Name      string `json:"name"`
+	Value     string `json:"value"`
+	Source    string `json:"source"`
+	ReadOnly  bool   `json:"read_only"`
+	IsDefault bool   `json:"is_default"`
+}
+
+// GetTopicConfig 获取 Topic 配置
+func (s *Service) GetTopicConfig(ctx context.Context, clusterID int64, topicName string) ([]TopicConfigEntry, error) {
+	cluster, authConfigJSON, err := s.getClusterWithAuth(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kafka admin client: %w", err)
+	}
+	defer adminClient.Close()
+
+	entries, err := adminClient.DescribeTopicConfig(topicName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe topic config: %w", err)
+	}
+
+	result := make([]TopicConfigEntry, 0, len(entries))
+	for _, e := range entries {
+		result = append(result, TopicConfigEntry{
+			Name:      e.Name,
+			Value:     e.Value,
+			Source:    e.Source.String(),
+			ReadOnly:  e.ReadOnly,
+			IsDefault: e.Default,
+		})
+	}
+	return result, nil
+}
+
+// TopicConsumerGroupInfo Topic 消费者组信息
+type TopicConsumerGroupInfo struct {
+	GroupID     string `json:"group_id"`
+	State       string `json:"state"`
+	MemberCount int    `json:"member_count"`
+}
+
+// GetTopicConsumerGroups 获取 Topic 的消费组列表
+func (s *Service) GetTopicConsumerGroups(ctx context.Context, clusterID int64, topicName string) ([]TopicConsumerGroupInfo, error) {
+	cluster, authConfigJSON, err := s.getClusterWithAuth(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kafka admin client: %w", err)
+	}
+	defer adminClient.Close()
+
+	// 1. 获取所有消费组 (map[groupID]protocolType)
+	groups, err := adminClient.ListConsumerGroups()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list consumer groups: %w", err)
+	}
+
+	// 2. 逐个 Describe 消费组，筛选包含目标 Topic 的
+	var result []TopicConsumerGroupInfo
+	for groupID := range groups {
+		// 排除系统消费组
+		if len(groupID) > 0 && groupID[0] == '_' {
+			continue
+		}
+
+		desc, err := adminClient.DescribeConsumerGroups([]string{groupID})
+		if err != nil || len(desc) == 0 {
+			continue
+		}
+
+		memberTopicSet := make(map[string]bool)
+		for _, member := range desc[0].Members {
+			// 从 MemberAssignment 中解析订阅的 Topic
+			assignment, _ := member.GetMemberAssignment()
+			if assignment != nil {
+				for topic := range assignment.Topics {
+					memberTopicSet[topic] = true
+				}
+			}
+			// 兼容：也从 MemberMetadata 中解析
+			metadata, _ := member.GetMemberMetadata()
+			if metadata != nil && len(metadata.Topics) > 0 {
+				for _, t := range metadata.Topics {
+					memberTopicSet[t] = true
+				}
+			}
+		}
+
+		if !memberTopicSet[topicName] {
+			continue
+		}
+
+		result = append(result, TopicConsumerGroupInfo{
+			GroupID:     groupID,
+			State:       string(desc[0].State),
+			MemberCount: len(desc[0].Members),
+		})
+	}
+
+	return result, nil
+}
+
+// getClusterWithAuth 获取集群配置并解密认证信息
+func (s *Service) getClusterWithAuth(ctx context.Context, clusterID int64) (*models.Cluster, string, error) {
+	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get cluster: %w", err)
+	}
+
+	var authConfigJSON string
+	if cluster.AuthConfig != "" {
+		decrypted, err := s.encryptionSvc.DecryptString(cluster.AuthConfig)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to decrypt auth config: %w", err)
+		}
+		authConfigJSON = decrypted
+	}
+
+	return cluster, authConfigJSON, nil
+}
+
 // GetTopic 获取 Topic 详情
 func (s *Service) GetTopic(ctx context.Context, clusterID int64, topicName string) (*models.Topic, error) {
 	topic, err := s.topicRepo.FindByName(ctx, clusterID, topicName)

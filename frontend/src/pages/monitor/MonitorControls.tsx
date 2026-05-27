@@ -16,17 +16,17 @@ interface MonitorControlsProps {
 }
 
 const quickRangeOptions = [
-  { label: '5分钟', value: '5m' },
-  { label: '15分钟', value: '15m' },
-  { label: '30分钟', value: '30m' },
-  { label: '1小时', value: '1h' },
-  { label: '3小时', value: '3h' },
-  { label: '6小时', value: '6h' },
-  { label: '12小时', value: '12h' },
-  { label: '24小时', value: '24h' },
-  { label: '2天', value: '2d' },
-  { label: '7天', value: '7d' },
-  { label: '30天', value: '30d' },
+  { label: '5m', value: '5m' },
+  { label: '15m', value: '15m' },
+  { label: '30m', value: '30m' },
+  { label: '1h', value: '1h' },
+  { label: '3h', value: '3h' },
+  { label: '6h', value: '6h' },
+  { label: '12h', value: '12h' },
+  { label: '24h', value: '24h' },
+  { label: '2d', value: '2d' },
+  { label: '7d', value: '7d' },
+  { label: '30d', value: '30d' },
 ]
 
 const MonitorControls: React.FC<MonitorControlsProps> = ({

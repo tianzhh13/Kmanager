@@ -18,16 +18,25 @@ type CacheItem struct {
 
 // MemoryCache 内存缓存实现
 type MemoryCache struct {
-	items map[string]*CacheItem
-	mu    sync.RWMutex
+	items      map[string]*CacheItem
+	mu         sync.Mutex
 	defaultTTL time.Duration
+	maxItems   int // 最大缓存条目数，0 表示不限制
+	stopCh     chan struct{}
 }
 
 // NewMemoryCache 创建内存缓存
 func NewMemoryCache(defaultTTL time.Duration) *MemoryCache {
+	return NewMemoryCacheWithCap(defaultTTL, 10000)
+}
+
+// NewMemoryCacheWithCap 创建带容量限制的内存缓存
+func NewMemoryCacheWithCap(defaultTTL time.Duration, maxItems int) *MemoryCache {
 	cache := &MemoryCache{
-		items: make(map[string]*CacheItem),
+		items:      make(map[string]*CacheItem),
 		defaultTTL: defaultTTL,
+		maxItems:   maxItems,
+		stopCh:     make(chan struct{}),
 	}
 
 	// 启动过期清理 goroutine
@@ -36,10 +45,15 @@ func NewMemoryCache(defaultTTL time.Duration) *MemoryCache {
 	return cache
 }
 
+// Stop 停止清理 goroutine
+func (c *MemoryCache) Stop() {
+	close(c.stopCh)
+}
+
 // Get 获取缓存值
 func (c *MemoryCache) Get(ctx context.Context, key string) (interface{}, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	item, exists := c.items[key]
 	if !exists {
@@ -48,6 +62,7 @@ func (c *MemoryCache) Get(ctx context.Context, key string) (interface{}, error) 
 
 	// 检查是否过期
 	if time.Now().After(item.Expiration) {
+		delete(c.items, key)
 		return nil, nil
 	}
 
@@ -67,6 +82,14 @@ func (c *MemoryCache) Set(ctx context.Context, key string, value interface{}, tt
 	c.items[key] = &CacheItem{
 		Value:      value,
 		Expiration: expiration,
+	}
+
+	// 容量限制：超过上限时清理过期条目，仍超则删除最旧的
+	if c.maxItems > 0 && len(c.items) > c.maxItems {
+		c.evictExpiredLocked()
+		if len(c.items) > c.maxItems {
+			c.evictOldestLocked()
+		}
 	}
 
 	return nil
@@ -90,20 +113,54 @@ func (c *MemoryCache) Clear(ctx context.Context) error {
 	return nil
 }
 
+// evictExpiredLocked 清理过期缓存（调用前需持有锁）
+func (c *MemoryCache) evictExpiredLocked() {
+	now := time.Now()
+	for key, item := range c.items {
+		if now.After(item.Expiration) {
+			delete(c.items, key)
+		}
+	}
+}
+
+// evictOldestLocked 淘汰最早过期的缓存条目（调用前需持有锁）
+func (c *MemoryCache) evictOldestLocked() {
+	if len(c.items) == 0 {
+		return
+	}
+	// 找到最早过期的 key
+	var oldestKey string
+	var oldestExp time.Time
+	for key, item := range c.items {
+		if oldestExp.IsZero() || item.Expiration.Before(oldestExp) {
+			oldestKey = key
+			oldestExp = item.Expiration
+		}
+	}
+	if oldestKey != "" {
+		delete(c.items, oldestKey)
+	}
+}
+
 // cleanupExpired 清理过期缓存
 func (c *MemoryCache) cleanupExpired() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		c.mu.Lock()
-		now := time.Now()
-		for key, item := range c.items {
-			if now.After(item.Expiration) {
-				delete(c.items, key)
+	for {
+		select {
+		case <-ticker.C:
+			c.mu.Lock()
+			now := time.Now()
+			for key, item := range c.items {
+				if now.After(item.Expiration) {
+					delete(c.items, key)
+				}
 			}
+			c.mu.Unlock()
+		case <-c.stopCh:
+			return
 		}
-		c.mu.Unlock()
 	}
 }
 

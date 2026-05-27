@@ -75,22 +75,28 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 
 	switch cfg.Database.Type {
 	case "mysql":
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&tls=%s",
 			cfg.Database.Username,
 			cfg.Database.Password,
 			cfg.Database.Host,
 			cfg.Database.Port,
 			cfg.Database.Database,
+			boolToStr(cfg.Database.SSLMode == "true" || cfg.Database.SSLMode == "require"),
 		)
 		dialector = mysql.Open(dsn)
 
 	case "postgres":
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable TimeZone=Asia/Shanghai",
+		sslMode := cfg.Database.SSLMode
+		if sslMode == "" {
+			sslMode = "disable"
+		}
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s TimeZone=Asia/Shanghai",
 			cfg.Database.Host,
 			cfg.Database.Port,
 			cfg.Database.Username,
 			cfg.Database.Password,
 			cfg.Database.Database,
+			sslMode,
 		)
 		dialector = postgres.Open(dsn)
 
@@ -98,9 +104,15 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		return nil, fmt.Errorf("unsupported database type: %s", cfg.Database.Type)
 	}
 
+	// 配置 GORM 日志级别：debug 模式可见 SQL 日志，release 模式静默
+	logLevel := gormlogger.Silent
+	if cfg.Server.Mode == "debug" {
+		logLevel = gormlogger.Warn
+	}
+
 	// 配置 GORM
 	gormConfig := &gorm.Config{
-		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
+		Logger: gormlogger.Default.LogMode(logLevel),
 		NowFunc: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -128,6 +140,14 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 	}
 
 	return db, nil
+}
+
+// boolToStr 布尔值转字符串
+func boolToStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // Reconnect 重新连接数据库

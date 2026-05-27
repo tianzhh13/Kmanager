@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Space, Modal, Form, Input, Select, message, Tag, Upload } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons'
+import { Table, Button, Space, Modal, Form, Input, Select, message, Tag, Upload, Row, Col, Statistic, Card } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClusterOutlined, CheckCircleOutlined, LockOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchClusters, createCluster, updateCluster, deleteCluster, testConnectionForCreate } from '../store/slices/clusterSlice'
 import { Cluster } from '../services/cluster'
@@ -27,7 +27,6 @@ const ClusterList: React.FC = () => {
     dispatch(fetchClusters({ page, pageSize }))
   }, [dispatch, page, pageSize])
 
-  // 构建认证配置
   const buildAuthConfig = (values: any): Record<string, any> | undefined => {
     const authConfig: Record<string, any> = {}
     if (values.auth_type === 'scram') {
@@ -38,7 +37,6 @@ const ClusterList: React.FC = () => {
       authConfig.principal = values.kerberos_principal
       authConfig.service_name = values.kerberos_service_name || 'kafka'
       authConfig.krb5_content = values.krb5_content
-      // 使用已上传的 keytab temp ID
       if (keytabTempId) {
         authConfig.keytab_temp_id = keytabTempId
       }
@@ -46,7 +44,6 @@ const ClusterList: React.FC = () => {
     return Object.keys(authConfig).length > 0 ? authConfig : undefined
   }
 
-  // 上传 keytab 文件
   const handleKeytabUpload = async (file: File) => {
     setUploadingKeytab(true)
     try {
@@ -59,15 +56,13 @@ const ClusterList: React.FC = () => {
     } finally {
       setUploadingKeytab(false)
     }
-    return false // 阻止默认上传行为
+    return false
   }
 
-  // 创建集群
   const handleCreate = async () => {
     try {
       const values = await form.validateFields()
       
-      // Kerberos 认证需要先上传 keytab
       if (values.auth_type === 'kerberos') {
         if (!keytabTempId) {
           message.error('请先上传 Keytab 文件')
@@ -79,7 +74,6 @@ const ClusterList: React.FC = () => {
         }
       }
       
-      // 先测试连接
       const authConfig = buildAuthConfig(values)
       const testData = {
         cluster_name: values.cluster_name,
@@ -92,7 +86,6 @@ const ClusterList: React.FC = () => {
       await dispatch(testConnectionForCreate(testData)).unwrap()
       setTestingConnection(false)
       
-      // 连接测试成功，创建集群
       const clusterData = {
         cluster_name: values.cluster_name,
         bootstrap_servers: values.bootstrap_servers,
@@ -117,35 +110,25 @@ const ClusterList: React.FC = () => {
     }
   }
 
-  // 编辑集群
   const handleEdit = (record: Cluster) => {
     setEditingCluster(record)
     setIsEditModal(true)
-    
-    // 设置表单值（只有可修改的字段）
-    const formValues: any = {
+    form.setFieldsValue({
       cluster_name: record.cluster_name,
       jmx_exporter_urls: record.jmx_exporter_urls,
       description: record.description,
-    }
-    
-    form.setFieldsValue(formValues)
+    })
   }
 
-  // 更新集群
   const handleUpdate = async () => {
     if (!editingCluster) return
-    
     try {
       const values = await form.validateFields()
-      
-      // 更新集群（只有可修改的字段）
       const updateData = {
         cluster_name: values.cluster_name,
         jmx_exporter_urls: values.jmx_exporter_urls,
         description: values.description,
       }
-      
       await dispatch(updateCluster({ id: editingCluster.cluster_id, data: updateData })).unwrap()
       message.success('更新成功')
       setIsEditModal(false)
@@ -157,7 +140,6 @@ const ClusterList: React.FC = () => {
     }
   }
 
-  // 删除集群
   const handleDelete = (id: number) => {
     Modal.confirm({
       title: '确认删除',
@@ -176,12 +158,15 @@ const ClusterList: React.FC = () => {
   }
 
   const columns = [
-    { title: 'ID', dataIndex: 'cluster_id', key: 'cluster_id', width: 60 },
-    { title: '集群名称', dataIndex: 'cluster_name', key: 'cluster_name' },
-    { title: 'Bootstrap Servers', dataIndex: 'bootstrap_servers', key: 'bootstrap_servers' },
+    { title: '集群名称', dataIndex: 'cluster_name', key: 'cluster_name',
+      render: (name: string) => <strong style={{ color: 'var(--text-heading)' }}>{name}</strong>,
+    },
+    { title: 'Bootstrap Servers', dataIndex: 'bootstrap_servers', key: 'bootstrap_servers',
+      render: (text: string) => <span className="text-mono" style={{ fontSize: 12 }}>{text}</span>,
+    },
     { title: '认证类型', dataIndex: 'auth_type', key: 'auth_type', 
       render: (type: string) => (
-        <Tag color={type === 'none' ? 'green' : type === 'plaintext' ? 'green' : type === 'scram' ? 'blue' : 'orange'}>
+        <Tag color={type === 'none' ? 'success' : type === 'plaintext' ? 'success' : type === 'scram' ? 'processing' : 'warning'}>
           {type ? type.toUpperCase() : 'NONE'}
         </Tag>
       )
@@ -193,25 +178,18 @@ const ClusterList: React.FC = () => {
         </Tag>
       )
     },
-    { title: '创建时间', dataIndex: 'created_at', key: 'created_at' },
+    { title: '创建时间', dataIndex: 'created_at', key: 'created_at',
+      render: (text: string) => <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{text}</span>,
+    },
     { title: '操作', key: 'action', width: 150,
       render: (_: any, record: Cluster) => (
         <Space>
           {isSuperAdmin && (
             <>
-              <Button 
-                type="link" 
-                icon={<EditOutlined />}
-                onClick={() => handleEdit(record)}
-              >
+              <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
                 编辑
               </Button>
-              <Button 
-                type="link" 
-                danger 
-                icon={<DeleteOutlined />}
-                onClick={() => handleDelete(record.cluster_id)}
-              >
+              <Button type="link" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.cluster_id)}>
                 删除
               </Button>
             </>
@@ -221,24 +199,19 @@ const ClusterList: React.FC = () => {
     },
   ]
 
-  // 渲染表单
   const renderForm = () => {
     if (isEditModal && editingCluster) {
-      // 编辑模式：只显示可修改的字段，其他信息只读显示
       return (
         <Form form={form} layout="vertical">
           <Form.Item name="cluster_name" label="集群名称" rules={[{ required: true, message: '请输入集群名称' }]}>
             <Input placeholder="例如：生产环境集群" />
           </Form.Item>
-          
           <Form.Item label="Bootstrap Servers">
             <Input value={editingCluster.bootstrap_servers} disabled />
           </Form.Item>
-          
           <Form.Item label="认证类型">
             <Input value={editingCluster.auth_type?.toUpperCase()} disabled />
           </Form.Item>
-          
           <Form.Item 
             name="jmx_exporter_urls" 
             label="JMX Exporter URLs"
@@ -246,7 +219,6 @@ const ClusterList: React.FC = () => {
           >
             <Input placeholder="例如：http://broker1:7071,http://broker2:7071,http://broker3:7071" />
           </Form.Item>
-
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={3} placeholder="集群用途说明" />
           </Form.Item>
@@ -254,17 +226,14 @@ const ClusterList: React.FC = () => {
       )
     }
     
-    // 创建模式：显示所有字段
     return (
       <Form form={form} layout="vertical">
         <Form.Item name="cluster_name" label="集群名称" rules={[{ required: true, message: '请输入集群名称' }]}>
           <Input placeholder="例如：生产环境集群" />
         </Form.Item>
-        
         <Form.Item name="bootstrap_servers" label="Bootstrap Servers" rules={[{ required: true, message: '请输入 Bootstrap Servers' }]}>
           <Input placeholder="例如：kafka1:9092,kafka2:9092,kafka3:9092" />
         </Form.Item>
-        
         <Form.Item name="auth_type" label="认证类型" rules={[{ required: true, message: '请选择认证类型' }]}>
           <Select onChange={(value) => setAuthType(value)}>
             <Select.Option value="plaintext">PLAINTEXT（无认证）</Select.Option>
@@ -273,7 +242,6 @@ const ClusterList: React.FC = () => {
           </Select>
         </Form.Item>
 
-      {/* SASL 认证配置 */}
       {authType === 'scram' && (
         <>
           <Form.Item name="scram_username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
@@ -297,14 +265,13 @@ const ClusterList: React.FC = () => {
         </>
       )}
 
-      {/* Kerberos 认证配置 */}
       {authType === 'kerberos' && (
         <>
           <Form.Item 
             name="kerberos_principal" 
             label="Principal" 
             rules={[{ required: true, message: '请输入 Principal' }]}
-            extra="格式：user@REALM 或 user/hostname@REALM，Realm 会自动从 Principal 中提取"
+            extra="格式：user@REALM 或 user/hostname@REALM"
           >
             <Input placeholder="例如：kafka-client/node01@EXAMPLE.COM" />
           </Form.Item>
@@ -312,7 +279,6 @@ const ClusterList: React.FC = () => {
             name="kerberos_service_name" 
             label="Service Name" 
             initialValue="kafka"
-            extra="Kafka 服务名称，通常为 kafka"
           >
             <Input placeholder="默认：kafka" />
           </Form.Item>
@@ -333,17 +299,12 @@ const ClusterList: React.FC = () => {
   EXAMPLE.COM = {
     kdc = kdc.example.com
     admin_server = kdc.example.com
-  }
-
-[domain_realm]
-  .example.com = EXAMPLE.COM
-  example.com = EXAMPLE.COM`}
+  }`}
             />
           </Form.Item>
           <Form.Item 
             label="Keytab 文件" 
-            required 
-            extra={isEditModal ? "如需更新 Keytab，请上传新文件；否则保持现有文件" : "请上传 Keytab 文件"}
+            required
           >
             <Upload
               beforeUpload={handleKeytabUpload}
@@ -359,10 +320,7 @@ const ClusterList: React.FC = () => {
                 {uploadingKeytab ? '上传中...' : '选择 Keytab 文件'}
               </Button>
             </Upload>
-            {keytabTempId && <span style={{ marginLeft: 8, color: '#52c41a' }}>已上传</span>}
-            {isEditModal && !keytabTempId && !keytabFile && (
-              <span style={{ marginLeft: 8, color: '#999' }}>保持现有文件</span>
-            )}
+            {keytabTempId && <span style={{ marginLeft: 8, color: 'var(--color-success)', fontSize: 12 }}>已上传</span>}
           </Form.Item>
         </>
       )}
@@ -370,11 +328,10 @@ const ClusterList: React.FC = () => {
       <Form.Item 
         name="jmx_exporter_urls" 
         label="JMX Exporter URLs"
-        extra="多个 Broker 的 JMX Exporter 地址，逗号分隔（用于获取集群吞吐量等指标）"
+        extra="多个 Broker 的 JMX Exporter 地址，逗号分隔"
       >
         <Input placeholder="例如：http://broker1:7071,http://broker2:7071,http://broker3:7071" />
       </Form.Item>
-
       <Form.Item name="description" label="描述">
         <Input.TextArea rows={3} placeholder="集群用途说明" />
       </Form.Item>
@@ -384,14 +341,52 @@ const ClusterList: React.FC = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h1>集群管理</h1>
-        {isSuperAdmin && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)}>
-            创建集群
-          </Button>
-        )}
+      <div className="page-header">
+        <div className="page-header-row">
+          <div>
+            <h1>集群管理</h1>
+            <div className="page-accent-line" />
+          </div>
+          {isSuperAdmin && (
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)}>
+              创建集群
+            </Button>
+          )}
+        </div>
       </div>
+
+      {/* 统计卡片 */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
+        <Col xs={12} sm={6}>
+          <Card size="small" className="stat-card">
+            <Statistic title="集群总数" value={total} prefix={<ClusterOutlined />}
+              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--brand-primary)' }} />
+          </Card>
+        </Col>
+        <Col xs={12} sm={6}>
+          <Card size="small" className="stat-card">
+            <Statistic title="活跃集群" value={clusters.filter(c => c.status === 'active').length}
+              prefix={<CheckCircleOutlined />}
+              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-success)' }} />
+          </Card>
+        </Col>
+        <Col xs={12} sm={6}>
+          <Card size="small" className="stat-card">
+            <Statistic title="SCRAM 集群"
+              value={clusters.filter(c => c.sasl_mechanism === 'SCRAM-SHA-256' || c.sasl_mechanism === 'SCRAM-SHA-512').length}
+              prefix={<LockOutlined />}
+              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-info)' }} />
+          </Card>
+        </Col>
+        <Col xs={12} sm={6}>
+          <Card size="small" className="stat-card">
+            <Statistic title="JMX 已配置"
+              value={clusters.filter(c => c.jmx_exporter_urls).length}
+              prefix={<SafetyCertificateOutlined />}
+              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--brand-accent)' }} />
+          </Card>
+        </Col>
+      </Row>
       
       <Table
         columns={columns}
@@ -406,7 +401,6 @@ const ClusterList: React.FC = () => {
         }}
       />
 
-      {/* 创建集群对话框 */}
       <Modal
         title="创建集群"
         open={isModalVisible}
@@ -427,12 +421,11 @@ const ClusterList: React.FC = () => {
         width={700}
       >
         {renderForm()}
-        <div style={{ marginTop: 16, color: '#666' }}>
-          提示：创建前会自动测试 Kafka 集群连接，只有连接成功才能创建。
+        <div style={{ marginTop: 16, padding: '10px 12px', background: 'var(--color-info-bg)', borderRadius: 'var(--radius-md)', fontSize: 13, color: 'var(--text-secondary)' }}>
+          创建前会自动测试 Kafka 集群连接，只有连接成功才能创建。
         </div>
       </Modal>
 
-      {/* 编辑集群对话框 */}
       <Modal
         title="编辑集群"
         open={isEditModal}
@@ -450,8 +443,8 @@ const ClusterList: React.FC = () => {
         width={700}
       >
         {renderForm()}
-        <div style={{ marginTop: 16, color: '#666' }}>
-          提示：Bootstrap Servers 和认证配置创建后不可修改。
+        <div style={{ marginTop: 16, padding: '10px 12px', background: 'var(--color-warning-bg)', borderRadius: 'var(--radius-md)', fontSize: 13, color: 'var(--text-secondary)' }}>
+          Bootstrap Servers 和认证配置创建后不可修改。
         </div>
       </Modal>
     </div>

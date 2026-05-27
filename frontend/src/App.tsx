@@ -27,7 +27,7 @@ const LazyFallback = () => (
 const RequireRole: React.FC<{ allowedRoles: string[]; children: React.ReactNode }> = ({ allowedRoles, children }) => {
   const { user } = useAppSelector((state) => state.auth)
   if (!user || !allowedRoles.includes(user.role)) {
-    return <Navigate to="/dashboard" replace />
+    return <Navigate to="/clusters" replace />
   }
   return <>{children}</>
 }

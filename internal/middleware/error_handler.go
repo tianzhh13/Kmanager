@@ -81,8 +81,8 @@ func filterSensitiveData(err *errors.AppError) gin.H {
 		"message": err.Message,
 	}
 
-	// 不在生产环境显示详细信息
-	if err.Details != "" {
+	// 仅在 debug 模式显示详细信息
+	if err.Details != "" && gin.Mode() == gin.DebugMode {
 		response["details"] = err.Details
 	}
 

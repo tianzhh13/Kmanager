@@ -55,4 +55,18 @@ export const topicService = {
     const response = await api.post(`/topics/sync/${clusterId}`)
     return response.data
   },
+
+  getConfig: async (topicName: string, clusterId: number) => {
+    const response = await api.get(`/topics/${encodeURIComponent(topicName)}/config`, {
+      params: { cluster_id: clusterId },
+    })
+    return response.data
+  },
+
+  getConsumerGroups: async (topicName: string, clusterId: number) => {
+    const response = await api.get(`/topics/${encodeURIComponent(topicName)}/consumer-groups`, {
+      params: { cluster_id: clusterId },
+    })
+    return response.data
+  },
 }

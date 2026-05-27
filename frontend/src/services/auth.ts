@@ -40,8 +40,8 @@ export const authService = {
     try {
       // 调用后端退出登录 API，清除 Cookie 并将 Token 加入黑名单
       await api.post('/auth/logout')
-    } catch (error) {
-      console.error('Logout API failed:', error)
+    } catch {
+      // Token 存储在 httpOnly Cookie 中，后端已清除，无需前端操作
     }
     // Token 存储在 httpOnly Cookie 中，后端已清除，无需前端操作
   },

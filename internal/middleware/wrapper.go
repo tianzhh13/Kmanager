@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/service/audit"
@@ -93,9 +94,9 @@ func (c *ClusterPermissionMiddlewareWrapper) RequireClusterAccess() gin.HandlerF
 		// 普通用户使用读权限检查（检查 cluster_user_relation）
 		var hasPermission bool
 		if userRole == string(models.RoleNormalUser) {
-			hasPermission, err = c.permissionSvc.CheckClusterReadPermission(ctx.Request.Context(), userID, clusterID)
+			hasPermission, err = c.permissionSvc.CheckClusterReadPermission(ctx.Request.Context(), userID, clusterID, userRole)
 		} else {
-			hasPermission, err = c.permissionSvc.CheckClusterPermission(ctx.Request.Context(), userID, clusterID)
+			hasPermission, err = c.permissionSvc.CheckClusterPermission(ctx.Request.Context(), userID, clusterID, userRole)
 		}
 		if err != nil || !hasPermission {
 			ctx.JSON(http.StatusForbidden, gin.H{
@@ -163,7 +164,7 @@ func (c *ClusterPermissionMiddlewareWrapper) RequireClusterWriteAccess() gin.Han
 		}
 
 		// 检查集群权限
-		hasPermission, err := c.permissionSvc.CheckClusterPermission(ctx.Request.Context(), userID, clusterID)
+		hasPermission, err := c.permissionSvc.CheckClusterPermission(ctx.Request.Context(), userID, clusterID, userRole)
 		if err != nil || !hasPermission {
 			ctx.JSON(http.StatusForbidden, gin.H{
 				"error": "no permission for this cluster",
@@ -199,14 +200,46 @@ type IPRateLimiter struct {
 	mu       sync.RWMutex
 	rate     rate.Limit
 	burst    int
+	stopCh   chan struct{}
 }
 
 // NewIPRateLimiter 创建 IP 限流器
 func NewIPRateLimiter(requestsPerMinute int) *IPRateLimiter {
-	return &IPRateLimiter{
+	rl := &IPRateLimiter{
 		limiters: make(map[string]*rate.Limiter),
 		rate:     rate.Limit(float64(requestsPerMinute) / 60.0),
 		burst:    requestsPerMinute,
+		stopCh:   make(chan struct{}),
+	}
+	go rl.cleanupLoop()
+	return rl
+}
+
+// Stop 停止清理 goroutine
+func (r *IPRateLimiter) Stop() {
+	close(r.stopCh)
+}
+
+// cleanupLoop 定期清理过期 IP 的限流器，防止 map 无限增长
+func (r *IPRateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			r.mu.Lock()
+			now := time.Now()
+			for ip, limiter := range r.limiters {
+				// 如果限流器的预留令牌已满（说明该 IP 长时间无请求），则删除
+				if limiter.AllowN(now, 0) && limiter.Tokens() == float64(r.burst) {
+					delete(r.limiters, ip)
+				}
+			}
+			r.mu.Unlock()
+		case <-r.stopCh:
+			return
+		}
 	}
 }
 

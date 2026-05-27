@@ -36,21 +36,18 @@ const TopicPermissionModal: React.FC<TopicPermissionModalProps> = ({
   const [selectedTopics, setSelectedTopics] = useState<string[]>([])
   const [topicsLoading, setTopicsLoading] = useState(false)
 
-  // 加载集群列表
   useEffect(() => {
     if (visible) {
       loadClusters()
     }
   }, [visible])
 
-  // 加载已有权限
   useEffect(() => {
     if (visible && user) {
       loadExistingPermissions()
     }
   }, [visible, user])
 
-  // 当选择集群时，加载该集群的 Topic 列表
   useEffect(() => {
     if (selectedCluster) {
       loadTopics(selectedCluster)
@@ -94,7 +91,6 @@ const TopicPermissionModal: React.FC<TopicPermissionModalProps> = ({
       message.warning('请选择集群和 Topic')
       return
     }
-
     setLoading(true)
     try {
       await topicPermissionService.batchAssign({
@@ -139,21 +135,20 @@ const TopicPermissionModal: React.FC<TopicPermissionModalProps> = ({
       title: 'Topic',
       dataIndex: 'topic_name',
       key: 'topic_name',
+      render: (v: string) => <span className="text-mono" style={{ fontSize: 12 }}>{v}</span>,
     },
     {
       title: '分配时间',
       dataIndex: 'created_at',
       key: 'created_at',
+      render: (text: string) => <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{text}</span>,
     },
     {
       title: '操作',
       key: 'action',
       width: 100,
       render: (_: any, record: TopicPermission) => (
-        <Popconfirm
-          title="确定撤销此权限？"
-          onConfirm={() => handleRevoke(record)}
-        >
+        <Popconfirm title="确定撤销此权限？" onConfirm={() => handleRevoke(record)}>
           <Button type="link" danger icon={<DeleteOutlined />} size="small">
             撤销
           </Button>
@@ -170,8 +165,7 @@ const TopicPermissionModal: React.FC<TopicPermissionModalProps> = ({
       width={800}
       footer={null}
     >
-      {/* 分配表单 */}
-      <div style={{ marginBottom: 16, padding: 16, background: '#fafafa', borderRadius: 8 }}>
+      <div style={{ marginBottom: 16, padding: 16, background: 'var(--content-bg)', borderRadius: 'var(--radius-md)', border: '1px solid var(--content-card-border)' }}>
         <Space wrap>
           <Select
             placeholder="选择集群"
@@ -204,7 +198,6 @@ const TopicPermissionModal: React.FC<TopicPermissionModalProps> = ({
         </Space>
       </div>
 
-      {/* 已有权限列表 */}
       <Table
         columns={columns}
         dataSource={existingPermissions}

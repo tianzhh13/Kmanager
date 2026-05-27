@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"net/http"
@@ -25,12 +25,12 @@ func NewACLHandler(aclSvc *acl.Service) *ACLHandler {
 func (h *ACLHandler) CreateACL(c *gin.Context) {
 	var req acl.CreateACLRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
 	if err := h.aclSvc.CreateACL(c.Request.Context(), &req); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -47,7 +47,7 @@ func (h *ACLHandler) DeleteACL(c *gin.Context) {
 	}
 
 	if err := h.aclSvc.DeleteACL(c.Request.Context(), aclID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -61,12 +61,12 @@ func (h *ACLHandler) BatchDeleteACL(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
 	if err := h.aclSvc.BatchDeleteACL(c.Request.Context(), req.ACLIDs); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -91,7 +91,10 @@ func (h *ACLHandler) ListACLs(c *gin.Context) {
 	req.Principal = c.Query("principal")
 
 	if offsetStr := c.Query("offset"); offsetStr != "" {
-		offset, _ := strconv.Atoi(offsetStr)
+		offset, err := strconv.Atoi(offsetStr)
+		if err != nil || offset < 0 {
+			offset = 0
+		}
 		req.Offset = offset
 	}
 
@@ -110,7 +113,7 @@ func (h *ACLHandler) ListACLs(c *gin.Context) {
 
 	resp, err := h.aclSvc.ListACLs(c.Request.Context(), &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -127,7 +130,7 @@ func (h *ACLHandler) SyncACLs(c *gin.Context) {
 	}
 
 	if err := h.aclSvc.SyncACLs(c.Request.Context(), clusterID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -155,7 +158,7 @@ func (h *ACLHandler) ListUserACLsFromKafka(c *gin.Context) {
 
 	acls, err := h.aclSvc.ListUserACLsFromKafka(c.Request.Context(), clusterID, principal)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -177,7 +180,7 @@ func (h *ACLHandler) DeleteACLFromKafka(c *gin.Context) {
 
 	var req acl.DeleteACLFromKafkaRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
@@ -190,7 +193,7 @@ func (h *ACLHandler) DeleteACLFromKafka(c *gin.Context) {
 	}
 
 	if err := h.aclSvc.DeleteACLFromKafka(c.Request.Context(), clusterID, &req); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
