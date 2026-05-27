@@ -27,9 +27,10 @@ CREATE TABLE IF NOT EXISTS cluster (
     cluster_id BIGSERIAL PRIMARY KEY,
     cluster_name VARCHAR(128) NOT NULL,
     bootstrap_servers TEXT NOT NULL,
-    auth_type VARCHAR(32) NOT NULL,
+    auth_type VARCHAR(32) NOT NULL DEFAULT 'none',
+    sasl_mechanism VARCHAR(32),
     auth_config TEXT,
-    prometheus_url VARCHAR(256),
+    jmx_exporter_url VARCHAR(256),
     status VARCHAR(32) NOT NULL DEFAULT 'active',
     description TEXT,
     created_by BIGINT NOT NULL,
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS cluster (
 
 CREATE INDEX IF NOT EXISTS idx_cluster_name ON cluster(cluster_name);
 CREATE INDEX IF NOT EXISTS idx_cluster_status ON cluster(status);
+CREATE INDEX IF NOT EXISTS idx_cluster_sasl_mechanism ON cluster(sasl_mechanism);
 
 -- 集群用户关联表
 CREATE TABLE IF NOT EXISTS cluster_user_relation (
@@ -118,6 +120,21 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_cluster_id ON audit_log(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_status ON audit_log(status);
 
+-- SCRAM 用户表
+CREATE TABLE IF NOT EXISTS scram_users (
+    user_id BIGSERIAL PRIMARY KEY,
+    cluster_id BIGINT NOT NULL,
+    username VARCHAR(256) NOT NULL,
+    mechanism VARCHAR(32) NOT NULL DEFAULT 'SCRAM-SHA-256',
+    sync_status VARCHAR(32) DEFAULT 'synced',
+    last_sync_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (cluster_id, username)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scram_users_cluster_id ON scram_users(cluster_id);
+
 -- 创建更新时间触发器函数
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -137,10 +154,13 @@ CREATE TRIGGER update_cluster_updated_at BEFORE UPDATE ON cluster
 CREATE TRIGGER update_topic_updated_at BEFORE UPDATE ON topic
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_scram_users_updated_at BEFORE UPDATE ON scram_users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- 插入默认超级管理员用户
 -- 密码: admin123 (使用 bcrypt 加密，cost=12)
-INSERT INTO "user" (username, password_hash, email, role, status)
-VALUES ('admin', '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYIpSVeu1Iu', 'admin@example.com', 'super_admin', 'active')
+INSERT INTO "user" (username, password_hash, email, role, status, created_at, updated_at)
+VALUES ('admin', '$2a$12$gwA7cH9WHrSvaY37au5KaOuqgi5gLCo258.eqmq4tRyHQL7eT.T7q', 'admin@example.com', 'super_admin', 'active', NOW(), NOW())
 ON CONFLICT (username) DO NOTHING;
 
 -- 完成

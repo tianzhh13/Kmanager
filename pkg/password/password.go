@@ -25,8 +25,8 @@ var (
 	ErrPasswordTooWeak = errors.New("password must contain uppercase, lowercase letters and numbers")
 )
 
-// Hash 使用 bcrypt 加密密码
-func Hash(password string) (string, error) {
+// HashPassword 使用 bcrypt 加密密码
+func HashPassword(password string) (string, error) {
 	// 验证密码长度
 	if len(password) < MinPasswordLength {
 		return "", ErrPasswordTooShort
@@ -73,4 +73,16 @@ func ValidateComplexity(password string) error {
 	}
 
 	return nil
+}
+
+// ValidatePassword 验证密码复杂度
+// Deprecated: 使用 ValidateComplexity 替代
+func ValidatePassword(password string) error {
+	return ValidateComplexity(password)
+}
+
+// CheckPassword 验证密码是否匹配
+// Deprecated: 使用 Verify 替代
+func CheckPassword(hashedPassword, password string) bool {
+	return Verify(hashedPassword, password)
 }

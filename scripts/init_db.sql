@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS `user` (
     `username` VARCHAR(64) NOT NULL UNIQUE,
     `password_hash` VARCHAR(128) NOT NULL,
     `email` VARCHAR(128),
-    `role` VARCHAR(32) NOT NULL,
+    `role` VARCHAR(32) NOT NULL COMMENT '角色：super_admin(超级管理员)/cluster_admin(集群管理员)/normal_user(普通用户)',
     `status` VARCHAR(32) NOT NULL DEFAULT 'active',
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -25,9 +25,10 @@ CREATE TABLE IF NOT EXISTS `cluster` (
     `cluster_id` BIGINT PRIMARY KEY AUTO_INCREMENT,
     `cluster_name` VARCHAR(128) NOT NULL,
     `bootstrap_servers` TEXT NOT NULL,
-    `auth_type` VARCHAR(32) NOT NULL,
+    `auth_type` VARCHAR(32) NOT NULL DEFAULT 'none',
+    `sasl_mechanism` VARCHAR(32) COMMENT 'SASL 机制：PLAIN/SCRAM-SHA-256/SCRAM-SHA-512',
     `auth_config` TEXT,
-    `prometheus_url` VARCHAR(256),
+    `jmx_exporter_url` VARCHAR(256) COMMENT 'JMX Exporter HTTP 地址（如 http://broker1:7071）',
     `status` VARCHAR(32) NOT NULL DEFAULT 'active',
     `description` TEXT,
     `created_by` BIGINT NOT NULL,
@@ -35,7 +36,8 @@ CREATE TABLE IF NOT EXISTS `cluster` (
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (`created_by`) REFERENCES `user`(`user_id`),
     INDEX `idx_cluster_name` (`cluster_name`),
-    INDEX `idx_status` (`status`)
+    INDEX `idx_status` (`status`),
+    INDEX `idx_sasl_mechanism` (`sasl_mechanism`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 集群用户关联表
@@ -111,10 +113,39 @@ CREATE TABLE IF NOT EXISTS `audit_log` (
     INDEX `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- SCRAM 用户表
+CREATE TABLE IF NOT EXISTS `scram_users` (
+    `user_id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+    `cluster_id` BIGINT NOT NULL,
+    `username` VARCHAR(256) NOT NULL,
+    `mechanism` VARCHAR(32) NOT NULL DEFAULT 'SCRAM-SHA-256',
+    `sync_status` VARCHAR(32) DEFAULT 'synced',
+    `last_sync_at` TIMESTAMP NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_cluster_id` (`cluster_id`),
+    UNIQUE INDEX `uk_cluster_username` (`cluster_id`, `username`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 用户 Topic 权限表（普通用户只能看到被分配的 Topic）
+CREATE TABLE IF NOT EXISTS `user_topic_permission` (
+    `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+    `user_id` BIGINT NOT NULL,
+    `cluster_id` BIGINT NOT NULL,
+    `topic_name` VARCHAR(255) NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `created_by` BIGINT NOT NULL COMMENT '分配人ID',
+    UNIQUE KEY `uk_user_cluster_topic` (`user_id`, `cluster_id`, `topic_name`),
+    INDEX `idx_user_id` (`user_id`),
+    INDEX `idx_cluster_id` (`cluster_id`),
+    FOREIGN KEY (`user_id`) REFERENCES `user`(`user_id`) ON DELETE CASCADE,
+    FOREIGN KEY (`cluster_id`) REFERENCES `cluster`(`cluster_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 插入默认超级管理员用户
 -- 密码: admin123 (使用 bcrypt 加密，cost=12)
-INSERT INTO `user` (`username`, `password_hash`, `email`, `role`, `status`)
-VALUES ('admin', '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYIpSVeu1Iu', 'admin@example.com', 'super_admin', 'active')
+INSERT INTO `user` (`username`, `password_hash`, `email`, `role`, `status`, `created_at`, `updated_at`)
+VALUES ('admin', '$2a$12$gwA7cH9WHrSvaY37au5KaOuqgi5gLCo258.eqmq4tRyHQL7eT.T7q', 'admin@example.com', 'super_admin', 'active', NOW(), NOW())
 ON DUPLICATE KEY UPDATE `username` = `username`;
 
 -- 完成

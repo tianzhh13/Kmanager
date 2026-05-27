@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"net/http"
@@ -25,12 +25,12 @@ func NewACLHandler(aclSvc *acl.Service) *ACLHandler {
 func (h *ACLHandler) CreateACL(c *gin.Context) {
 	var req acl.CreateACLRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
 	if err := h.aclSvc.CreateACL(c.Request.Context(), &req); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -47,7 +47,7 @@ func (h *ACLHandler) DeleteACL(c *gin.Context) {
 	}
 
 	if err := h.aclSvc.DeleteACL(c.Request.Context(), aclID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -61,12 +61,12 @@ func (h *ACLHandler) BatchDeleteACL(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
 	if err := h.aclSvc.BatchDeleteACL(c.Request.Context(), req.ACLIDs); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -91,7 +91,10 @@ func (h *ACLHandler) ListACLs(c *gin.Context) {
 	req.Principal = c.Query("principal")
 
 	if offsetStr := c.Query("offset"); offsetStr != "" {
-		offset, _ := strconv.Atoi(offsetStr)
+		offset, err := strconv.Atoi(offsetStr)
+		if err != nil || offset < 0 {
+			offset = 0
+		}
 		req.Offset = offset
 	}
 
@@ -101,10 +104,16 @@ func (h *ACLHandler) ListACLs(c *gin.Context) {
 	} else {
 		req.Limit = 20 // 默认每页 20 条
 	}
+	if req.Limit > 100 {
+		req.Limit = 100
+	}
+	if req.Limit < 1 {
+		req.Limit = 20
+	}
 
 	resp, err := h.aclSvc.ListACLs(c.Request.Context(), &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -121,9 +130,72 @@ func (h *ACLHandler) SyncACLs(c *gin.Context) {
 	}
 
 	if err := h.aclSvc.SyncACLs(c.Request.Context(), clusterID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "acls synced successfully"})
+}
+
+// ListUserACLsFromKafka 从 Kafka 直接查询用户的 ACL
+func (h *ACLHandler) ListUserACLsFromKafka(c *gin.Context) {
+	clusterIDStr := c.Query("cluster_id")
+	if clusterIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster_id is required"})
+		return
+	}
+	clusterID, err := strconv.ParseInt(clusterIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster_id"})
+		return
+	}
+
+	principal := c.Query("principal")
+	if principal == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "principal is required"})
+		return
+	}
+
+	acls, err := h.aclSvc.ListUserACLsFromKafka(c.Request.Context(), clusterID, principal)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": acls})
+}
+
+// DeleteACLFromKafka 从 Kafka 删除 ACL（无需数据库记录）
+func (h *ACLHandler) DeleteACLFromKafka(c *gin.Context) {
+	clusterIDStr := c.Query("cluster_id")
+	if clusterIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster_id is required"})
+		return
+	}
+	clusterID, err := strconv.ParseInt(clusterIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster_id"})
+		return
+	}
+
+	var req acl.DeleteACLFromKafkaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
+		return
+	}
+
+	// 设置默认值
+	if req.ResourcePattern == "" {
+		req.ResourcePattern = "LITERAL"
+	}
+	if req.Host == "" {
+		req.Host = "*"
+	}
+
+	if err := h.aclSvc.DeleteACLFromKafka(c.Request.Context(), clusterID, &req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "acl deleted successfully"})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
@@ -24,6 +25,8 @@ var (
 	ErrInvalidPartitions = errors.New("invalid partitions")
 	// ErrInvalidReplicationFactor 无效的副本数
 	ErrInvalidReplicationFactor = errors.New("invalid replication factor")
+	// ErrFeatureNotImplemented 功能未实现
+	ErrFeatureNotImplemented = errors.New("feature not implemented")
 )
 
 // Service Topic 管理服务
@@ -31,6 +34,7 @@ type Service struct {
 	topicRepo       repository.TopicRepository
 	clusterRepo     repository.ClusterRepository
 	encryptionSvc   *encryption.Service
+	kerberosBaseDir string
 }
 
 // NewService 创建 Topic 管理服务实例
@@ -38,11 +42,13 @@ func NewService(
 	topicRepo repository.TopicRepository,
 	clusterRepo repository.ClusterRepository,
 	encryptionSvc *encryption.Service,
+	kerberosBaseDir string,
 ) *Service {
 	return &Service{
-		topicRepo:     topicRepo,
-		clusterRepo:   clusterRepo,
-		encryptionSvc: encryptionSvc,
+		topicRepo:       topicRepo,
+		clusterRepo:     clusterRepo,
+		encryptionSvc:   encryptionSvc,
+		kerberosBaseDir: kerberosBaseDir,
 	}
 }
 
@@ -64,16 +70,17 @@ type UpdateTopicConfigRequest struct {
 
 // ListTopicsRequest 列出 Topic 请求
 type ListTopicsRequest struct {
-	ClusterID int64  `json:"cluster_id"`
-	Search    string `json:"search"`
-	Offset    int    `json:"offset"`
-	Limit     int    `json:"limit"`
+	ClusterID     int64    `json:"cluster_id"`
+	Search        string   `json:"search"`
+	Offset        int      `json:"offset"`
+	Limit         int      `json:"limit"`
+	AllowedTopics []string `json:"-"` // 普通用户有权限的 Topic 列表，为空表示无限制
 }
 
 // ListTopicsResponse 列出 Topic 响应
 type ListTopicsResponse struct {
-	Topics []*models.Topic `json:"topics"`
-	Total  int64           `json:"total"`
+	Data  []*models.Topic `json:"data"`
+	Total int64           `json:"total"`
 }
 
 // CreateTopic 创建 Topic
@@ -84,7 +91,7 @@ func (s *Service) CreateTopic(ctx context.Context, req *CreateTopicRequest) erro
 	}
 
 	// 检查 Topic 是否已存在
-	exists, err := s.topicRepo.ExistsByName(ctx, req.ClusterID, req.TopicName)
+	exists, err := s.topicRepo.Exists(ctx, req.ClusterID, req.TopicName)
 	if err != nil {
 		return fmt.Errorf("failed to check topic existence: %w", err)
 	}
@@ -108,18 +115,25 @@ func (s *Service) CreateTopic(ctx context.Context, req *CreateTopicRequest) erro
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
 	defer adminClient.Close()
 
 	// 调用 Kafka API 创建 Topic
+	// 转换 Config 类型：map[string]string -> map[string]*string
+	configEntries := make(map[string]*string)
+	for k, v := range req.Config {
+		value := v
+		configEntries[k] = &value
+	}
+
 	topicDetail := &sarama.TopicDetail{
 		NumPartitions:     req.Partitions,
 		ReplicationFactor: req.ReplicationFactor,
-		ConfigEntries:     req.Config,
+		ConfigEntries:     convertConfigEntries(req.Config),
 	}
 
 	if err := adminClient.CreateTopic(req.TopicName, topicDetail, false); err != nil {
@@ -160,8 +174,8 @@ func (s *Service) DeleteTopic(ctx context.Context, clusterID int64, topicName st
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
@@ -173,7 +187,11 @@ func (s *Service) DeleteTopic(ctx context.Context, clusterID int64, topicName st
 	}
 
 	// 从数据库删除 Topic
-	if err := s.topicRepo.DeleteByName(ctx, clusterID, topicName); err != nil {
+	topic, err := s.topicRepo.FindByName(ctx, clusterID, topicName)
+	if err != nil {
+		return fmt.Errorf("failed to find topic: %w", err)
+	}
+	if err := s.topicRepo.Delete(ctx, topic.TopicID); err != nil {
 		return fmt.Errorf("failed to delete topic from database: %w", err)
 	}
 
@@ -198,8 +216,8 @@ func (s *Service) UpdateTopicConfig(ctx context.Context, req *UpdateTopicConfigR
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
@@ -207,8 +225,138 @@ func (s *Service) UpdateTopicConfig(ctx context.Context, req *UpdateTopicConfigR
 
 	// TODO: 实现 Topic 配置更新逻辑
 	// Sarama 的 AlterConfig API 需要额外实现
+	// 当前返回明确错误，避免前端误以为操作成功
+	return ErrFeatureNotImplemented
+}
 
-	return nil
+// TopicConfigEntry Topic 配置项
+type TopicConfigEntry struct {
+	Name      string `json:"name"`
+	Value     string `json:"value"`
+	Source    string `json:"source"`
+	ReadOnly  bool   `json:"read_only"`
+	IsDefault bool   `json:"is_default"`
+}
+
+// GetTopicConfig 获取 Topic 配置
+func (s *Service) GetTopicConfig(ctx context.Context, clusterID int64, topicName string) ([]TopicConfigEntry, error) {
+	cluster, authConfigJSON, err := s.getClusterWithAuth(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kafka admin client: %w", err)
+	}
+	defer adminClient.Close()
+
+	entries, err := adminClient.DescribeTopicConfig(topicName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe topic config: %w", err)
+	}
+
+	result := make([]TopicConfigEntry, 0, len(entries))
+	for _, e := range entries {
+		result = append(result, TopicConfigEntry{
+			Name:      e.Name,
+			Value:     e.Value,
+			Source:    e.Source.String(),
+			ReadOnly:  e.ReadOnly,
+			IsDefault: e.Default,
+		})
+	}
+	return result, nil
+}
+
+// TopicConsumerGroupInfo Topic 消费者组信息
+type TopicConsumerGroupInfo struct {
+	GroupID     string `json:"group_id"`
+	State       string `json:"state"`
+	MemberCount int    `json:"member_count"`
+}
+
+// GetTopicConsumerGroups 获取 Topic 的消费组列表
+func (s *Service) GetTopicConsumerGroups(ctx context.Context, clusterID int64, topicName string) ([]TopicConsumerGroupInfo, error) {
+	cluster, authConfigJSON, err := s.getClusterWithAuth(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kafka admin client: %w", err)
+	}
+	defer adminClient.Close()
+
+	// 1. 获取所有消费组 (map[groupID]protocolType)
+	groups, err := adminClient.ListConsumerGroups()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list consumer groups: %w", err)
+	}
+
+	// 2. 逐个 Describe 消费组，筛选包含目标 Topic 的
+	var result []TopicConsumerGroupInfo
+	for groupID := range groups {
+		// 排除系统消费组
+		if len(groupID) > 0 && groupID[0] == '_' {
+			continue
+		}
+
+		desc, err := adminClient.DescribeConsumerGroups([]string{groupID})
+		if err != nil || len(desc) == 0 {
+			continue
+		}
+
+		memberTopicSet := make(map[string]bool)
+		for _, member := range desc[0].Members {
+			// 从 MemberAssignment 中解析订阅的 Topic
+			assignment, _ := member.GetMemberAssignment()
+			if assignment != nil {
+				for topic := range assignment.Topics {
+					memberTopicSet[topic] = true
+				}
+			}
+			// 兼容：也从 MemberMetadata 中解析
+			metadata, _ := member.GetMemberMetadata()
+			if metadata != nil && len(metadata.Topics) > 0 {
+				for _, t := range metadata.Topics {
+					memberTopicSet[t] = true
+				}
+			}
+		}
+
+		if !memberTopicSet[topicName] {
+			continue
+		}
+
+		result = append(result, TopicConsumerGroupInfo{
+			GroupID:     groupID,
+			State:       string(desc[0].State),
+			MemberCount: len(desc[0].Members),
+		})
+	}
+
+	return result, nil
+}
+
+// getClusterWithAuth 获取集群配置并解密认证信息
+func (s *Service) getClusterWithAuth(ctx context.Context, clusterID int64) (*models.Cluster, string, error) {
+	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get cluster: %w", err)
+	}
+
+	var authConfigJSON string
+	if cluster.AuthConfig != "" {
+		decrypted, err := s.encryptionSvc.DecryptString(cluster.AuthConfig)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to decrypt auth config: %w", err)
+		}
+		authConfigJSON = decrypted
+	}
+
+	return cluster, authConfigJSON, nil
 }
 
 // GetTopic 获取 Topic 详情
@@ -222,24 +370,40 @@ func (s *Service) GetTopic(ctx context.Context, clusterID int64, topicName strin
 
 // ListTopics 列出 Topic
 func (s *Service) ListTopics(ctx context.Context, req *ListTopicsRequest) (*ListTopicsResponse, error) {
-	topics, total, err := s.topicRepo.List(ctx, req.ClusterID, req.Search, req.Offset, req.Limit)
+	var topics []*models.Topic
+	var total int64
+	var err error
+
+	// 如果有 Topic 权限限制（普通用户），使用过滤查询
+	if len(req.AllowedTopics) > 0 {
+		topics, total, err = s.topicRepo.ListByNames(ctx, req.ClusterID, req.AllowedTopics, req.Offset, req.Limit)
+	} else if req.Search != "" {
+		// 根据是否有搜索条件选择合适的查询方法
+		topics, total, err = s.topicRepo.Search(ctx, req.ClusterID, req.Search, req.Offset, req.Limit)
+	} else {
+		topics, total, err = s.topicRepo.List(ctx, req.ClusterID, req.Offset, req.Limit)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
 	return &ListTopicsResponse{
-		Topics: topics,
-		Total:  total,
+		Data:  topics,
+		Total: total,
 	}, nil
 }
 
 // SyncTopics 同步集群的所有 Topic 数据
 func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
+	log.Printf("[SyncTopics] Starting sync for cluster %d", clusterID)
+
 	// 获取集群配置
 	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster: %w", err)
 	}
+	log.Printf("[SyncTopics] Cluster found: %s, bootstrap: %s", cluster.ClusterName, cluster.BootstrapServers)
 
 	// 解密认证配置
 	var authConfigJSON string
@@ -251,24 +415,27 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
 	defer adminClient.Close()
+	log.Printf("[SyncTopics] Kafka admin client created successfully")
 
 	// 从 Kafka 获取所有 Topic 列表
 	kafkaTopics, err := adminClient.ListTopics()
 	if err != nil {
 		return fmt.Errorf("failed to list topics from kafka: %w", err)
 	}
+	log.Printf("[SyncTopics] Found %d topics from Kafka: %v", len(kafkaTopics), getTopicNames(kafkaTopics))
 
 	// 从数据库获取当前 Topic 列表
-	dbTopics, _, err := s.topicRepo.List(ctx, clusterID, "", 0, 10000)
+	dbTopics, err := s.topicRepo.ListByCluster(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to list topics from database: %w", err)
 	}
+	log.Printf("[SyncTopics] Found %d topics in database", len(dbTopics))
 
 	// 构建 Topic 名称映射
 	kafkaTopicMap := make(map[string]sarama.TopicDetail)
@@ -282,6 +449,8 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 	}
 
 	// 处理新增和更新的 Topic
+	newCount := 0
+	updateCount := 0
 	for topicName, kafkaTopic := range kafkaTopicMap {
 		if dbTopic, exists := dbTopicMap[topicName]; exists {
 			// Topic 已存在，更新元数据
@@ -289,9 +458,10 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 			dbTopic.ReplicationFactor = kafkaTopic.ReplicationFactor
 			dbTopic.SyncStatus = "synced"
 			if err := s.topicRepo.Update(ctx, dbTopic); err != nil {
-				// 记录错误但继续处理其他 Topic
+				log.Printf("[SyncTopics] Failed to update topic %s: %v", topicName, err)
 				continue
 			}
+			updateCount++
 		} else {
 			// 新 Topic，插入数据库
 			newTopic := &models.Topic{
@@ -302,23 +472,27 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 				SyncStatus:        "synced",
 			}
 			if err := s.topicRepo.Create(ctx, newTopic); err != nil {
-				// 记录错误但继续处理其他 Topic
+				log.Printf("[SyncTopics] Failed to create topic %s: %v", topicName, err)
 				continue
 			}
+			newCount++
 		}
 	}
 
 	// 处理已删除的 Topic
+	deleteCount := 0
 	for topicName, dbTopic := range dbTopicMap {
 		if _, exists := kafkaTopicMap[topicName]; !exists {
 			// Topic 在 Kafka 中不存在，从数据库删除
 			if err := s.topicRepo.Delete(ctx, dbTopic.TopicID); err != nil {
-				// 记录错误但继续处理其他 Topic
+				log.Printf("[SyncTopics] Failed to delete topic %s: %v", topicName, err)
 				continue
 			}
+			deleteCount++
 		}
 	}
 
+	log.Printf("[SyncTopics] Sync completed for cluster %d: new=%d, updated=%d, deleted=%d", clusterID, newCount, updateCount, deleteCount)
 	return nil
 }
 
@@ -337,4 +511,27 @@ func (s *Service) validateCreateTopicRequest(req *CreateTopicRequest) error {
 		return ErrInvalidReplicationFactor
 	}
 	return nil
+}
+
+// convertConfigEntries 转换配置项格式
+func convertConfigEntries(config map[string]string) map[string]*string {
+	if config == nil {
+		return nil
+	}
+	result := make(map[string]*string)
+	for k, v := range config {
+		// 需要复制值，避免循环变量问题
+		value := v
+		result[k] = &value
+	}
+	return result
+}
+
+// getTopicNames 获取 Topic 名称列表（用于日志）
+func getTopicNames(topics map[string]sarama.TopicDetail) []string {
+	names := make([]string, 0, len(topics))
+	for name := range topics {
+		names = append(names, name)
+	}
+	return names
 }
