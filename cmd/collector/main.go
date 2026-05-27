@@ -9,14 +9,13 @@ import (
 	"kafka-management-platform/internal/collector"
 	"kafka-management-platform/internal/config"
 	"kafka-management-platform/internal/database"
+	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/repository"
 
 	"gorm.io/gorm"
 )
 
 func main() {
-	fmt.Println("Starting Kafka Collector...")
-
 	// 加载配置（复用平台配置文件）
 	cfg, err := config.Load()
 	if err != nil {
@@ -24,11 +23,28 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 初始化日志
+	if err := logger.InitWithConfig(
+		cfg.Log.Level,
+		cfg.Log.Format,
+		cfg.Log.OutputPath,
+		cfg.Log.MaxSize,
+		cfg.Log.MaxBackups,
+		cfg.Log.MaxAge,
+		cfg.Log.Compress,
+	); err != nil {
+		fmt.Printf("Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+	defer logger.Sync()
+
+	log := logger.GetLogger()
+	log.Info("Starting Kafka Collector...")
+
 	// 初始化数据库（只读集群列表）
 	db, err := database.Init(cfg)
 	if err != nil {
-		fmt.Printf("Failed to initialize database: %v\n", err)
-		os.Exit(1)
+		log.Fatal("Failed to initialize database", "error", err)
 	}
 	defer closeDB(db)
 
@@ -38,20 +54,19 @@ func main() {
 	// 创建并启动 Collector
 	c := collector.NewCollector(cfg, clusterRepo)
 	if err := c.Start(); err != nil {
-		fmt.Printf("Failed to start collector: %v\n", err)
-		os.Exit(1)
+		log.Fatal("Failed to start collector", "error", err)
 	}
 	defer c.Stop()
 
-	fmt.Println("Kafka Collector is running")
+	log.Info("Kafka Collector is running")
 
 	// 等待退出信号
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	fmt.Println("Shutting down collector...")
-	fmt.Println("Collector exited")
+	log.Info("Shutting down collector...")
+	log.Info("Collector exited")
 }
 
 // closeDB 关闭 GORM 数据库连接
