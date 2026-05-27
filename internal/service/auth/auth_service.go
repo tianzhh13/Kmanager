@@ -89,7 +89,7 @@ func (s *Service) Login(ctx context.Context, req *LoginRequest) (*LoginResponse,
 	return &LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
-		ExpiresIn:    3600, // 1 小时
+		ExpiresIn:    int64(s.jwtSvc.AccessTokenExpire()),
 		UserInfo: &UserInfo{
 			UserID:   user.UserID,
 			Username: user.Username,

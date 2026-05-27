@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"strings"
 
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
@@ -22,9 +24,10 @@ var (
 
 // Service ACL 管理服务
 type Service struct {
-	aclRepo       repository.ACLRepository
-	clusterRepo   repository.ClusterRepository
-	encryptionSvc *encryption.Service
+	aclRepo         repository.ACLRepository
+	clusterRepo     repository.ClusterRepository
+	encryptionSvc   *encryption.Service
+	kerberosBaseDir string
 }
 
 // NewService 创建 ACL 管理服务实例
@@ -32,24 +35,28 @@ func NewService(
 	aclRepo repository.ACLRepository,
 	clusterRepo repository.ClusterRepository,
 	encryptionSvc *encryption.Service,
+	kerberosBaseDir string,
 ) *Service {
 	return &Service{
-		aclRepo:       aclRepo,
-		clusterRepo:   clusterRepo,
-		encryptionSvc: encryptionSvc,
+		aclRepo:         aclRepo,
+		clusterRepo:     clusterRepo,
+		encryptionSvc:   encryptionSvc,
+		kerberosBaseDir: kerberosBaseDir,
 	}
 }
 
 // CreateACLRequest 创建 ACL 请求
 type CreateACLRequest struct {
-	ClusterID       int64                  `json:"cluster_id" binding:"required"`
-	ResourceType    models.ACLResourceType `json:"resource_type" binding:"required"`
-	ResourceName    string                 `json:"resource_name" binding:"required"`
-	ResourcePattern models.ACLPatternType  `json:"resource_pattern" binding:"required"`
-	Principal       string                 `json:"principal" binding:"required"`
-	Host            string                 `json:"host"`
-	Operation       models.ACLOperation    `json:"operation" binding:"required"`
-	PermissionType  models.ACLPermission   `json:"permission_type" binding:"required"`
+	ClusterID       int64                 `json:"cluster_id" binding:"required"`
+	ResourceType    models.ResourceType   `json:"resource_type" binding:"required"`
+	ResourceName    string                `json:"resource_name" binding:"required"`
+	ResourcePattern models.PatternType    `json:"resource_pattern"`
+	Principal       string                `json:"principal" binding:"required"`
+	Host            string                `json:"host"`
+	Operation       models.OperationType  `json:"operation" binding:"required"`
+	PermissionType  models.PermissionType `json:"permission_type" binding:"required"`
+	// 兼容前端字段
+	Permission string `json:"permission"`
 }
 
 // ListACLsRequest 列出 ACL 请求
@@ -64,12 +71,27 @@ type ListACLsRequest struct {
 
 // ListACLsResponse 列出 ACL 响应
 type ListACLsResponse struct {
-	ACLs  []*models.ACL `json:"acls"`
+	Data  []*models.ACL `json:"data"`
 	Total int64         `json:"total"`
 }
 
 // CreateACL 创建 ACL 规则
 func (s *Service) CreateACL(ctx context.Context, req *CreateACLRequest) error {
+	log.Printf("[CreateACL] Starting create ACL, request: %+v", req)
+
+	// 兼容前端 permission 字段
+	if req.PermissionType == "" && req.Permission != "" {
+		req.PermissionType = models.PermissionType(req.Permission)
+	}
+
+	// 设置默认值
+	if req.ResourcePattern == "" {
+		req.ResourcePattern = models.PatternTypeLiteral
+	}
+	if req.Host == "" {
+		req.Host = "*"
+	}
+
 	// 验证请求参数
 	if err := s.validateCreateACLRequest(req); err != nil {
 		return err
@@ -80,6 +102,7 @@ func (s *Service) CreateACL(ctx context.Context, req *CreateACLRequest) error {
 	if err != nil {
 		return fmt.Errorf("failed to get cluster: %w", err)
 	}
+	log.Printf("[CreateACL] Cluster found: %s", cluster.ClusterName)
 
 	// 解密认证配置
 	var authConfigJSON string
@@ -91,8 +114,8 @@ func (s *Service) CreateACL(ctx context.Context, req *CreateACLRequest) error {
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
@@ -105,17 +128,14 @@ func (s *Service) CreateACL(ctx context.Context, req *CreateACLRequest) error {
 		ResourcePatternType: s.convertPatternType(req.ResourcePattern),
 	}
 
-	host := req.Host
-	if host == "" {
-		host = "*"
-	}
-
 	acl := sarama.Acl{
 		Principal:      req.Principal,
-		Host:           host,
+		Host:           req.Host,
 		Operation:      s.convertOperation(req.Operation),
 		PermissionType: s.convertPermissionType(req.PermissionType),
 	}
+
+	log.Printf("[CreateACL] Creating ACL in Kafka: resource=%+v, acl=%+v", resource, acl)
 
 	// 调用 Kafka API 创建 ACL
 	if err := adminClient.CreateACL(resource, acl); err != nil {
@@ -129,7 +149,7 @@ func (s *Service) CreateACL(ctx context.Context, req *CreateACLRequest) error {
 		ResourceName:    req.ResourceName,
 		ResourcePattern: req.ResourcePattern,
 		Principal:       req.Principal,
-		Host:            host,
+		Host:            req.Host,
 		Operation:       req.Operation,
 		PermissionType:  req.PermissionType,
 		SyncStatus:      "synced",
@@ -139,6 +159,7 @@ func (s *Service) CreateACL(ctx context.Context, req *CreateACLRequest) error {
 		return fmt.Errorf("failed to save acl to database: %w", err)
 	}
 
+	log.Printf("[CreateACL] ACL created successfully")
 	return nil
 }
 
@@ -166,8 +187,8 @@ func (s *Service) DeleteACL(ctx context.Context, aclID int64) error {
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
@@ -199,30 +220,140 @@ func (s *Service) DeleteACL(ctx context.Context, aclID int64) error {
 
 // BatchDeleteACL 批量删除 ACL 规则
 func (s *Service) BatchDeleteACL(ctx context.Context, aclIDs []int64) error {
+	var errs []error
 	for _, aclID := range aclIDs {
 		if err := s.DeleteACL(ctx, aclID); err != nil {
-			// 记录错误但继续处理其他 ACL
+			errMsg := fmt.Sprintf("failed to delete ACL id=%d: %v", aclID, err)
+			log.Printf("[BatchDeleteACL] %s", errMsg)
+			errs = append(errs, errors.New(errMsg))
 			continue
 		}
+		log.Printf("[BatchDeleteACL] Successfully deleted ACL id=%d", aclID)
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // ListACLs 列出 ACL 规则
 func (s *Service) ListACLs(ctx context.Context, req *ListACLsRequest) (*ListACLsResponse, error) {
-	acls, total, err := s.aclRepo.List(ctx, req.ClusterID, req.ResourceType, req.ResourceName, req.Principal, req.Offset, req.Limit)
+	log.Printf("[ListACLs] Request: cluster_id=%d, resource_type=%s, resource_name=%s, principal=%s",
+		req.ClusterID, req.ResourceType, req.ResourceName, req.Principal)
+
+	var acls []*models.ACL
+	var total int64
+	var err error
+
+	// 根据过滤条件选择不同的查询方法
+	if req.ResourceName != "" {
+		acls, total, err = s.aclRepo.FilterByTopic(ctx, req.ClusterID, req.ResourceName, req.Offset, req.Limit)
+	} else if req.Principal != "" {
+		acls, total, err = s.aclRepo.FilterByPrincipal(ctx, req.ClusterID, req.Principal, req.Offset, req.Limit)
+	} else {
+		acls, total, err = s.aclRepo.List(ctx, req.ClusterID, req.Offset, req.Limit)
+	}
+
 	if err != nil {
+		log.Printf("[ListACLs] Error: %v", err)
 		return nil, err
 	}
 
+	// 如果有 resourceType 过滤，在内存中过滤
+	if req.ResourceType != "" {
+		filtered := make([]*models.ACL, 0)
+		for _, acl := range acls {
+			if string(acl.ResourceType) == req.ResourceType {
+				filtered = append(filtered, acl)
+			}
+		}
+		acls = filtered
+		total = int64(len(filtered))
+	}
+
+	log.Printf("[ListACLs] Found %d ACLs", len(acls))
 	return &ListACLsResponse{
-		ACLs:  acls,
+		Data:  acls,
 		Total: total,
 	}, nil
 }
 
-// SyncACLs 同步集群的所有 ACL 数据
-func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
+// UserACLInfo 用户 ACL 信息（用于从 Kafka 直接查询）
+type UserACLInfo struct {
+	ResourceType    string `json:"resource_type"`
+	ResourceName    string `json:"resource_name"`
+	ResourcePattern string `json:"resource_pattern"`
+	Principal       string `json:"principal"`
+	Host            string `json:"host"`
+	Operation       string `json:"operation"`
+	PermissionType  string `json:"permission_type"`
+}
+
+// ListUserACLsFromKafka 从 Kafka 直接查询用户的 ACL（实时查询）
+func (s *Service) ListUserACLsFromKafka(ctx context.Context, clusterID int64, principal string) ([]*UserACLInfo, error) {
+	log.Printf("[ListUserACLsFromKafka] Querying ACLs for principal=%s from Kafka", principal)
+
+	// 获取集群配置
+	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster: %w", err)
+	}
+
+	// 解密认证配置
+	var authConfigJSON string
+	if cluster.AuthConfig != "" {
+		decrypted, err := s.encryptionSvc.DecryptString(cluster.AuthConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt auth config: %w", err)
+		}
+		authConfigJSON = decrypted
+	}
+
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kafka admin client: %w", err)
+	}
+	defer adminClient.Close()
+
+	// 从 Kafka 获取该用户的所有 ACL
+	filter := sarama.AclFilter{
+		ResourceType:              sarama.AclResourceAny,
+		ResourcePatternTypeFilter: sarama.AclPatternAny,
+		Principal:                 &principal,
+		Host:                      nil,
+		Operation:                 sarama.AclOperationAny,
+		PermissionType:            sarama.AclPermissionAny,
+	}
+
+	kafkaACLs, err := adminClient.ListACLs(filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list acls from kafka: %w", err)
+	}
+
+	// 转换结果
+	var result []*UserACLInfo
+	for _, resourceACL := range kafkaACLs {
+		for _, acl := range resourceACL.Acls {
+			info := &UserACLInfo{
+				ResourceType:    string(s.convertResourceTypeFromSarama(resourceACL.ResourceType)),
+				ResourceName:    resourceACL.ResourceName,
+				ResourcePattern: string(s.convertPatternTypeFromSarama(resourceACL.ResourcePatternType)),
+				Principal:       acl.Principal,
+				Host:            acl.Host,
+				Operation:       string(s.convertOperationFromSarama(acl.Operation)),
+				PermissionType:  string(s.convertPermissionTypeFromSarama(acl.PermissionType)),
+			}
+			result = append(result, info)
+		}
+	}
+
+	log.Printf("[ListUserACLsFromKafka] Found %d ACLs for principal=%s", len(result), principal)
+	return result, nil
+}
+
+// DeleteACLFromKafka 从 Kafka 删除指定用户的 ACL（按条件匹配）
+func (s *Service) DeleteACLFromKafka(ctx context.Context, clusterID int64, req *DeleteACLFromKafkaRequest) error {
+	log.Printf("[DeleteACLFromKafka] Deleting ACL: cluster=%d, principal=%s, resource=%s, operation=%s",
+		clusterID, req.Principal, req.ResourceName, req.Operation)
+
 	// 获取集群配置
 	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
 	if err != nil {
@@ -239,12 +370,73 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 		authConfigJSON = decrypted
 	}
 
-	// 创建 Kafka Admin 客户端
-	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
 	defer adminClient.Close()
+
+	// 构建 ACL Filter
+	filter := sarama.AclFilter{
+		ResourceType:              s.convertResourceType(models.ResourceType(req.ResourceType)),
+		ResourceName:              &req.ResourceName,
+		ResourcePatternTypeFilter: s.convertPatternType(models.PatternType(req.ResourcePattern)),
+		Principal:                 &req.Principal,
+		Host:                      &req.Host,
+		Operation:                 s.convertOperation(models.OperationType(req.Operation)),
+		PermissionType:            s.convertPermissionType(models.PermissionType(req.PermissionType)),
+	}
+
+	// 从 Kafka 删除 ACL
+	matchedACLs, err := adminClient.DeleteACL(filter, false)
+	if err != nil {
+		return fmt.Errorf("failed to delete acl from kafka: %w", err)
+	}
+
+	log.Printf("[DeleteACLFromKafka] Deleted %d matching ACLs", len(matchedACLs))
+	return nil
+}
+
+// DeleteACLFromKafkaRequest 从 Kafka 删除 ACL 的请求
+type DeleteACLFromKafkaRequest struct {
+	ResourceType    string `json:"resource_type" binding:"required"`
+	ResourceName    string `json:"resource_name" binding:"required"`
+	ResourcePattern string `json:"resource_pattern"`
+	Principal       string `json:"principal" binding:"required"`
+	Host            string `json:"host"`
+	Operation       string `json:"operation" binding:"required"`
+	PermissionType  string `json:"permission_type" binding:"required"`
+}
+
+// SyncACLs 同步集群的所有 ACL 数据
+func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
+	log.Printf("[SyncACLs] Starting sync for cluster %d", clusterID)
+
+	// 获取集群配置
+	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
+	if err != nil {
+		return fmt.Errorf("failed to get cluster: %w", err)
+	}
+	log.Printf("[SyncACLs] Cluster found: %s, bootstrap: %s", cluster.ClusterName, cluster.BootstrapServers)
+
+	// 解密认证配置
+	var authConfigJSON string
+	if cluster.AuthConfig != "" {
+		decrypted, err := s.encryptionSvc.DecryptString(cluster.AuthConfig)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt auth config: %w", err)
+		}
+		authConfigJSON = decrypted
+	}
+
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
+	if err != nil {
+		return fmt.Errorf("failed to create kafka admin client: %w", err)
+	}
+	defer adminClient.Close()
+	log.Printf("[SyncACLs] Kafka admin client created successfully")
 
 	// 从 Kafka 获取所有 ACL 列表
 	filter := sarama.AclFilter{
@@ -258,12 +450,14 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to list acls from kafka: %w", err)
 	}
+	log.Printf("[SyncACLs] Found %d resource ACLs from Kafka", len(kafkaACLs))
 
 	// 从数据库获取当前 ACL 列表
-	dbACLs, _, err := s.aclRepo.List(ctx, clusterID, "", "", "", 0, 10000)
+	dbACLs, err := s.aclRepo.ListByCluster(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to list acls from database: %w", err)
 	}
+	log.Printf("[SyncACLs] Found %d ACLs in database", len(dbACLs))
 
 	// 构建 ACL 映射
 	dbACLMap := make(map[string]*models.ACL)
@@ -274,7 +468,10 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 	}
 
 	// 处理新增的 ACL
+	newCount := 0
 	for _, resourceACL := range kafkaACLs {
+		log.Printf("[SyncACLs] Processing resource: type=%d, name=%s, pattern=%d",
+			resourceACL.ResourceType, resourceACL.ResourceName, resourceACL.ResourcePatternType)
 		for _, acl := range resourceACL.Acls {
 			key := fmt.Sprintf("%s-%s-%s-%s-%s-%s",
 				s.convertResourceTypeFromSarama(resourceACL.ResourceType),
@@ -298,13 +495,15 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 					SyncStatus:      "synced",
 				}
 				if err := s.aclRepo.Create(ctx, newACL); err != nil {
-					// 记录错误但继续处理其他 ACL
+					log.Printf("[SyncACLs] Failed to create ACL: %v", err)
 					continue
 				}
+				newCount++
 			}
 		}
 	}
 
+	log.Printf("[SyncACLs] Sync completed for cluster %d: new=%d", clusterID, newCount)
 	return nil
 }
 
@@ -323,114 +522,114 @@ func (s *Service) validateCreateACLRequest(req *CreateACLRequest) error {
 }
 
 // 类型转换辅助函数
-func (s *Service) convertResourceType(rt models.ACLResourceType) sarama.AclResourceType {
-	switch rt {
-	case models.ACLResourceTypeTopic:
+func (s *Service) convertResourceType(rt models.ResourceType) sarama.AclResourceType {
+	switch strings.ToLower(string(rt)) {
+	case "topic":
 		return sarama.AclResourceTopic
-	case models.ACLResourceTypeGroup:
+	case "group":
 		return sarama.AclResourceGroup
-	case models.ACLResourceTypeCluster:
+	case "cluster":
 		return sarama.AclResourceCluster
 	default:
 		return sarama.AclResourceAny
 	}
 }
 
-func (s *Service) convertResourceTypeFromSarama(rt sarama.AclResourceType) models.ACLResourceType {
+func (s *Service) convertResourceTypeFromSarama(rt sarama.AclResourceType) models.ResourceType {
 	switch rt {
 	case sarama.AclResourceTopic:
-		return models.ACLResourceTypeTopic
+		return models.ResourceTypeTopic
 	case sarama.AclResourceGroup:
-		return models.ACLResourceTypeGroup
+		return models.ResourceTypeGroup
 	case sarama.AclResourceCluster:
-		return models.ACLResourceTypeCluster
+		return models.ResourceTypeCluster
 	default:
-		return models.ACLResourceTypeTopic
+		return models.ResourceTypeTopic
 	}
 }
 
-func (s *Service) convertPatternType(pt models.ACLPatternType) sarama.AclResourcePatternType {
-	switch pt {
-	case models.ACLPatternLiteral:
+func (s *Service) convertPatternType(pt models.PatternType) sarama.AclResourcePatternType {
+	switch strings.ToLower(string(pt)) {
+	case "literal":
 		return sarama.AclPatternLiteral
-	case models.ACLPatternPrefixed:
+	case "prefixed":
 		return sarama.AclPatternPrefixed
 	default:
 		return sarama.AclPatternLiteral
 	}
 }
 
-func (s *Service) convertPatternTypeFromSarama(pt sarama.AclResourcePatternType) models.ACLPatternType {
+func (s *Service) convertPatternTypeFromSarama(pt sarama.AclResourcePatternType) models.PatternType {
 	switch pt {
 	case sarama.AclPatternLiteral:
-		return models.ACLPatternLiteral
+		return models.PatternTypeLiteral
 	case sarama.AclPatternPrefixed:
-		return models.ACLPatternPrefixed
+		return models.PatternTypePrefixed
 	default:
-		return models.ACLPatternLiteral
+		return models.PatternTypeLiteral
 	}
 }
 
-func (s *Service) convertOperation(op models.ACLOperation) sarama.AclOperation {
-	switch op {
-	case models.ACLOperationRead:
+func (s *Service) convertOperation(op models.OperationType) sarama.AclOperation {
+	switch strings.ToLower(string(op)) {
+	case "read":
 		return sarama.AclOperationRead
-	case models.ACLOperationWrite:
+	case "write":
 		return sarama.AclOperationWrite
-	case models.ACLOperationCreate:
+	case "create":
 		return sarama.AclOperationCreate
-	case models.ACLOperationDelete:
+	case "delete":
 		return sarama.AclOperationDelete
-	case models.ACLOperationAlter:
+	case "alter":
 		return sarama.AclOperationAlter
-	case models.ACLOperationDescribe:
+	case "describe":
 		return sarama.AclOperationDescribe
-	case models.ACLOperationAll:
+	case "all":
 		return sarama.AclOperationAll
 	default:
 		return sarama.AclOperationAny
 	}
 }
 
-func (s *Service) convertOperationFromSarama(op sarama.AclOperation) models.ACLOperation {
+func (s *Service) convertOperationFromSarama(op sarama.AclOperation) models.OperationType {
 	switch op {
 	case sarama.AclOperationRead:
-		return models.ACLOperationRead
+		return models.OperationRead
 	case sarama.AclOperationWrite:
-		return models.ACLOperationWrite
+		return models.OperationWrite
 	case sarama.AclOperationCreate:
-		return models.ACLOperationCreate
+		return models.OperationCreate
 	case sarama.AclOperationDelete:
-		return models.ACLOperationDelete
+		return models.OperationDelete
 	case sarama.AclOperationAlter:
-		return models.ACLOperationAlter
+		return models.OperationAlter
 	case sarama.AclOperationDescribe:
-		return models.ACLOperationDescribe
+		return models.OperationDescribe
 	case sarama.AclOperationAll:
-		return models.ACLOperationAll
+		return models.OperationAll
 	default:
-		return models.ACLOperationRead
+		return models.OperationRead
 	}
 }
 
-func (s *Service) convertPermissionType(pt models.ACLPermission) sarama.AclPermissionType {
-	switch pt {
-	case models.ACLPermissionAllow:
+func (s *Service) convertPermissionType(pt models.PermissionType) sarama.AclPermissionType {
+	switch strings.ToLower(string(pt)) {
+	case "allow":
 		return sarama.AclPermissionAllow
-	case models.ACLPermissionDeny:
+	case "deny":
 		return sarama.AclPermissionDeny
 	default:
 		return sarama.AclPermissionAny
 	}
 }
 
-func (s *Service) convertPermissionTypeFromSarama(pt sarama.AclPermissionType) models.ACLPermission {
+func (s *Service) convertPermissionTypeFromSarama(pt sarama.AclPermissionType) models.PermissionType {
 	switch pt {
 	case sarama.AclPermissionAllow:
-		return models.ACLPermissionAllow
+		return models.PermissionTypeAllow
 	case sarama.AclPermissionDeny:
-		return models.ACLPermissionDeny
+		return models.PermissionTypeDeny
 	default:
-		return models.ACLPermissionAllow
+		return models.PermissionTypeAllow
 	}
 }

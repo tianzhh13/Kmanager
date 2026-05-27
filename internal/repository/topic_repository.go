@@ -18,9 +18,11 @@ type TopicRepository interface {
 	FindByName(ctx context.Context, clusterID int64, topicName string) (*models.Topic, error)
 	Exists(ctx context.Context, clusterID int64, topicName string) (bool, error)
 	List(ctx context.Context, clusterID int64, offset, limit int) ([]*models.Topic, int64, error)
+	ListByNames(ctx context.Context, clusterID int64, topicNames []string, offset, limit int) ([]*models.Topic, int64, error)
 	Search(ctx context.Context, clusterID int64, keyword string, offset, limit int) ([]*models.Topic, int64, error)
 	ListByCluster(ctx context.Context, clusterID int64) ([]*models.Topic, error)
 	DeleteByCluster(ctx context.Context, clusterID int64) error
+	Count(ctx context.Context) (int64, error)
 }
 
 type topicRepository struct {
@@ -110,6 +112,33 @@ func (r *topicRepository) List(ctx context.Context, clusterID int64, offset, lim
 	return topics, total, err
 }
 
+// ListByNames 根据名称列表获取 Topic
+func (r *topicRepository) ListByNames(ctx context.Context, clusterID int64, topicNames []string, offset, limit int) ([]*models.Topic, int64, error) {
+	var topics []*models.Topic
+	var total int64
+
+	if len(topicNames) == 0 {
+		return topics, 0, nil
+	}
+
+	query := r.db.WithContext(ctx).Model(&models.Topic{}).
+		Where("cluster_id = ? AND topic_name IN ?", clusterID, topicNames)
+
+	// 获取总数
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 获取分页数据
+	err := query.
+		Offset(offset).
+		Limit(limit).
+		Order("created_at DESC").
+		Find(&topics).Error
+
+	return topics, total, err
+}
+
 // Search 搜索 Topic
 func (r *topicRepository) Search(ctx context.Context, clusterID int64, keyword string, offset, limit int) ([]*models.Topic, int64, error) {
 	var topics []*models.Topic
@@ -151,4 +180,11 @@ func (r *topicRepository) DeleteByCluster(ctx context.Context, clusterID int64) 
 	return r.db.WithContext(ctx).
 		Where("cluster_id = ?", clusterID).
 		Delete(&models.Topic{}).Error
+}
+
+// Count 统计所有 Topic 数量
+func (r *topicRepository) Count(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&models.Topic{}).Count(&count).Error
+	return count, err
 }

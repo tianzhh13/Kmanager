@@ -14,6 +14,7 @@ type AuditLogRepository interface {
 	Create(ctx context.Context, log *models.AuditLog) error
 	FindByID(ctx context.Context, logID int64) (*models.AuditLog, error)
 	List(ctx context.Context, filter *AuditLogFilter, offset, limit int) ([]*models.AuditLog, int64, error)
+	Query(ctx context.Context, userID *int64, username, action, resourceType, status *string, startTime, endTime *time.Time, limit, offset int) ([]models.AuditLog, int64, error)
 	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
 }
 
@@ -102,4 +103,49 @@ func (r *auditLogRepository) DeleteBefore(ctx context.Context, before time.Time)
 		Where("created_at < ?", before).
 		Delete(&models.AuditLog{})
 	return result.RowsAffected, result.Error
+}
+
+// Query 查询审计日志（兼容服务层调用）
+func (r *auditLogRepository) Query(ctx context.Context, userID *int64, username, action, resourceType, status *string, startTime, endTime *time.Time, limit, offset int) ([]models.AuditLog, int64, error) {
+	var logs []models.AuditLog
+	var total int64
+
+	query := r.db.WithContext(ctx).Model(&models.AuditLog{})
+
+	// 应用过滤条件
+	if userID != nil && *userID > 0 {
+		query = query.Where("user_id = ?", *userID)
+	}
+	if username != nil && *username != "" {
+		query = query.Where("username = ?", *username)
+	}
+	if action != nil && *action != "" {
+		query = query.Where("action = ?", *action)
+	}
+	if resourceType != nil && *resourceType != "" {
+		query = query.Where("resource = ?", *resourceType)
+	}
+	if status != nil && *status != "" {
+		query = query.Where("status = ?", *status)
+	}
+	if startTime != nil {
+		query = query.Where("created_at >= ?", *startTime)
+	}
+	if endTime != nil {
+		query = query.Where("created_at <= ?", *endTime)
+	}
+
+	// 获取总数
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 获取分页数据
+	err := query.
+		Offset(offset).
+		Limit(limit).
+		Order("created_at DESC").
+		Find(&logs).Error
+
+	return logs, total, err
 }

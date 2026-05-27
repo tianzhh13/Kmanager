@@ -18,9 +18,9 @@ var (
 
 // Claims JWT 声明
 type Claims struct {
-	UserID   int64            `json:"user_id"`
-	Username string           `json:"username"`
-	Role     models.UserRole  `json:"role"`
+	UserID   int64           `json:"user_id"`
+	Username string          `json:"username"`
+	Role     models.UserRole `json:"role"`
 	jwt.RegisteredClaims
 }
 
@@ -30,6 +30,11 @@ type Service struct {
 	issuer             string
 	accessTokenExpire  time.Duration
 	refreshTokenExpire time.Duration
+}
+
+// AccessTokenExpire 返回 access token 过期时间（秒）
+func (s *Service) AccessTokenExpire() int {
+	return int(s.accessTokenExpire.Seconds())
 }
 
 // NewService 创建 JWT 服务实例

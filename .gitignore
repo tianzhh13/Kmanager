@@ -16,6 +16,7 @@ coverage.html
 
 # Dependency directories
 vendor/
+kerberos/
 
 # Go workspace file
 go.work
@@ -23,9 +24,13 @@ go.work
 # IDE
 .idea/
 .vscode/
+.kiro/
 *.swp
 *.swo
 *~
+docs/
+.sisyphus/
+
 
 # OS
 .DS_Store
@@ -45,15 +50,16 @@ temp/
 
 # Frontend
 frontend/node_modules/
-frontend/dist/
 frontend/.env.local
 frontend/.env.production
+
+# Note: frontend/dist/ is NOT ignored - we include pre-built frontend in Git
 
 # Database
 *.db
 *.sqlite
 *.sqlite3
+scripts\upgrade_add_sasl_mechanism.sql
 
 # Build
 build/
-dist/

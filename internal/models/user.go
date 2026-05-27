@@ -8,9 +8,9 @@ import (
 type UserRole string
 
 const (
-	RoleSuperAdmin   UserRole = "super_admin"
-	RoleClusterAdmin UserRole = "cluster_admin"
-	RoleReadOnly     UserRole = "read_only"
+	RoleSuperAdmin   UserRole = "super_admin"   // 超级管理员：全部集群全部权限
+	RoleClusterAdmin UserRole = "cluster_admin" // 集群管理员：分配的集群全部权限
+	RoleNormalUser   UserRole = "normal_user"   // 普通用户：分配的集群和 Topic 只读权限
 )
 
 // UserStatus 用户状态

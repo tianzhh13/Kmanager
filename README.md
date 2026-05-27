@@ -7,10 +7,11 @@
 - 🔐 **用户认证授权**：基于 JWT 的认证，支持超级管理员、集群管理员、只读用户三种角色
 - 🌐 **多集群管理**：统一管理多个 Kafka 集群，支持 PLAINTEXT、SCRAM、Kerberos 认证
 - 📊 **Topic 管理**：可视化创建、删除、配置 Topic，自动同步集群数据
-- 🔒 **ACL 管理**：管理 Kafka 访问控制规则
-- 📈 **监控展示**：集成 Prometheus，展示集群、Broker、Topic 级别监控指标
+- 🔒 **ACL 管理**：管理 Kafka 访问控制规则，支持批量操作
+- 📈 **监控展示**：集成 Prometheus，展示集群、Broker、Topic、消费组级别监控指标
 - 📝 **操作审计**：完整记录所有关键操作，支持查询和导出
-- 🔐 **敏感信息加密**：使用 AES-256 加密存储集群认证信息
+- 🔐 **敏感信息加密**：使用 AES-256-CFB 加密存储集群认证信息
+- ⏰ **数据同步**：后台 Worker 每 5 分钟自动同步 Topic 和 ACL 数据
 
 ## 技术栈
 
@@ -34,7 +35,7 @@
 
 **外部依赖**：
 - Kafka 2.8+
-- Prometheus 2.40+
+- Prometheus 2.40+（可选）
 
 ## 快速开始
 
@@ -43,6 +44,8 @@
 - Go 1.21+
 - MySQL 8.0+ 或 PostgreSQL 14+
 - Node.js 18+（前端开发）
+- Kafka 集群（用于测试）
+- Prometheus（可选，用于监控功能）
 
 ### 安装步骤
 
@@ -55,124 +58,89 @@ cd kafka-management-platform
 
 2. **配置文件**
 
-复制配置模板并修改：
-
 ```bash
 cp configs/config.yaml.example configs/config.yaml
+vim configs/config.yaml
 ```
-
-编辑 `configs/config.yaml`，配置数据库、JWT 密钥、加密密钥等。
 
 生成加密密钥：
 
 ```bash
-# 生成 32 字节的 AES-256 密钥（Base64 编码）
 openssl rand -base64 32
 ```
 
 3. **安装依赖**
 
 ```bash
-go mod download
+go mod tidy
+cd frontend && npm install
 ```
 
 4. **初始化数据库**
 
-创建数据库：
+```bash
+# MySQL
+mysql -u root -p < scripts/init_db.sql
 
-```sql
-CREATE DATABASE kafka_management CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+# PostgreSQL
+psql -U postgres -f scripts/init_db_postgres.sql
 ```
-
-运行数据库迁移（应用启动时自动执行）。
 
 5. **运行应用**
 
 ```bash
-go run cmd/server/main.go
-```
-
-应用将在 `http://localhost:8080` 启动。
-
-6. **测试 API**
-
-```bash
-# 测试健康检查
-curl http://localhost:8080/health
-
-# 测试登录（使用默认管理员账户）
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}'
-
-# 保存返回的 access_token，然后测试获取集群列表
-curl http://localhost:8080/api/v1/clusters \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-### 默认管理员账户
-
-- **用户名**：`admin`
-- **密码**：`admin123`
-- **角色**：超级管理员
-
-⚠️ **重要**：首次登录后请立即修改默认密码！
-
-### 开发模式
-
-```bash
-# 启动后端（带热重载）
+# 启动后端
 go run cmd/server/main.go
 
-# 启动前端（在 frontend 目录）
+# 启动前端（新终端）
 cd frontend
-npm install
 npm run dev
 ```
+
+6. **访问 Web UI**
+
+打开浏览器访问 `http://localhost:3000`
+
+**默认管理员账户**：
+- 用户名：`admin`
+- 密码：`admin123`
+
+⚠️ **重要**：首次登录后请立即修改默认密码！
 
 ## 项目结构
 
 ```
 kafka-management-platform/
-├── cmd/
-│   └── server/
-│       └── main.go              # 应用入口
-├── internal/
-│   ├── config/                  # 配置管理
-│   ├── database/                # 数据库连接
-│   ├── logger/                  # 日志模块
-│   ├── router/                  # 路由定义
-│   ├── models/                  # 数据模型
-│   ├── repository/              # 数据访问层
-│   ├── service/                 # 业务逻辑层
-│   │   ├── auth/               # 认证服务
-│   │   ├── cluster/            # 集群管理服务
-│   │   ├── topic/              # Topic 管理服务
-│   │   ├── acl/                # ACL 管理服务
-│   │   ├── monitor/            # 监控服务
-│   │   └── audit/              # 审计服务
-│   ├── middleware/              # 中间件
-│   ├── handler/                 # HTTP 处理器
-│   └── worker/                  # 后台任务
-├── pkg/
-│   ├── encryption/              # 加密工具
-│   ├── kafka/                   # Kafka 客户端封装
-│   └── validator/               # 验证器
-├── configs/
-│   └── config.yaml              # 配置文件
-├── frontend/                    # 前端项目
-├── docs/                        # 文档
-├── scripts/                     # 脚本
-├── go.mod
-├── go.sum
-└── README.md
+├── cmd/server/main.go          # 应用入口
+├── internal/                   # 内部代码
+│   ├── config/                # 配置管理
+│   ├── database/              # 数据库连接
+│   ├── models/                # 数据模型
+│   ├── repository/            # 数据访问层
+│   ├── service/               # 业务逻辑层
+│   ├── handler/               # HTTP 处理器
+│   ├── middleware/            # 中间件
+│   └── worker/                # 后台任务
+├── pkg/                        # 公共包
+│   ├── encryption/            # 加密工具
+│   ├── jwt/                   # JWT 工具
+│   └── kafka/                 # Kafka 客户端
+├── frontend/                   # 前端项目
+├── configs/                    # 配置文件
+├── docs/                       # 文档
+└── scripts/                    # 脚本
 ```
+
+## 文档
+
+- [部署指南](docs/deployment.md) - 详细的部署说明和配置
+- [API 文档](docs/api.md) - 完整的 API 端点和使用示例
+- [开发指南](docs/development.md) - 开发环境搭建和代码规范
+- [故障排查](docs/troubleshooting.md) - 常见问题诊断和解决
 
 ## 配置说明
 
 ### 数据库配置
-
-支持 MySQL 和 PostgreSQL：
 
 ```yaml
 database:
@@ -200,201 +168,20 @@ encryption:
   key: your-base64-encoded-32-byte-key
 ```
 
-## API 文档
+## 快速测试
 
-### 认证 API
-
-#### 登录
 ```bash
+# 健康检查
+curl http://localhost:8080/health
+
+# 登录
 curl -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{
-    "username": "admin",
-    "password": "admin123"
-  }'
-```
+  -d '{"username":"admin","password":"admin123"}'
 
-响应示例：
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "expires_in": 3600,
-  "user_info": {
-    "user_id": 1,
-    "username": "admin",
-    "email": "admin@example.com",
-    "role": "super_admin"
-  }
-}
-```
-
-#### 获取当前用户信息
-```bash
-curl http://localhost:8080/api/v1/auth/me \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-### 集群管理 API
-
-#### 获取集群列表
-```bash
+# 获取集群列表（需要 Token）
 curl http://localhost:8080/api/v1/clusters \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-#### 创建集群
-```bash
-curl -X POST http://localhost:8080/api/v1/clusters \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "cluster_name": "测试集群",
-    "bootstrap_servers": "localhost:9092",
-    "auth_type": "plaintext",
-    "prometheus_url": "http://localhost:9090",
-    "description": "开发环境测试集群"
-  }'
-```
-
-#### 获取集群详情
-```bash
-curl http://localhost:8080/api/v1/clusters/1 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-#### 更新集群
-```bash
-curl -X PUT http://localhost:8080/api/v1/clusters/1 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "description": "更新后的描述"
-  }'
-```
-
-#### 删除集群
-```bash
-curl -X DELETE http://localhost:8080/api/v1/clusters/1 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-主要 API 端点：
-
-- `POST /api/v1/auth/login` - 用户登录
-- `POST /api/v1/auth/refresh` - 刷新 Token
-- `GET /api/v1/auth/me` - 获取当前用户信息
-- `GET /api/v1/clusters` - 获取集群列表
-- `POST /api/v1/clusters` - 创建集群
-- `GET /api/v1/clusters/:id` - 获取集群详情
-- `PUT /api/v1/clusters/:id` - 更新集群
-- `DELETE /api/v1/clusters/:id` - 删除集群
-- `POST /api/v1/clusters/:id/grant` - 授予用户集群权限
-- `POST /api/v1/clusters/:id/revoke` - 撤销用户集群权限
-
-## 开发指南
-
-### 添加新功能
-
-1. 在 `internal/models` 定义数据模型
-2. 在 `internal/repository` 实现数据访问
-3. 在 `internal/service` 实现业务逻辑
-4. 在 `internal/handler` 实现 HTTP 处理器
-5. 在 `internal/router` 注册路由
-
-### 运行测试
-
-```bash
-# 运行所有测试
-go test ./...
-
-# 运行特定包的测试
-go test ./internal/service/auth/...
-
-# 运行测试并显示覆盖率
-go test -cover ./...
-```
-
-### 代码规范
-
-- 使用 `gofmt` 格式化代码
-- 使用 `golangci-lint` 进行代码检查
-- 遵循 Go 官方代码规范
-
-## 部署
-
-### 二进制部署
-
-```bash
-# 编译
-go build -o kafka-management-platform cmd/server/main.go
-
-# 运行
-./kafka-management-platform
-```
-
-### Docker 部署
-
-```bash
-# 构建镜像
-docker build -t kafka-management-platform .
-
-# 运行容器
-docker run -d -p 8080:8080 \
-  -v $(pwd)/configs:/app/configs \
-  kafka-management-platform
-```
-
-### systemd 服务
-
-创建 `/etc/systemd/system/kafka-management-platform.service`：
-
-```ini
-[Unit]
-Description=Kafka Management Platform
-After=network.target
-
-[Service]
-Type=simple
-User=kafka
-WorkingDirectory=/opt/kafka-management-platform
-ExecStart=/opt/kafka-management-platform/kafka-management-platform
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
-
-启动服务：
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable kafka-management-platform
-sudo systemctl start kafka-management-platform
-```
-
-## 故障排查
-
-### 数据库连接失败
-
-检查数据库配置和网络连接：
-
-```bash
-# MySQL
-mysql -h localhost -u root -p
-
-# PostgreSQL
-psql -h localhost -U postgres
-```
-
-### 日志查看
-
-```bash
-# 查看应用日志
-tail -f /var/log/kafka-management-platform.log
-
-# 查看 systemd 日志
-journalctl -u kafka-management-platform -f
+  -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
 ## 贡献指南
@@ -418,9 +205,33 @@ journalctl -u kafka-management-platform -f
 
 ## 更新日志
 
-### v0.1.0 (开发中)
+### v0.3.0 (当前版本)
 
-- 初始项目结构
-- 基础配置和日志模块
-- 数据库连接池
-- 路由框架
+**已完成功能**：
+- ✅ 用户认证授权（JWT + bcrypt + RBAC）
+- ✅ 多集群管理（支持 PLAINTEXT、SCRAM、Kerberos 认证）
+- ✅ Topic 管理（CRUD + 同步）
+- ✅ ACL 管理（CRUD + 批量操作 + 同步）
+- ✅ 监控服务（Prometheus 集成）
+- ✅ 审计日志（记录 + 查询 + 清理）
+- ✅ 数据同步 Worker（定时同步 Topic 和 ACL）
+- ✅ 用户管理（CRUD + 禁用/启用）
+- ✅ 前端 Web UI（React + Ant Design）
+- ✅ 前端生产构建（Vite + 代码分割 + SPA 路由）
+- ✅ 静态资源服务（后端集成前端构建产物）
+- ✅ 敏感信息加密（AES-256-CFB）
+- ✅ API 限流和安全中间件
+- ✅ 集成测试（端到端测试、权限测试、安全测试）
+- ✅ Docker 部署支持
+- ✅ systemd 服务配置
+
+**待完善功能**：
+- ⏳ 性能测试和优化
+- ⏳ API 文档（Swagger）
+
+### v0.1.0 (初始版本)
+
+- ✅ 初始项目结构
+- ✅ 基础配置和日志模块
+- ✅ 数据库连接池
+- ✅ 路由框架

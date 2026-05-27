@@ -8,11 +8,46 @@ import (
 
 // Config 应用配置
 type Config struct {
-	Server     ServerConfig     `mapstructure:"server"`
-	Database   DatabaseConfig   `mapstructure:"database"`
-	JWT        JWTConfig        `mapstructure:"jwt"`
-	Encryption EncryptionConfig `mapstructure:"encryption"`
-	Log        LogConfig        `mapstructure:"log"`
+	Server          ServerConfig          `mapstructure:"server"`
+	Database        DatabaseConfig        `mapstructure:"database"`
+	JWT             JWTConfig             `mapstructure:"jwt"`
+	Encryption      EncryptionConfig      `mapstructure:"encryption"`
+	Log             LogConfig             `mapstructure:"log"`
+	VictoriaMetrics VictoriaMetricsConfig `mapstructure:"victoriametrics"`
+	SyncWorker      SyncWorkerConfig      `mapstructure:"syncworker"`
+	Collector       CollectorConfig       `mapstructure:"collector"`
+	Session         SessionConfig         `mapstructure:"session"`
+	Cookie          CookieConfig          `mapstructure:"cookie"`
+	CORS            CORSConfig            `mapstructure:"cors"`
+}
+
+// CookieConfig Cookie 配置
+type CookieConfig struct {
+	Domain   string `mapstructure:"domain"`    // Cookie 域名，空则自动使用请求域名
+	Secure   bool   `mapstructure:"secure"`    // 是否仅 HTTPS 发送，生产环境应为 true
+	SameSite string `mapstructure:"same_site"` // Strict, Lax, None
+	Path     string `mapstructure:"path"`      // Cookie 路径，默认 /
+}
+
+// CORSConfig CORS 配置
+type CORSConfig struct {
+	AllowedOrigins []string `mapstructure:"allowed_origins"` // 允许的跨域来源列表
+}
+
+// SessionConfig 会话配置
+type SessionConfig struct {
+	IdleTimeout int `mapstructure:"idle_timeout"` // 无操作自动登出时间，单位分钟，默认 15
+}
+
+// SyncWorkerConfig 数据同步 Worker 配置
+type SyncWorkerConfig struct {
+	Interval int `mapstructure:"interval"` // 同步间隔，单位秒，默认 30
+}
+
+// CollectorConfig 独立数据采集器配置
+type CollectorConfig struct {
+	Concurrency int `mapstructure:"concurrency"` // 并发采集集群数，默认 10
+	Interval    int `mapstructure:"interval"`    // 采集间隔，单位秒，默认 30
 }
 
 // ServerConfig 服务器配置
@@ -32,6 +67,7 @@ type DatabaseConfig struct {
 	Username        string `mapstructure:"username"`
 	Password        string `mapstructure:"password"`
 	Database        string `mapstructure:"database"`
+	SSLMode         string `mapstructure:"ssl_mode"` // MySQL: false/true/custom, PostgreSQL: disable/require/verify-ca/verify-full
 	MaxOpenConns    int    `mapstructure:"max_open_conns"`
 	MaxIdleConns    int    `mapstructure:"max_idle_conns"`
 	ConnMaxLifetime int    `mapstructure:"conn_max_lifetime"` // 秒
@@ -39,10 +75,10 @@ type DatabaseConfig struct {
 
 // JWTConfig JWT 配置
 type JWTConfig struct {
-	Secret               string `mapstructure:"secret"`
-	AccessTokenExpire    int    `mapstructure:"access_token_expire"`  // 秒
-	RefreshTokenExpire   int    `mapstructure:"refresh_token_expire"` // 秒
-	Issuer               string `mapstructure:"issuer"`
+	Secret             string `mapstructure:"secret"`
+	AccessTokenExpire  int    `mapstructure:"access_token_expire"`  // 秒
+	RefreshTokenExpire int    `mapstructure:"refresh_token_expire"` // 秒
+	Issuer             string `mapstructure:"issuer"`
 }
 
 // EncryptionConfig 加密配置
@@ -55,6 +91,13 @@ type LogConfig struct {
 	Level      string `mapstructure:"level"`       // debug, info, warn, error
 	Format     string `mapstructure:"format"`      // json, console
 	OutputPath string `mapstructure:"output_path"` // stdout, 文件路径
+}
+
+// VictoriaMetricsConfig VictoriaMetrics 配置
+type VictoriaMetricsConfig struct {
+	WriteURL string `mapstructure:"write_url"` // 写入地址，如 http://localhost:8428/insert/0/prometheus
+	QueryURL string `mapstructure:"query_url"` // 查询地址，如 http://localhost:8428/select/0/prometheus
+	Enabled  bool   `mapstructure:"enabled"`   // 是否启用
 }
 
 // Load 加载配置
@@ -112,6 +155,7 @@ func setDefaults() {
 	viper.SetDefault("database.max_open_conns", 50)
 	viper.SetDefault("database.max_idle_conns", 10)
 	viper.SetDefault("database.conn_max_lifetime", 3600)
+	viper.SetDefault("database.ssl_mode", "disable")
 
 	// JWT 默认配置
 	viper.SetDefault("jwt.secret", "change-this-secret-key")
@@ -126,6 +170,29 @@ func setDefaults() {
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "json")
 	viper.SetDefault("log.output_path", "stdout")
+
+	// VictoriaMetrics 默认配置
+	viper.SetDefault("victoriametrics.write_url", "http://localhost:8428/insert/0/prometheus")
+	viper.SetDefault("victoriametrics.query_url", "http://localhost:8428/select/0/prometheus")
+	viper.SetDefault("victoriametrics.enabled", true)
+
+	// SyncWorker 默认配置
+	viper.SetDefault("syncworker.interval", 30)
+
+	// Collector 默认配置
+	viper.SetDefault("collector.concurrency", 10)
+	viper.SetDefault("collector.interval", 30)
+
+	// Session 默认配置
+	viper.SetDefault("session.idle_timeout", 15) // 15 分钟
+
+	// CORS 默认配置
+	viper.SetDefault("cors.allowed_origins", []string{})
+
+	// Cookie 默认配置
+	viper.SetDefault("cookie.path", "/")
+	viper.SetDefault("cookie.secure", false) // 开发环境 HTTP，生产环境应设为 true
+	viper.SetDefault("cookie.same_site", "Lax")
 }
 
 // validate 验证配置
