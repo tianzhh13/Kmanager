@@ -3,39 +3,68 @@ package logger
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var globalLogger *zap.SugaredLogger
 
-// Init 初始化日志
-func Init() error {
-	config := zap.NewProductionConfig()
-	config.EncoderConfig.TimeKey = "timestamp"
-	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	config.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
-
-	// 从环境变量读取日志级别
-	logLevel := os.Getenv("LOG_LEVEL")
-	if logLevel == "" {
-		logLevel = "info"
+// InitWithConfig 使用配置初始化日志
+func InitWithConfig(level, format, outputPath string, maxSize, maxBackups, maxAge int, compress bool) error {
+	// 解析日志级别
+	zapLevel := zapcore.InfoLevel
+	if level != "" {
+		if err := zapLevel.UnmarshalText([]byte(level)); err != nil {
+			return fmt.Errorf("invalid log level: %w", err)
+		}
 	}
 
-	var level zapcore.Level
-	if err := level.UnmarshalText([]byte(logLevel)); err != nil {
-		return fmt.Errorf("invalid log level: %w", err)
-	}
-	config.Level = zap.NewAtomicLevelAt(level)
+	// 编码器配置
+	encoderConfig := zap.NewProductionEncoderConfig()
+	encoderConfig.TimeKey = "timestamp"
+	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	encoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
 
-	logger, err := config.Build()
-	if err != nil {
-		return fmt.Errorf("failed to build logger: %w", err)
+	// 选择编码器
+	var encoder zapcore.Encoder
+	if format == "console" {
+		encoder = zapcore.NewConsoleEncoder(encoderConfig)
+	} else {
+		encoder = zapcore.NewJSONEncoder(encoderConfig)
 	}
 
+	// 输出目标
+	var writeSyncer zapcore.WriteSyncer
+	if outputPath == "" || outputPath == "stdout" {
+		writeSyncer = zapcore.AddSync(os.Stdout)
+	} else {
+		// 确保日志目录存在
+		if dir := filepath.Dir(outputPath); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("failed to create log directory: %w", err)
+			}
+		}
+		writeSyncer = zapcore.AddSync(&lumberjack.Logger{
+			Filename:   outputPath,
+			MaxSize:    maxSize,    // MB
+			MaxBackups: maxBackups, // 保留旧文件数
+			MaxAge:     maxAge,     // 保留天数
+			Compress:   compress,   // 压缩旧文件
+		})
+	}
+
+	core := zapcore.NewCore(encoder, writeSyncer, zap.NewAtomicLevelAt(zapLevel))
+	logger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
 	globalLogger = logger.Sugar()
 	return nil
+}
+
+// Init 使用默认配置初始化日志（兼容旧调用）
+func Init() error {
+	return InitWithConfig("info", "json", "stdout", 100, 5, 30, true)
 }
 
 // GetLogger 获取全局日志实例

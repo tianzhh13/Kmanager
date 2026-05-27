@@ -1,0 +1,54 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+kafka-management-platform
+kafka-collector
+
+# IDE
+.idea/
+.vscode/
+.kiro/
+.sisyphus/
+
+# Git
+.git/
+.gitignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs & Logs
+docs/
+*.log
+logs/
+stdout.log
+stderr.log
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Config (use mounted volume)
+configs/config.yaml
+!configs/config.yaml.example
+
+# Kerberos (use mounted volume)
+kerberos/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Build & Temp
+bin/
+build/
+tmp/
+temp/
+
+# Specs
+.kiro/

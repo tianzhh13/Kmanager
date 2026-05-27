@@ -34,7 +34,11 @@ encryption:
 log:
   level: info  # debug, info, warn, error
   format: json  # json, console
-  output_path: stdout  # stdout 或文件路径
+  output_path: stdout  # stdout 或文件路径（如 /var/log/kmanager/server.log）
+  max_size: 100  # 单个日志文件最大大小，单位 MB
+  max_backups: 5  # 保留的旧日志文件最大数量
+  max_age: 30  # 保留旧日志文件的最大天数
+  compress: true  # 是否压缩旧日志文件
 
 cors:
   # 允许跨域的来源列表，仅在 server.mode: release 时生效

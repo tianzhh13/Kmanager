@@ -18,8 +18,23 @@ import (
 )
 
 func main() {
-	// 初始化日志
-	if err := logger.Init(); err != nil {
+	// 加载配置
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 初始化日志（依赖配置）
+	if err := logger.InitWithConfig(
+		cfg.Log.Level,
+		cfg.Log.Format,
+		cfg.Log.OutputPath,
+		cfg.Log.MaxSize,
+		cfg.Log.MaxBackups,
+		cfg.Log.MaxAge,
+		cfg.Log.Compress,
+	); err != nil {
 		fmt.Printf("Failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
@@ -27,12 +42,6 @@ func main() {
 
 	log := logger.GetLogger()
 	log.Info("Starting Kafka Management Platform...")
-
-	// 加载配置
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatal("Failed to load config", "error", err)
-	}
 
 	// 初始化数据库
 	db, err := database.Init(cfg)
