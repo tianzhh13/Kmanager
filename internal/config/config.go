@@ -91,6 +91,10 @@ type LogConfig struct {
 	Level      string `mapstructure:"level"`       // debug, info, warn, error
 	Format     string `mapstructure:"format"`      // json, console
 	OutputPath string `mapstructure:"output_path"` // stdout, 文件路径
+	MaxSize    int    `mapstructure:"max_size"`    // 单个日志文件最大大小，单位 MB，默认 100
+	MaxBackups int    `mapstructure:"max_backups"` // 保留的旧日志文件最大数量，默认 5
+	MaxAge     int    `mapstructure:"max_age"`     // 保留旧日志文件的最大天数，默认 30
+	Compress   bool   `mapstructure:"compress"`    // 是否压缩旧日志文件，默认 true
 }
 
 // VictoriaMetricsConfig VictoriaMetrics 配置
@@ -170,6 +174,10 @@ func setDefaults() {
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "json")
 	viper.SetDefault("log.output_path", "stdout")
+	viper.SetDefault("log.max_size", 100)
+	viper.SetDefault("log.max_backups", 5)
+	viper.SetDefault("log.max_age", 30)
+	viper.SetDefault("log.compress", true)
 
 	// VictoriaMetrics 默认配置
 	viper.SetDefault("victoriametrics.write_url", "http://localhost:8428/insert/0/prometheus")
