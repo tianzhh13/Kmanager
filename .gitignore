@@ -24,9 +24,13 @@ go.work
 # IDE
 .idea/
 .vscode/
+.kiro/
 *.swp
 *.swo
 *~
+docs/
+.sisyphus/
+
 
 # OS
 .DS_Store
@@ -59,4 +63,3 @@ scripts\upgrade_add_sasl_mechanism.sql
 
 # Build
 build/
-dist/
