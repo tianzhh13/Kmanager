@@ -50,25 +50,19 @@ func (s *PermissionService) CheckPermission(ctx context.Context, userID int64, r
 }
 
 // CheckClusterPermission 检查用户是否有指定集群的管理权限
-func (s *PermissionService) CheckClusterPermission(ctx context.Context, userID, clusterID int64) (bool, error) {
-	// 获取用户信息
-	user, err := s.userRepo.FindByID(ctx, userID)
-	if err != nil {
-		return false, err
-	}
-
+func (s *PermissionService) CheckClusterPermission(ctx context.Context, userID, clusterID int64, role string) (bool, error) {
 	// 超级管理员拥有所有集群权限
-	if user.Role == models.RoleSuperAdmin {
+	if role == string(models.RoleSuperAdmin) {
 		return true, nil
 	}
 
 	// 普通用户无集群管理权限
-	if user.Role == models.RoleNormalUser {
+	if role == string(models.RoleNormalUser) {
 		return false, nil
 	}
 
 	// 集群管理员需要检查是否被授权管理该集群
-	if user.Role == models.RoleClusterAdmin {
+	if role == string(models.RoleClusterAdmin) {
 		return s.clusterUserRepo.HasAccess(ctx, clusterID, userID)
 	}
 
@@ -76,15 +70,9 @@ func (s *PermissionService) CheckClusterPermission(ctx context.Context, userID, 
 }
 
 // CheckClusterReadPermission 检查用户是否有集群的读权限
-func (s *PermissionService) CheckClusterReadPermission(ctx context.Context, userID, clusterID int64) (bool, error) {
-	// 获取用户信息
-	user, err := s.userRepo.FindByID(ctx, userID)
-	if err != nil {
-		return false, err
-	}
-
+func (s *PermissionService) CheckClusterReadPermission(ctx context.Context, userID, clusterID int64, role string) (bool, error) {
 	// 超级管理员拥有所有权限
-	if user.Role == models.RoleSuperAdmin {
+	if role == string(models.RoleSuperAdmin) {
 		return true, nil
 	}
 

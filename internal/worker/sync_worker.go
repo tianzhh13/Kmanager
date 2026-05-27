@@ -3,11 +3,11 @@ package worker
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
 	"kafka-management-platform/internal/config"
+	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/pkg/encryption"
@@ -52,7 +52,7 @@ func NewSyncWorker(
 		var err error
 		encryptSvc, err = encryption.NewService(cfg.Encryption.Key)
 		if err != nil {
-			log.Printf("Warning: failed to create encryption service: %v, auth config will not be decrypted", err)
+			logger.Warn("Failed to create encryption service, auth config will not be decrypted", "error", err)
 			encryptSvc = nil
 		}
 	}
@@ -64,7 +64,7 @@ func NewSyncWorker(
 	if cfg.SyncWorker.Interval > 0 {
 		syncInterval = time.Duration(cfg.SyncWorker.Interval) * time.Second
 	}
-	log.Printf("Sync worker interval: %v", syncInterval)
+	logger.Info("Sync worker interval", "interval", syncInterval)
 
 	return &SyncWorker{
 		cfg:             cfg,
@@ -81,7 +81,7 @@ func NewSyncWorker(
 
 // Start 启动 Worker
 func (w *SyncWorker) Start() error {
-	log.Println("Starting sync worker...")
+	logger.Info("Starting sync worker...")
 
 	// 启动定时同步任务
 	w.wg.Add(1)
@@ -91,13 +91,13 @@ func (w *SyncWorker) Start() error {
 	w.wg.Add(1)
 	go w.runLogCleanup()
 
-	log.Println("Sync worker started")
+	logger.Info("Sync worker started")
 	return nil
 }
 
 // Stop 停止 Worker
 func (w *SyncWorker) Stop() error {
-	log.Println("Stopping sync worker...")
+	logger.Info("Stopping sync worker...")
 
 	// 关闭所有 Admin Client
 	w.adminPool.Range(func(key, value interface{}) bool {
@@ -110,7 +110,7 @@ func (w *SyncWorker) Stop() error {
 
 	close(w.stopCh)
 	w.wg.Wait()
-	log.Println("Sync worker stopped")
+	logger.Info("Sync worker stopped")
 	return nil
 }
 
@@ -141,11 +141,11 @@ func (w *SyncWorker) syncAllClustersWithRetry() {
 
 	clusters, _, err := w.clusterRepo.List(ctx, 0, 1000)
 	if err != nil {
-		log.Printf("Failed to list clusters: %v", err)
+		logger.Error("Failed to list clusters", "error", err)
 		return
 	}
 
-	log.Printf("Found %d clusters to sync", len(clusters))
+	logger.Info("Found clusters to sync", "count", len(clusters))
 
 	for _, cluster := range clusters {
 		w.syncClusterWithRetry(ctx, cluster.ClusterID)
@@ -158,13 +158,13 @@ func (w *SyncWorker) syncClusterWithRetry(ctx context.Context, clusterID int64) 
 	for i := 0; i < maxRetries; i++ {
 		if err := w.SyncCluster(ctx, clusterID); err != nil {
 			lastErr = err
-			log.Printf("Retry %d/%d: Failed to sync cluster %d: %v", i+1, maxRetries, clusterID, err)
+			logger.Warn("Failed to sync cluster, retrying", "attempt", i+1, "max_retries", maxRetries, "cluster_id", clusterID, "error", err)
 			time.Sleep(retryInterval)
 			continue
 		}
 		return
 	}
-	log.Printf("Failed to sync cluster %d after %d retries: %v", clusterID, maxRetries, lastErr)
+	logger.Error("Failed to sync cluster after retries", "cluster_id", clusterID, "max_retries", maxRetries, "error", lastErr)
 }
 
 // runLogCleanup 运行日志清理
@@ -207,7 +207,7 @@ func (w *SyncWorker) runLogCleanup() {
 
 // SyncCluster 同步单个集群
 func (w *SyncWorker) SyncCluster(ctx context.Context, clusterID int64) error {
-	log.Printf("Syncing cluster %d...", clusterID)
+	logger.Info("Syncing cluster", "cluster_id", clusterID)
 
 	// 获取集群配置
 	cluster, err := w.clusterRepo.FindByID(ctx, clusterID)
@@ -223,15 +223,15 @@ func (w *SyncWorker) SyncCluster(ctx context.Context, clusterID int64) error {
 
 	// 同步 Topics
 	if err := w.syncTopics(ctx, adminClient, clusterID); err != nil {
-		log.Printf("Failed to sync topics for cluster %d: %v", clusterID, err)
+		logger.Error("Failed to sync topics", "cluster_id", clusterID, "error", err)
 	}
 
 	// 同步 ACLs
 	if err := w.syncACLs(ctx, adminClient, clusterID); err != nil {
-		log.Printf("Failed to sync ACLs for cluster %d: %v", clusterID, err)
+		logger.Error("Failed to sync ACLs", "cluster_id", clusterID, "error", err)
 	}
 
-	log.Printf("Cluster %d synced successfully", clusterID)
+	logger.Info("Cluster synced successfully", "cluster_id", clusterID)
 	return nil
 }
 
@@ -272,14 +272,15 @@ func (w *SyncWorker) syncTopics(ctx context.Context, adminClient *kafka.AdminCli
 				existing.SyncStatus = models.SyncStatusSynced
 				existing.LastSyncAt = &now
 				if err := w.topicRepo.Update(ctx, existing); err != nil {
-					log.Printf("Failed to update topic %s: %v", topicName, err)
+					logger.Error("Failed to update topic", "topic", topicName, "error", err)
 				}
 			} else {
-				// 更新同步状态
-				existing.SyncStatus = models.SyncStatusSynced
-				existing.LastSyncAt = &now
-				if err := w.topicRepo.Update(ctx, existing); err != nil {
-					log.Printf("Failed to update topic sync status %s: %v", topicName, err)
+				if existing.SyncStatus != models.SyncStatusSynced {
+					existing.SyncStatus = models.SyncStatusSynced
+					existing.LastSyncAt = &now
+					if err := w.topicRepo.Update(ctx, existing); err != nil {
+						logger.Error("Failed to update topic sync status", "topic", topicName, "error", err)
+					}
 				}
 			}
 			delete(dbTopicMap, topicName)
@@ -294,7 +295,7 @@ func (w *SyncWorker) syncTopics(ctx context.Context, adminClient *kafka.AdminCli
 				LastSyncAt:        &now,
 			}
 			if err := w.topicRepo.Create(ctx, topic); err != nil {
-				log.Printf("Failed to create topic %s: %v", topicName, err)
+				logger.Error("Failed to create topic", "topic", topicName, "error", err)
 			}
 		}
 	}
@@ -302,7 +303,7 @@ func (w *SyncWorker) syncTopics(ctx context.Context, adminClient *kafka.AdminCli
 	// 清理数据库中已删除的 Topics
 	for _, topic := range dbTopicMap {
 		if err := w.topicRepo.Delete(ctx, topic.TopicID); err != nil {
-			log.Printf("Failed to delete topic %s: %v", topic.TopicName, err)
+			logger.Error("Failed to delete topic", "topic", topic.TopicName, "error", err)
 		}
 	}
 
@@ -348,7 +349,7 @@ func (w *SyncWorker) syncACLs(ctx context.Context, adminClient *kafka.AdminClien
 				existing.SyncStatus = models.SyncStatusSynced
 				existing.LastSyncAt = &now
 				if err := w.aclRepo.Update(ctx, existing); err != nil {
-					log.Printf("Failed to update ACL: %v", err)
+					logger.Error("Failed to update ACL", "error", err)
 				}
 				delete(dbACLMap, key)
 			} else {
@@ -366,7 +367,7 @@ func (w *SyncWorker) syncACLs(ctx context.Context, adminClient *kafka.AdminClien
 					LastSyncAt:      &now,
 				}
 				if err := w.aclRepo.Create(ctx, acl); err != nil {
-					log.Printf("Failed to create ACL: %v", err)
+					logger.Error("Failed to create ACL", "error", err)
 				}
 			}
 		}
@@ -375,7 +376,7 @@ func (w *SyncWorker) syncACLs(ctx context.Context, adminClient *kafka.AdminClien
 	// 清理数据库中已删除的 ACLs
 	for _, acl := range dbACLMap {
 		if err := w.aclRepo.Delete(ctx, acl.ACLID); err != nil {
-			log.Printf("Failed to delete ACL %d: %v", acl.ACLID, err)
+			logger.Error("Failed to delete ACL", "acl_id", acl.ACLID, "error", err)
 		}
 	}
 
@@ -394,7 +395,7 @@ func buildKafkaACLKeyFromResourceAndAcl(resource *sarama.Resource, acl *sarama.A
 
 // cleanupLogs 清理日志
 func (w *SyncWorker) cleanupLogs() {
-	log.Println("Running log cleanup...")
+	logger.Info("Running log cleanup...")
 
 	// 默认清理 180 天前的日志
 	retentionDays := 180
@@ -402,11 +403,11 @@ func (w *SyncWorker) cleanupLogs() {
 
 	deleted, err := w.auditLogRepo.DeleteBefore(context.Background(), cutoffTime)
 	if err != nil {
-		log.Printf("Failed to cleanup logs: %v", err)
+		logger.Error("Failed to cleanup logs", "error", err)
 		return
 	}
 
-	log.Printf("Cleaned up %d audit logs older than %d days", deleted, retentionDays)
+	logger.Info("Cleaned up audit logs", "deleted", deleted, "retention_days", retentionDays)
 }
 
 // StartLogCleanup 手动触发日志清理
@@ -426,7 +427,7 @@ func (w *SyncWorker) getAdminClient(cluster *models.Cluster) (*kafka.AdminClient
 	if w.encryptSvc != nil && authConfigJSON != "" {
 		decrypted, err := w.encryptSvc.Decrypt(authConfigJSON)
 		if err != nil {
-			log.Printf("Warning: failed to decrypt auth config for cluster %d: %v", cluster.ClusterID, err)
+			logger.Warn("Failed to decrypt auth config", "cluster_id", cluster.ClusterID, "error", err)
 		} else {
 			authConfigJSON = string(decrypted)
 		}
@@ -440,7 +441,7 @@ func (w *SyncWorker) getAdminClient(cluster *models.Cluster) (*kafka.AdminClient
 			return adminClient, nil
 		}
 		// 连接失效，关闭旧连接并从池中移除
-		log.Printf("Admin client for cluster %d is stale, recreating...", cluster.ClusterID)
+		logger.Info("Admin client stale, recreating", "cluster_id", cluster.ClusterID)
 		adminClient.Close()
 		w.adminPool.Delete(cluster.ClusterID)
 	}

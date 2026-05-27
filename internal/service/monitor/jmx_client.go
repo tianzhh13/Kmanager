@@ -257,8 +257,6 @@ func parsePrometheusMetrics(data string) []JMXMetric {
 
 	// 匹配 Prometheus 格式: metric_name{label1="value1",label2="value2"} value
 	// 使用预编译的包级正则
-	_ = promMetricPattern
-
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "#") || line == "" {

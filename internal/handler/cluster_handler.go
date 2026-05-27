@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"net/http"
@@ -68,7 +68,7 @@ func (h *ClusterHandler) UploadKeytab(c *gin.Context) {
 	// 保存到临时目录
 	tempID, err := h.clusterSvc.SaveTempKeytab(c.Request.Context(), data)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -86,7 +86,7 @@ func (h *ClusterHandler) DeleteTempKeytab(c *gin.Context) {
 		return
 	}
 	if err := h.clusterSvc.DeleteTempKeytab(c.Request.Context(), tempID); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 	c.JSON(200, gin.H{"message": "temp keytab deleted"})
@@ -96,7 +96,7 @@ func (h *ClusterHandler) DeleteTempKeytab(c *gin.Context) {
 func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 	var req cluster.CreateClusterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "invalid request: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
@@ -105,7 +105,7 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 
 	result, err := h.clusterSvc.CreateCluster(c.Request.Context(), &req)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -122,12 +122,12 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 
 	var req cluster.UpdateClusterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "invalid request: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
 	if err := h.clusterSvc.UpdateCluster(c.Request.Context(), clusterID, &req); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -143,7 +143,7 @@ func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 	}
 
 	if err := h.clusterSvc.DeleteCluster(c.Request.Context(), clusterID); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -189,7 +189,7 @@ func (h *ClusterHandler) ListClusters(c *gin.Context) {
 
 	clusters, total, err := h.clusterSvc.ListClusters(c.Request.Context(), userID, models.UserRole(role), offset, pageSize)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -213,7 +213,7 @@ func (h *ClusterHandler) GrantAccess(c *gin.Context) {
 	userRole := middleware.GetUserRole(c)
 	if userRole == string(models.RoleClusterAdmin) {
 		userID := middleware.GetUserID(c)
-		hasAccess, err := h.permissionSvc.CheckClusterPermission(c.Request.Context(), userID, clusterID)
+		hasAccess, err := h.permissionSvc.CheckClusterPermission(c.Request.Context(), userID, clusterID, userRole)
 		if err != nil || !hasAccess {
 			c.JSON(http.StatusForbidden, gin.H{"error": "no permission for this cluster"})
 			return
@@ -224,12 +224,12 @@ func (h *ClusterHandler) GrantAccess(c *gin.Context) {
 		UserID int64 `json:"user_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "invalid request: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
 	if err := h.clusterSvc.GrantClusterAccess(c.Request.Context(), clusterID, req.UserID); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -248,7 +248,7 @@ func (h *ClusterHandler) RevokeAccess(c *gin.Context) {
 	userRole := middleware.GetUserRole(c)
 	if userRole == string(models.RoleClusterAdmin) {
 		userID := middleware.GetUserID(c)
-		hasAccess, err := h.permissionSvc.CheckClusterPermission(c.Request.Context(), userID, clusterID)
+		hasAccess, err := h.permissionSvc.CheckClusterPermission(c.Request.Context(), userID, clusterID, userRole)
 		if err != nil || !hasAccess {
 			c.JSON(http.StatusForbidden, gin.H{"error": "no permission for this cluster"})
 			return
@@ -259,12 +259,12 @@ func (h *ClusterHandler) RevokeAccess(c *gin.Context) {
 		UserID int64 `json:"user_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "invalid request: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
 	if err := h.clusterSvc.RevokeClusterAccess(c.Request.Context(), clusterID, req.UserID); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -281,7 +281,7 @@ func (h *ClusterHandler) ListClusterUsers(c *gin.Context) {
 
 	users, err := h.clusterSvc.ListClusterUsers(c.Request.Context(), clusterID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -298,7 +298,7 @@ func (h *ClusterHandler) ListUserClusters(c *gin.Context) {
 
 	clusters, err := h.clusterSvc.ListUserClusters(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -314,7 +314,7 @@ func (h *ClusterHandler) TestConnection(c *gin.Context) {
 	}
 
 	if err := h.clusterSvc.TestConnection(c.Request.Context(), clusterID); err != nil {
-		c.JSON(500, gin.H{"error": "connection test failed", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "connection test failed"})
 		return
 	}
 
@@ -325,12 +325,12 @@ func (h *ClusterHandler) TestConnection(c *gin.Context) {
 func (h *ClusterHandler) TestConnectionForCreate(c *gin.Context) {
 	var req cluster.CreateClusterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "invalid request: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
 	if err := h.clusterSvc.TestConnectionForCreate(c.Request.Context(), &req); err != nil {
-		c.JSON(400, gin.H{"error": "connection test failed", "details": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "connection test failed"})
 		return
 	}
 

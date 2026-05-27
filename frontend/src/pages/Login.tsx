@@ -22,23 +22,19 @@ const Login: React.FC = () => {
   }
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: '#f5f5f5',
-      }}
-    >
-      <Card
-        title={<div style={{ textAlign: 'center', fontSize: 24, fontWeight: 'bold' }}>Kafka 管理平台</div>}
-        style={{ width: 400, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-      >
+    <div className="login-page">
+      <Card className="login-card" bordered={false}>
+        <div className="login-brand">
+          <div className="login-brand-icon">Km</div>
+          <h2>Kmanager</h2>
+          <p>Enterprise Kafka Management Platform</p>
+        </div>
+
         <Form
           form={form}
           onFinish={handleSubmit}
           layout="vertical"
+          size="large"
         >
           <Form.Item
             name="username"
@@ -47,7 +43,6 @@ const Login: React.FC = () => {
             <Input
               prefix={<UserOutlined />}
               placeholder="用户名"
-              size="large"
             />
           </Form.Item>
 
@@ -58,19 +53,18 @@ const Login: React.FC = () => {
             <Input.Password
               prefix={<LockOutlined />}
               placeholder="密码"
-              size="large"
             />
           </Form.Item>
 
-          <Form.Item>
+          <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
             <Button
               type="primary"
               htmlType="submit"
               loading={loading}
               block
-              size="large"
+              className="login-submit-btn"
             >
-              登录
+              {loading ? '正在登录...' : '登 录'}
             </Button>
           </Form.Item>
         </Form>

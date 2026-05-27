@@ -28,9 +28,12 @@ var (
 
 // tempKeytabStore 临时 keytab 文件存储
 type tempKeytabStore struct {
-	mu     sync.RWMutex
-	store  map[string][]byte    // tempID -> keytab data
-	expiry map[string]time.Time // tempID -> expiry time
+	mu      sync.RWMutex
+	store   map[string][]byte    // tempID -> keytab data
+	expiry  map[string]time.Time // tempID -> expiry time
+	stopCh  chan struct{}
+	started bool
+	once    sync.Once
 }
 
 var globalTempKeytabStore = &tempKeytabStore{
@@ -38,8 +41,18 @@ var globalTempKeytabStore = &tempKeytabStore{
 	expiry: make(map[string]time.Time),
 }
 
+// ensureStarted 确保 cleanupLoop 已启动（惰性初始化）
+func (t *tempKeytabStore) ensureStarted() {
+	t.once.Do(func() {
+		t.stopCh = make(chan struct{})
+		t.started = true
+		go t.cleanupLoop()
+	})
+}
+
 // set 保存临时 keytab
 func (t *tempKeytabStore) set(tempID string, data []byte) {
+	t.ensureStarted()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.store[tempID] = data
@@ -67,6 +80,29 @@ func (t *tempKeytabStore) delete(tempID string) {
 	defer t.mu.Unlock()
 	delete(t.store, tempID)
 	delete(t.expiry, tempID)
+}
+
+// cleanupLoop 定期清理过期的临时 keytab
+func (t *tempKeytabStore) cleanupLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			t.mu.Lock()
+			now := time.Now()
+			for id, exp := range t.expiry {
+				if now.After(exp) {
+					delete(t.store, id)
+					delete(t.expiry, id)
+				}
+			}
+			t.mu.Unlock()
+		case <-t.stopCh:
+			return
+		}
+	}
 }
 
 // Service 集群管理服务
@@ -353,12 +389,6 @@ func (s *Service) saveKerberosFiles(authConfig map[string]interface{}, clusterID
 	return nil
 }
 
-// moveKerberosFilesToClusterDir 将 Kerberos 文件移动到集群目录（已废弃，使用 saveKerberosFiles）
-func (s *Service) moveKerberosFilesToClusterDir(authConfig map[string]interface{}, clusterID int64) error {
-	keytabData, _ := authConfig["_keytab_data"].([]byte)
-	return s.saveKerberosFiles(authConfig, clusterID, keytabData)
-}
-
 // UpdateCluster 更新集群
 // 只允许更新集群名称、JMX Exporter URL、描述
 // Bootstrap Servers 和认证配置不可修改
@@ -570,11 +600,6 @@ func (s *Service) TestConnection(ctx context.Context, clusterID int64) error {
 // TestConnectionForCreate 在创建集群前测试连接配置
 // 用于前端在提交创建请求前验证连接
 func (s *Service) TestConnectionForCreate(ctx context.Context, req *CreateClusterRequest) error {
-	// 调试日志
-	fmt.Printf("[DEBUG] TestConnectionForCreate - ClusterName: %s\n", req.ClusterName)
-	fmt.Printf("[DEBUG] TestConnectionForCreate - BootstrapServers: %s\n", req.BootstrapServers)
-	fmt.Printf("[DEBUG] TestConnectionForCreate - AuthType: %s\n", req.AuthType)
-
 	// 处理认证配置
 	authConfig := req.AuthConfig
 	if authConfig == nil {
@@ -598,7 +623,6 @@ func (s *Service) TestConnectionForCreate(ctx context.Context, req *CreateCluste
 			return fmt.Errorf("failed to marshal auth config: %w", err)
 		}
 		authConfigJSON = string(jsonBytes)
-		fmt.Printf("[DEBUG] TestConnectionForCreate - AuthConfigJSON: %s\n", authConfigJSON)
 	}
 
 	// 创建临时集群对象用于测试连接
@@ -660,26 +684,18 @@ func (s *Service) prepareKerberosRuntimeConfig(authConfigJSON string, clusterID 
 
 // testKafkaConnection 测试 Kafka 集群连接的内部方法
 func (s *Service) testKafkaConnection(cluster *models.Cluster, authConfigJSON string) error {
-	// 调试日志：打印连接参数
-	fmt.Printf("[DEBUG] testKafkaConnection - BootstrapServers: %s\n", cluster.BootstrapServers)
-	fmt.Printf("[DEBUG] testKafkaConnection - AuthType: %s\n", cluster.AuthType)
-	fmt.Printf("[DEBUG] testKafkaConnection - AuthConfigJSON: %s\n", authConfigJSON)
-
 	// 创建 Kafka Admin 客户端
 	adminClient, err := kafka.NewAdminClient(cluster, authConfigJSON)
 	if err != nil {
-		fmt.Printf("[DEBUG] Failed to create kafka admin client: %v\n", err)
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
 	defer adminClient.Close()
 
 	// 测试连接
 	if err := adminClient.TestConnection(); err != nil {
-		fmt.Printf("[DEBUG] Connection test failed: %v\n", err)
 		return fmt.Errorf("connection test failed: %w", err)
 	}
 
-	fmt.Printf("[DEBUG] Connection test successful\n")
 	return nil
 }
 

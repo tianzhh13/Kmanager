@@ -18,8 +18,8 @@ func OptimizeDatabase(db *gorm.DB) error {
 	}
 
 	// 配置连接池
-	sqlDB.SetMaxOpenConns(50)    // 最大打开连接数
-	sqlDB.SetMaxIdleConns(10)    // 最大空闲连接数
+	sqlDB.SetMaxOpenConns(50)               // 最大打开连接数
+	sqlDB.SetMaxIdleConns(10)               // 最大空闲连接数
 	sqlDB.SetConnMaxLifetime(1 * time.Hour) // 连接最大生命周期
 
 	logger.Info("Database connection pool optimized",
@@ -38,34 +38,34 @@ func AddIndexes(db *gorm.DB) error {
 		name   string
 		fields string
 	}{
-		// user表索引
-		{"users", "idx_users_username", "username"},
-		{"users", "idx_users_email", "email"},
-		{"users", "idx_users_status", "status"},
+		// user 表索引
+		{"user", "idx_users_username", "username"},
+		{"user", "idx_users_email", "email"},
+		{"user", "idx_users_status", "status"},
 
-		// cluster表索引
-		{"clusters", "idx_clusters_name", "name"},
-		{"clusters", "idx_clusters_status", "status"},
+		// cluster 表索引
+		{"cluster", "idx_clusters_name", "name"},
+		{"cluster", "idx_clusters_status", "status"},
 
-		// cluster_user_relation表索引
-		{"cluster_user_relations", "idx_cur_user_id", "user_id"},
-		{"cluster_user_relations", "idx_cur_cluster_id", "cluster_id"},
+		// cluster_user_relation 表索引
+		{"cluster_user_relation", "idx_cur_user_id", "user_id"},
+		{"cluster_user_relation", "idx_cur_cluster_id", "cluster_id"},
 
-		// topic表索引
-		{"topics", "idx_topics_cluster_id", "cluster_id"},
-		{"topics", "idx_topics_name", "name"},
-		{"topics", "idx_topics_cluster_name", "cluster_id, name"},
+		// topic 表索引
+		{"topic", "idx_topics_cluster_id", "cluster_id"},
+		{"topic", "idx_topics_name", "name"},
+		{"topic", "idx_topics_cluster_name", "cluster_id, name"},
 
-		// acl表索引
-		{"acls", "idx_acls_cluster_id", "cluster_id"},
-		{"acls", "idx_acls_principal", "principal"},
-		{"acls", "idx_acls_resource_type_name", "resource_type, resource_name"},
+		// acl 表索引
+		{"acl", "idx_acls_cluster_id", "cluster_id"},
+		{"acl", "idx_acls_principal", "principal"},
+		{"acl", "idx_acls_resource_type_name", "resource_type, resource_name"},
 
-		// audit_log表索引
-		{"audit_logs", "idx_audit_user_id", "user_id"},
-		{"audit_logs", "idx_audit_action", "action"},
-		{"audit_logs", "idx_audit_resource_type", "resource_type"},
-		{"audit_logs", "idx_audit_created_at", "created_at"},
+		// audit_log 表索引
+		{"audit_log", "idx_audit_user_id", "user_id"},
+		{"audit_log", "idx_audit_action", "action"},
+		{"audit_log", "idx_audit_resource_type", "resource_type"},
+		{"audit_log", "idx_audit_created_at", "created_at"},
 	}
 
 	for _, idx := range indexes {

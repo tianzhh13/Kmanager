@@ -51,7 +51,7 @@ type ClusterMetricsResponse struct {
 type Service struct {
 	clusterRepo   repository.ClusterRepository
 	encryptionSvc *encryption.Service
-	jmxClients    map[int64]*JMXClient  // JMX Exporter 客户端缓存
+	jmxClients    sync.Map              // clusterID -> *JMXClient（并发安全）
 	kafkaExporter *KafkaExporterService // 内置 Kafka Exporter
 	vmClient      *victoriametrics.Client
 }
@@ -66,7 +66,7 @@ func NewService(
 	return &Service{
 		clusterRepo:   clusterRepo,
 		encryptionSvc: encryptionSvc,
-		jmxClients:    make(map[int64]*JMXClient),
+		jmxClients:    sync.Map{},
 		kafkaExporter: NewKafkaExporterService(clusterRepo, encryptionSvc, kerberosBaseDir),
 		vmClient:      vmClient,
 	}
@@ -74,13 +74,13 @@ func NewService(
 
 // getJMXClient 获取或创建 JMX 客户端
 func (s *Service) getJMXClient(clusterID int64, jmxURL string) *JMXClient {
-	if client, exists := s.jmxClients[clusterID]; exists {
-		return client
+	if val, ok := s.jmxClients.Load(clusterID); ok {
+		return val.(*JMXClient)
 	}
 
 	client := NewJMXClient(jmxURL)
-	s.jmxClients[clusterID] = client
-	return client
+	actual, _ := s.jmxClients.LoadOrStore(clusterID, client)
+	return actual.(*JMXClient)
 }
 
 // GetClusterMetrics 获取集群监控指标（整合 JMX + Kafka Exporter）
@@ -97,13 +97,16 @@ func (s *Service) GetClusterMetrics(ctx context.Context, clusterID int64) (*Clus
 	}
 
 	// 1. 从 JMX Exporter 获取 Broker 指标（支持多个 Broker）
+	// 使用独立超时 context，避免 JMX 不通时拖住后续 AdminClient 调用
 	if cluster.JMXExporterURLs != "" {
 		urls := ParseJMXExporterURLs(cluster.JMXExporterURLs)
 		if len(urls) > 0 {
+			jmxCtx, jmxCancel := context.WithTimeout(ctx, 10*time.Second)
 			multiClient := NewMultiJMXClient(urls)
-			brokerMetrics, err := multiClient.GetAggregatedMetrics(ctx)
+			brokerMetrics, err := multiClient.GetAggregatedMetrics(jmxCtx)
+			jmxCancel()
 			if err != nil {
-				log.Printf("[Monitor] Failed to get JMX metrics: %v", err)
+				log.Printf("[Monitor] Failed to get JMX metrics (10s timeout): %v", err)
 				response.JMXExporterAvailable = false
 			} else {
 				response.BrokerMetrics = brokerMetrics
@@ -217,6 +220,14 @@ func (s *Service) QueryMetricsRange(ctx context.Context, query string, start, en
 		return nil, fmt.Errorf("victoriametrics is not configured")
 	}
 	return s.vmClient.QueryRange(ctx, query, start, end, step)
+}
+
+// QueryMetricsInstant 从 VictoriaMetrics 查询即时指标
+func (s *Service) QueryMetricsInstant(ctx context.Context, query string) ([]byte, error) {
+	if s.vmClient == nil || !s.vmClient.IsEnabled() {
+		return nil, fmt.Errorf("victoriametrics is not configured")
+	}
+	return s.vmClient.QueryInstant(ctx, query)
 }
 
 // ============================================================
@@ -411,7 +422,7 @@ func (h *Handler) GetBrokerOverview(c *gin.Context) {
 		"info":       fmt.Sprintf(`kafka_broker_info{cluster_id="%s"}`, clusterIDStr),
 		"leader":     fmt.Sprintf(`kafka_broker_leader_count{cluster_id="%s"}`, clusterIDStr),
 		"replica":    fmt.Sprintf(`kafka_broker_replica_count{cluster_id="%s"}`, clusterIDStr),
-		"controller": fmt.Sprintf(`kafka_broker_active_controller{cluster_id="%s"}`, clusterIDStr),
+		"controller": fmt.Sprintf(`kafka_controller_kafkacontroller_activecontrollercount{cluster_id="%s"}`, clusterIDStr),
 	}
 
 	// 并行查询
@@ -423,8 +434,7 @@ func (h *Handler) GetBrokerOverview(c *gin.Context) {
 	resultCh := make(chan queryResult, len(queries))
 	for name, query := range queries {
 		go func(n, q string) {
-			data, err := h.svc.QueryMetricsRange(c.Request.Context(), q,
-				time.Now().Add(-2*time.Minute), time.Now(), "60s")
+			data, err := h.svc.QueryMetricsInstant(c.Request.Context(), q)
 			if err != nil {
 				resultCh <- queryResult{name: n, result: nil}
 				return
@@ -507,11 +517,16 @@ func (h *Handler) GetBrokerOverview(c *gin.Context) {
 
 	// 构建响应
 	var items []BrokerOverviewItem
+	// 计算集群 Leader 总数，用于每个 Broker 的 Leader Percent
+	totalLeader := 0
+	for _, b := range brokers {
+		totalLeader += b.leader
+	}
 	for id, b := range brokers {
 		brokerID, _ := strconv.Atoi(id)
 		leaderPercent := 0.0
-		if b.replica > 0 {
-			leaderPercent = float64(b.leader) / float64(b.replica) * 100
+		if totalLeader > 0 {
+			leaderPercent = float64(b.leader) / float64(totalLeader) * 100
 		}
 		items = append(items, BrokerOverviewItem{
 			BrokerID:      brokerID,

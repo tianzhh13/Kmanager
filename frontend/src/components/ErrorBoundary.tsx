@@ -35,16 +35,23 @@ class ErrorBoundary extends Component<Props, State> {
         return this.props.fallback
       }
       return (
-        <Result
-          status="error"
-          title="页面加载出错"
-          subTitle="抱歉，页面渲染过程中发生了错误。请尝试刷新页面。"
-          extra={
-            <Button type="primary" onClick={this.handleReset}>
-              重试
-            </Button>
-          }
-        />
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center', 
+          minHeight: 400 
+        }}>
+          <Result
+            status="error"
+            title="页面加载出错"
+            subTitle="页面渲染过程中发生了错误，请尝试刷新页面。"
+            extra={
+              <Button type="primary" onClick={this.handleReset}>
+                重试
+              </Button>
+            }
+          />
+        </div>
       )
     }
     return this.props.children

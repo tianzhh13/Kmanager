@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Layout as AntLayout, Menu, Avatar, Dropdown, theme, message } from 'antd'
+import { Layout as AntLayout, Menu, Avatar, Dropdown, message } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   DashboardOutlined,
@@ -23,6 +23,17 @@ const { Header, Sider, Content } = AntLayout
 // 默认15分钟，实际值从后端 API 获取
 const DEFAULT_IDLE_TIMEOUT = 15 * 60 * 1000
 
+// 路由到面包屑映射
+const routeBreadcrumb: Record<string, string> = {
+  '/dashboard': '仪表盘',
+  '/clusters': '集群管理',
+  '/topics': 'Topic 管理',
+  '/acls': 'ACL 管理',
+  '/monitor': '监控中心',
+  '/audit-logs': '审计日志',
+  '/users': '用户管理',
+}
+
 interface LayoutProps {
   children: React.ReactNode
 }
@@ -33,7 +44,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation()
   const dispatch = useAppDispatch()
   const { user } = useAppSelector((state) => state.auth)
-  const { token } = theme.useToken()
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const idleTimeoutRef = useRef<number>(DEFAULT_IDLE_TIMEOUT)
 
@@ -44,17 +54,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const menuItems = [
     { key: '/dashboard', icon: <DashboardOutlined />, label: '仪表盘' },
-    // 集群管理：超级管理员和集群管理员可见
     ...((isSuperAdmin || isClusterAdmin) ? [{ key: '/clusters', icon: <ClusterOutlined />, label: '集群管理' }] : []),
-    // Topic 管理：所有角色可见
     { key: '/topics', icon: <FileTextOutlined />, label: 'Topic 管理' },
-    // ACL 管理：仅超级管理员可见
     ...(isSuperAdmin ? [{ key: '/acls', icon: <LockOutlined />, label: 'ACL 管理' }] : []),
-    // 监控中心：所有角色可见
     { key: '/monitor', icon: <LineChartOutlined />, label: '监控中心' },
-    // 审计日志：超级管理员和集群管理员可见
     ...((isSuperAdmin || isClusterAdmin) ? [{ key: '/audit-logs', icon: <AuditOutlined />, label: '审计日志' }] : []),
-    // 用户管理：仅超级管理员可见
     ...(isSuperAdmin ? [{ key: '/users', icon: <TeamOutlined />, label: '用户管理' }] : []),
   ]
 
@@ -68,8 +72,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       try {
         const res = await api.get('/system/config')
         if (res.data?.idle_timeout) {
-          idleTimeoutRef.current = res.data.idle_timeout * 60 * 1000 // 分钟转毫秒
-          // 配置更新后重新启动定时器
+          idleTimeoutRef.current = res.data.idle_timeout * 60 * 1000
           if (idleTimerRef.current) {
             clearTimeout(idleTimerRef.current)
           }
@@ -99,12 +102,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   }, [dispatch, navigate])
 
   useEffect(() => {
-    // 优化：仅监听低频事件，避免 mousemove/scroll 的性能开销
-    // visibilitychange 负责检测 Tab 切换，click/keydown 负责检测用户活跃
     const handleActivity = () => resetIdleTimer()
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        // Tab 恢复可见时重置计时器（避免切 Tab 期间超时被踢）
         resetIdleTimer()
       }
     }
@@ -147,68 +147,56 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     },
   ]
 
+  const currentPageName = routeBreadcrumb[location.pathname] || ''
+
   return (
     <AntLayout className="app-layout" style={{ minHeight: '100vh' }}>
       <Sider
         trigger={null}
         collapsible
         collapsed={collapsed}
-        style={{ background: '#001529' }}
+        className="app-sidebar"
+        width={240}
+        collapsedWidth={72}
       >
-        <div
-          style={{
-            height: 64,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#fff',
-            fontSize: collapsed ? 14 : 18,
-            fontWeight: 'bold',
-          }}
-        >
-          {collapsed ? 'KMP' : 'Kafka 管理平台'}
+        {/* 品牌区 */}
+        <div className="sidebar-brand">
+          <div className="sidebar-brand-icon">Km</div>
+          {!collapsed && (
+            <div className="sidebar-brand-text">
+              <span>K</span>manager
+            </div>
+          )}
         </div>
+        {/* 菜单 */}
         <Menu
           theme="dark"
           mode="inline"
           selectedKeys={[location.pathname]}
           items={menuItems}
           onClick={({ key }) => handleMenuClick(key)}
-          style={{ background: '#001529' }}
         />
       </Sider>
       <AntLayout>
-        <Header
-          style={{
-            padding: '0 24px',
-            background: '#fff',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-          }}
-        >
-          <div
-            onClick={() => setCollapsed(!collapsed)}
-            style={{ fontSize: 18, cursor: 'pointer' }}
-          >
-            {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+        <Header className="app-header">
+          <div className="header-left">
+            <div className="header-trigger" onClick={() => setCollapsed(!collapsed)}>
+              {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            </div>
+            {currentPageName && (
+              <div className="header-breadcrumb">
+                <strong>{currentPageName}</strong>
+              </div>
+            )}
           </div>
           <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-            <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Avatar icon={<UserOutlined />} style={{ backgroundColor: token.colorPrimary }} />
-              <span>{user?.username}</span>
+            <div className="header-user">
+              <Avatar icon={<UserOutlined />} className="header-user-avatar" size={30} />
+              <span className="header-user-name">{user?.username}</span>
             </div>
           </Dropdown>
         </Header>
-        <Content
-          style={{
-            margin: 24,
-            padding: 24,
-            background: '#fff',
-            borderRadius: 8,
-            minHeight: 280,
-          }}
-        >
+        <Content className="app-content">
           {children}
         </Content>
       </AntLayout>

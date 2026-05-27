@@ -71,8 +71,6 @@ var ValidActions = map[string]bool{
 	"clean_logs":  true,
 	// 监控
 	"view_metrics": true,
-	// 仪表盘
-	"view_dashboard": true,
 }
 
 // ValidResourceTypes 有效的资源类型
@@ -87,7 +85,6 @@ var ValidResourceTypes = map[string]bool{
 	"monitor":          true,
 	"audit_log":        true,
 	"topic_permission": true,
-	"dashboard":        true,
 }
 
 // ValidStatuses 有效的状态

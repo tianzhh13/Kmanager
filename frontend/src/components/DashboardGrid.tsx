@@ -5,8 +5,6 @@ import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 
-// WidthProvider 已在 v2.x 中被移除，改用 useContainerWidth hook
-
 export interface GridItem {
   i: string
   x: number
@@ -39,7 +37,6 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
   const [currentLayout, setCurrentLayout] = useState<any[]>([])
   const { containerRef, width } = useContainerWidth({ initialWidth: 1280 })
 
-  // 从 localStorage 加载布局
   const loadLayout = useCallback(() => {
     try {
       const saved = localStorage.getItem(`dashboard_layout_${storageKey}`)
@@ -54,7 +51,6 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
     return null
   }, [storageKey])
 
-  // 保存布局到 localStorage
   const saveLayout = useCallback((layout: any[]) => {
     try {
       const layoutMap: any = {}
@@ -70,7 +66,6 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
     }
   }, [storageKey])
 
-  // 重置为默认布局
   const resetLayout = useCallback(() => {
     localStorage.removeItem(`dashboard_layout_${storageKey}`)
     setLayouts({})
@@ -79,11 +74,9 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
     setIsEditing(false)
   }, [storageKey])
 
-  // 初始化布局
   useEffect(() => {
     const saved = loadLayout()
     if (!saved) {
-      // 使用默认布局
       const defaultLayout = items.map((item) => ({
         i: item.i,
         x: item.x,
@@ -97,12 +90,10 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
     }
   }, [items, loadLayout])
 
-  // 处理布局变化
   const onLayoutChange = useCallback((layout: any) => {
     setCurrentLayout(Array.from(layout))
   }, [])
 
-  // 合并 items 和 layout
   const getLayoutItems = () => {
     const layoutMap: any = layouts.lg || {}
     return items.map(item => {
@@ -121,22 +112,14 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
 
   return (
     <div ref={containerRef as any}>
-      {/* 编辑模式切换 */}
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
         <Space>
           {isEditing ? (
             <>
-              <Button
-                type="primary"
-                icon={<SaveOutlined />}
-                onClick={() => saveLayout(currentLayout)}
-              >
+              <Button type="primary" icon={<SaveOutlined />} onClick={() => saveLayout(currentLayout)}>
                 保存布局
               </Button>
-              <Button
-                icon={<UndoOutlined />}
-                onClick={resetLayout}
-              >
+              <Button icon={<UndoOutlined />} onClick={resetLayout}>
                 重置布局
               </Button>
               <Button onClick={() => setIsEditing(false)}>
@@ -144,17 +127,13 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
               </Button>
             </>
           ) : (
-            <Button
-              icon={<EditOutlined />}
-              onClick={() => setIsEditing(true)}
-            >
+            <Button icon={<EditOutlined />} onClick={() => setIsEditing(true)}>
               调整布局
             </Button>
           )}
         </Space>
       </div>
 
-      {/* 网格布局 */}
       <ResponsiveGridLayout
         className="layout"
         width={width}
@@ -175,20 +154,8 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
         ))}
       </ResponsiveGridLayout>
 
-      {/* 编辑模式提示 */}
       {isEditing && (
-        <div style={{
-          position: 'fixed',
-          bottom: 24,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: '#1890ff',
-          color: '#fff',
-          padding: '8px 24px',
-          borderRadius: 4,
-          zIndex: 1000,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-        }}>
+        <div className="dashboard-edit-banner">
           编辑模式：拖拽卡片调整位置，拖拽边缘调整大小
         </div>
       )}

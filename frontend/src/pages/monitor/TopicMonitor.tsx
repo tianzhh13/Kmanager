@@ -3,6 +3,7 @@ import { Card, Row, Col, Select, Spin, Statistic, Space, Tag, Alert, Checkbox, T
 import ReactECharts from 'echarts-for-react'
 import dayjs, { Dayjs } from 'dayjs'
 import DashboardGrid from '../../components/DashboardGrid'
+import { usePromqlOverrides, useDefaultPromqls, PromqlDebugger, PromqlDebugButton } from '../../components/PromqlDebugger'
 import { ClusterMetricsResponse, metricsAPI, BatchQueryItem, extractInstantValue } from '../../services/metrics'
 import { buildLineChartOption, buildBarChartOption, buildPartitionChartOption, formatBytesForChart } from '../../utils/chartOptions'
 
@@ -18,6 +19,7 @@ interface TopicMonitorProps {
   customRange: [Dayjs, Dayjs] | null
   metrics: ClusterMetricsResponse | null
   activeTab: string
+  jmxAvailable?: boolean
 }
 
 interface TopicInfo {
@@ -32,7 +34,7 @@ interface PartitionMetric {
   values: { time: string; value: number }[]
 }
 
-const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRange, customRange, metrics, activeTab }) => {
+const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRange, customRange, metrics, activeTab, jmxAvailable }) => {
   const [topics, setTopics] = useState<TopicInfo[]>([])
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null)
   const [selectedConsumerGroup, setSelectedConsumerGroup] = useState<string | null>(null)
@@ -48,6 +50,20 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
   const [topicLogEndOffsetData, setTopicLogEndOffsetData] = useState<PartitionMetric[]>([])
   const [topicIsrVsReplicaData, setTopicIsrVsReplicaData] = useState<{ isr: PartitionMetric[]; replica: PartitionMetric[] }>({ isr: [], replica: [] })
   const [topicUnderReplicatedCount, setTopicUnderReplicatedCount] = useState(0)
+  const [debugOpen, setDebugOpen] = useState(false)
+  const { overrides, getQ, setOverride, resetOverride, resetAll } = usePromqlOverrides('topic_monitor')
+  const { q, defaultPromqls } = useDefaultPromqls(getQ)
+
+  const queryLabels: Record<string, string> = {
+    produce_rate: 'Topic 生产速率',
+    consume_rate: '消费组消费速率',
+    lag: '消费组 Lag',
+    log_size: 'Topic 日志大小（按分区）',
+    log_end_offset: 'Topic LogEndOffset（按分区）',
+    isr_count: '分区 ISR 数 vs 副本数（ISR 列）',
+    replica_count: '分区 ISR 数 vs 副本数（副本列）',
+    under_replicated: 'Under Replicated 分区',
+  }
 
   /** 获取时间范围 */
   const getTimeRange = useCallback((): { start: Dayjs; end: Dayjs; step: string } => {
@@ -120,46 +136,32 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
       const queries: BatchQueryItem[] = [
         {
           id: 'produce_rate',
-          query: `rate(kafka_topic_partition_current_offset{cluster_id="${clusterId}",topic="${selectedTopic}"}[30s])`,
-          start: s, end: e, step,
-        },
-        {
-          id: 'log_size',
-          query: `kafka_topic_log_size{cluster_id="${clusterId}",topic="${selectedTopic}"}`,
-          start: s, end: e, step,
-        },
-        {
-          id: 'log_end_offset',
-          query: `kafka_topic_log_end_offset{cluster_id="${clusterId}",topic="${selectedTopic}"}`,
-          start: s, end: e, step,
-        },
-        {
-          id: 'isr_count',
-          query: `kafka_topic_partition_isr_count{cluster_id="${clusterId}",topic="${selectedTopic}"}`,
-          start: s, end: e, step,
-        },
-        {
-          id: 'replica_count',
-          query: `kafka_topic_partition_replica_count{cluster_id="${clusterId}",topic="${selectedTopic}"}`,
-          start: s, end: e, step,
-        },
-        {
-          id: 'under_replicated',
-          query: `sum(kafka_topic_partition_under_replicated{cluster_id="${clusterId}",topic="${selectedTopic}"})`,
+          query: q('produce_rate', `rate(kafka_topic_partition_current_offset{cluster_id="${clusterId}",topic="${selectedTopic}"}[30s])`),
           start: s, end: e, step,
         },
       ]
+
+      // JMX 指标查询（仅 JMX Exporter 可用时才查）
+      if (jmxAvailable) {
+        queries.push(
+          { id: 'log_size', query: q('log_size', `max by (partition) (kafka_log_log_size{cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
+          { id: 'log_end_offset', query: q('log_end_offset', `max by (partition) (kafka_log_log_logendoffset{cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
+          { id: 'isr_count', query: q('isr_count', `max by (partition) (kafka_cluster_partition_insyncreplicascount{cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
+          { id: 'replica_count', query: q('replica_count', `max by (partition) (kafka_cluster_partition_replicascount{cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
+          { id: 'under_replicated', query: q('under_replicated', `sum(kafka_cluster_partition_underreplicated{cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
+        )
+      }
 
       if (selectedConsumerGroup) {
         queries.push(
           {
             id: 'consume_rate',
-            query: `rate(kafka_consumergroup_current_offset{cluster_id="${clusterId}",topic="${selectedTopic}",consumergroup="${selectedConsumerGroup}"}[30s])`,
+            query: q('consume_rate', `rate(kafka_consumergroup_current_offset{cluster_id="${clusterId}",topic="${selectedTopic}",consumergroup="${selectedConsumerGroup}"}[30s])`),
             start: s, end: e, step,
           },
           {
             id: 'lag',
-            query: `kafka_consumergroup_lag{cluster_id="${clusterId}",topic="${selectedTopic}",consumergroup="${selectedConsumerGroup}"}`,
+            query: q('lag', `kafka_consumergroup_lag{cluster_id="${clusterId}",topic="${selectedTopic}",consumergroup="${selectedConsumerGroup}"}`),
             start: s, end: e, step,
           },
         )
@@ -205,7 +207,7 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
     } finally {
       setTopicLoading(false)
     }
-  }, [cluster, selectedTopic, selectedConsumerGroup, getTimeRange])
+  }, [cluster, selectedTopic, selectedConsumerGroup, getTimeRange, jmxAvailable, overrides])
 
   // 当切换到 Topic 监控 Tab 时加载 Topic 列表
   useEffect(() => {
@@ -285,6 +287,7 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
   }
 
   return (
+    <>
     <Spin spinning={topicLoading}>
       <Space style={{ marginBottom: 16 }} wrap>
         <Select
@@ -306,6 +309,7 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
           disabled={!selectedTopic}
           filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
         />
+        <PromqlDebugButton onClick={() => setDebugOpen(true)} overrideCount={Object.keys(overrides).length} />
       </Space>
 
       {!selectedTopic ? (
@@ -376,20 +380,33 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
               { i: 'total-produce', x: 0, y: 0, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`tp-${selectedTopic}`} option={getTotalRateOption('Topic 生产速率', partitionMetrics.produceRate, 'msg/s', '#1890ff')} style={{ height: 240 }} notMerge={true} /></Card> },
               { i: 'total-consume', x: 4, y: 0, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`tc-${selectedTopic}-${selectedConsumerGroup}`} option={getTotalRateOption('消费组消费速率', partitionMetrics.consumeRate, 'msg/s', '#52c41a', 'cg')} style={{ height: 240 }} notMerge={true} /></Card> },
               { i: 'total-lag', x: 8, y: 0, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`tl-${selectedTopic}-${selectedConsumerGroup}`} option={getTotalRateOption('消费组 Lag', partitionMetrics.lag, 'Lag', '#f5222d', 'cg')} style={{ height: 240 }} notMerge={true} /></Card> },
-              { i: 'under-replicated', x: 0, y: 6, w: 3, h: 2, component: <Card size="small"><Statistic title="Under Replicated 分区" value={topicUnderReplicatedCount} valueStyle={{ color: topicUnderReplicatedCount === 0 ? '#52c41a' : '#f5222d', fontSize: 20 }} /></Card> },
+              ...(jmxAvailable ? [{ i: 'under-replicated', x: 0, y: 6, w: 3, h: 2, component: <Card size="small"><Statistic title="Under Replicated 分区" value={topicUnderReplicatedCount} valueStyle={{ color: topicUnderReplicatedCount === 0 ? '#52c41a' : '#f5222d', fontSize: 20 }} /></Card> }] : []),
               ...(selectedPartitions.length > 0 ? [
                 { i: 'partition-produce', x: 0, y: 8, w: 12, h: 7, component: <Card size="small"><ReactECharts key={`pp-${selectedTopic}-${selectedPartitions.join('-')}`} option={buildPartitionChartOption('Topic 生产速率（按分区）', partitionMetrics.produceRate, selectedPartitions, 'msg/s')} style={{ height: 280 }} notMerge={true} /></Card> },
                 { i: 'partition-consume', x: 0, y: 15, w: 6, h: 7, component: <Card size="small"><ReactECharts key={`pc-${selectedTopic}-${selectedConsumerGroup}-${selectedPartitions.join('-')}`} option={buildPartitionChartOption('消费组消费速率（按分区）', partitionMetrics.consumeRate, selectedPartitions, 'msg/s', undefined, selectedConsumerGroup ? '暂无数据' : '请选择消费组')} style={{ height: 280 }} notMerge={true} /></Card> },
                 { i: 'partition-lag', x: 6, y: 15, w: 6, h: 7, component: <Card size="small"><ReactECharts key={`pl-${selectedTopic}-${selectedConsumerGroup}-${selectedPartitions.join('-')}`} option={buildPartitionChartOption('消费组 Lag（按分区）', partitionMetrics.lag, selectedPartitions, 'Lag', (v: number) => v.toLocaleString(), selectedConsumerGroup ? '暂无数据' : '请选择消费组')} style={{ height: 280 }} notMerge={true} /></Card> },
               ] : []),
+              ...(jmxAvailable ? [
               { i: 'log-size', x: 0, y: 22, w: 12, h: 7, component: <Card size="small"><ReactECharts key={`ls-${selectedTopic}-${selectedPartitions.join('-')}`} option={buildPartitionChartOption('Topic 日志大小（按分区）', topicLogSizeData, selectedPartitions, 'bytes', formatBytesForChart)} style={{ height: 280 }} notMerge={true} /></Card> },
               { i: 'log-end-offset', x: 0, y: 29, w: 12, h: 7, component: <Card size="small"><ReactECharts key={`leo-${selectedTopic}-${selectedPartitions.join('-')}`} option={buildPartitionChartOption('Topic LogEndOffset（按分区）', topicLogEndOffsetData, selectedPartitions, 'Offset')} style={{ height: 280 }} notMerge={true} /></Card> },
               { i: 'isr-vs-replica', x: 0, y: 36, w: 12, h: 7, component: <Card size="small"><ReactECharts key={`ivr-${selectedTopic}`} option={getIsrVsReplicaChartOption()} style={{ height: 280 }} notMerge={true} /></Card> },
+              ] : []),
             ]}
           />
         </>
       )}
     </Spin>
+    <PromqlDebugger
+      open={debugOpen}
+      onClose={() => setDebugOpen(false)}
+      defaultPromqls={defaultPromqls.current}
+      overrides={overrides}
+      onSetOverride={setOverride}
+      onResetOverride={resetOverride}
+        onResetAll={resetAll}
+        labelMap={queryLabels}
+    />
+    </>
   )
 }
 

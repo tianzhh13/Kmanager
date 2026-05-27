@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Space, Card, Modal, Form, Select, Input, message, Tag } from 'antd'
-import { PlusOutlined, DeleteOutlined, SyncOutlined, KeyOutlined, EyeOutlined } from '@ant-design/icons'
+import { Table, Button, Space, Card, Modal, Form, Select, Input, message, Tag, Row, Col, Statistic } from 'antd'
+import { PlusOutlined, DeleteOutlined, SyncOutlined, KeyOutlined, EyeOutlined, LockOutlined, TeamOutlined } from '@ant-design/icons'
 import { scramUserService, ScramUser } from '../services/scramUser'
 import { clusterAPI } from '../services/cluster'
 import { createACL, getUserACLsFromKafka, deleteACLFromKafka, UserACLInfo } from '../services/acl'
@@ -12,7 +12,6 @@ interface Cluster {
   sasl_mechanism?: string
 }
 
-// 资源类型对应的可用操作
 const RESOURCE_OPERATIONS: Record<string, { value: string; label: string }[]> = {
   Topic: [
     { value: 'Read', label: 'Read - 消费消息' },
@@ -49,54 +48,46 @@ const ACLList: React.FC = () => {
   const [selectedClusterId, setSelectedClusterId] = useState<number | null>(null)
   const [syncing, setSyncing] = useState(false)
   
-  // 创建用户弹窗
   const [createUserVisible, setCreateUserVisible] = useState(false)
   const [createUserForm] = Form.useForm()
   
-  // 权限设置弹窗
   const [aclModalVisible, setAclModalVisible] = useState(false)
   const [aclForm] = Form.useForm()
   const [selectedUsername, setSelectedUsername] = useState<string>('')
   const [selectedResourceType, setSelectedResourceType] = useState<string>('')
   
-  // 查看权限弹窗
   const [viewAclVisible, setViewAclVisible] = useState(false)
   const [viewAclUsername, setViewAclUsername] = useState<string>('')
   const [userAcls, setUserAcls] = useState<UserACLInfo[]>([])
   const [viewAclLoading, setViewAclLoading] = useState(false)
   
   const columns = [
-    { title: '用户名', dataIndex: 'username', key: 'username' },
-    { title: '认证机制', dataIndex: 'mechanism', key: 'mechanism', width: 150 },
+    { title: '用户名', dataIndex: 'username', key: 'username',
+      render: (name: string) => <strong style={{ color: 'var(--text-heading)' }}>{name}</strong>,
+    },
+    { title: '认证机制', dataIndex: 'mechanism', key: 'mechanism', width: 150,
+      render: (v: string) => <Tag color="processing">{v}</Tag>,
+    },
     { title: '同步状态', dataIndex: 'sync_status', key: 'sync_status', width: 100 },
-    { title: '最后同步时间', dataIndex: 'last_sync_at', key: 'last_sync_at', width: 180 },
-    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 180 },
+    { title: '最后同步时间', dataIndex: 'last_sync_at', key: 'last_sync_at', width: 180,
+      render: (text: string) => <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{text || '-'}</span>,
+    },
+    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 180,
+      render: (text: string) => <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{text || '-'}</span>,
+    },
     {
       title: '操作',
       key: 'action',
       width: 250,
       render: (_: any, record: ScramUser) => (
         <Space>
-          <Button 
-            type="link" 
-            icon={<EyeOutlined />} 
-            onClick={() => handleViewAcls(record.username)}
-          >
+          <Button type="link" icon={<EyeOutlined />} onClick={() => handleViewAcls(record.username)}>
             查看权限
           </Button>
-          <Button 
-            type="link" 
-            icon={<KeyOutlined />} 
-            onClick={() => handleOpenAclModal(record.username)}
-          >
+          <Button type="link" icon={<KeyOutlined />} onClick={() => handleOpenAclModal(record.username)}>
             权限设置
           </Button>
-          <Button 
-            type="link" 
-            danger 
-            icon={<DeleteOutlined />} 
-            onClick={() => handleDeleteUser(record.username)}
-          >
+          <Button type="link" danger icon={<DeleteOutlined />} onClick={() => handleDeleteUser(record.username)}>
             删除
           </Button>
         </Space>
@@ -104,13 +95,11 @@ const ACLList: React.FC = () => {
     },
   ]
 
-  // 加载集群列表（只加载 SCRAM-SHA-256/512 集群）
   useEffect(() => {
     const loadClusters = async () => {
       try {
         const res = await clusterAPI.list(1, 100)
         const clusterList = res.data || []
-        // 只过滤 SCRAM-SHA-256/512 集群（支持动态用户和 ACL 管理）
         const scramClusters = clusterList.filter((c: Cluster) => 
           c.sasl_mechanism === 'SCRAM-SHA-256' || c.sasl_mechanism === 'SCRAM-SHA-512'
         )
@@ -125,7 +114,6 @@ const ACLList: React.FC = () => {
     loadClusters()
   }, [])
 
-  // 当集群选择变化时，加载该集群的用户
   useEffect(() => {
     if (selectedClusterId) {
       fetchUsers()
@@ -145,7 +133,6 @@ const ACLList: React.FC = () => {
     }
   }
 
-  // 打开创建用户弹窗
   const handleOpenCreateUser = () => {
     if (!selectedClusterId) {
       message.warning('请先选择集群')
@@ -158,7 +145,6 @@ const ACLList: React.FC = () => {
     setCreateUserVisible(true)
   }
 
-  // 创建用户
   const handleCreateUser = async (values: any) => {
     try {
       await scramUserService.create({
@@ -177,7 +163,6 @@ const ACLList: React.FC = () => {
     }
   }
 
-  // 删除用户
   const handleDeleteUser = async (username: string) => {
     if (!selectedClusterId) {
       message.warning('请先选择集群')
@@ -199,7 +184,6 @@ const ACLList: React.FC = () => {
     })
   }
 
-  // 同步用户
   const handleSync = async () => {
     if (!selectedClusterId) {
       message.warning('请先选择集群')
@@ -218,7 +202,6 @@ const ACLList: React.FC = () => {
     }
   }
 
-  // 打开权限设置弹窗
   const handleOpenAclModal = (username: string) => {
     if (!selectedClusterId) {
       message.warning('请先选择集群')
@@ -233,13 +216,11 @@ const ACLList: React.FC = () => {
     setAclModalVisible(true)
   }
 
-  // 资源类型变化时清空操作选择
   const handleResourceTypeChange = (value: string) => {
     setSelectedResourceType(value)
     aclForm.setFieldsValue({ operation: undefined })
   }
 
-  // 查看用户权限
   const handleViewAcls = async (username: string) => {
     if (!selectedClusterId) {
       message.warning('请先选择集群')
@@ -260,11 +241,10 @@ const ACLList: React.FC = () => {
     }
   }
 
-  // 删除单条 ACL
   const handleDeleteAcl = async (acl: UserACLInfo) => {
     Modal.confirm({
       title: '确认删除',
-      content: `确定要删除该权限规则吗？`,
+      content: '确定要删除该权限规则吗？',
       onOk: async () => {
         try {
           await deleteACLFromKafka(selectedClusterId!, {
@@ -277,7 +257,6 @@ const ACLList: React.FC = () => {
             permission_type: acl.permission_type,
           })
           message.success('删除成功')
-          // 刷新权限列表
           const principal = `User:${viewAclUsername}`
           const acls = await getUserACLsFromKafka(selectedClusterId!, principal)
           setUserAcls(acls)
@@ -289,7 +268,6 @@ const ACLList: React.FC = () => {
     })
   }
 
-  // 创建 ACL 权限
   const handleCreateAcl = async (values: any) => {
     if (!selectedClusterId) {
       message.warning('请先选择集群')
@@ -297,7 +275,6 @@ const ACLList: React.FC = () => {
     }
     try {
       const operations = Array.isArray(values.operation) ? values.operation : [values.operation]
-      
       for (const op of operations) {
         const payload = {
           cluster_id: selectedClusterId,
@@ -309,7 +286,6 @@ const ACLList: React.FC = () => {
         }
         await createACL(payload)
       }
-      
       message.success(`成功设置 ${operations.length} 条权限规则`)
       setAclModalVisible(false)
       aclForm.resetFields()
@@ -321,41 +297,60 @@ const ACLList: React.FC = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h1>SCRAM 用户管理</h1>
-        <Space>
-          <Select
-            placeholder="选择集群"
-            value={selectedClusterId}
-            onChange={(value) => setSelectedClusterId(value)}
-            style={{ width: 200 }}
-          >
-            {clusters.map(c => (
-              <Select.Option key={c.cluster_id} value={c.cluster_id}>{c.cluster_name}</Select.Option>
-            ))}
-          </Select>
-          <Button 
-            icon={<SyncOutlined spin={syncing} />} 
-            onClick={handleSync}
-            loading={syncing}
-            disabled={!selectedClusterId}
-          >
-            同步
-          </Button>
-          <Button 
-            type="primary" 
-            icon={<PlusOutlined />} 
-            onClick={handleOpenCreateUser}
-            disabled={!selectedClusterId}
-          >
-            创建用户
-          </Button>
-        </Space>
+      <div className="page-header">
+        <div className="page-header-row">
+          <div>
+            <h1>SCRAM 用户管理</h1>
+            <div className="page-accent-line" />
+          </div>
+          <Space>
+            <Select
+              placeholder="选择集群"
+              value={selectedClusterId}
+              onChange={(value) => setSelectedClusterId(value)}
+              style={{ width: 200 }}
+            >
+              {clusters.map(c => (
+                <Select.Option key={c.cluster_id} value={c.cluster_id}>{c.cluster_name}</Select.Option>
+              ))}
+            </Select>
+            <Button icon={<SyncOutlined spin={syncing} />} onClick={handleSync} loading={syncing} disabled={!selectedClusterId}>
+              同步
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenCreateUser} disabled={!selectedClusterId}>
+              创建用户
+            </Button>
+          </Space>
+        </div>
       </div>
+
+      {/* 统计卡片 */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
+        <Col xs={12} sm={8}>
+          <Card size="small" className="stat-card">
+            <Statistic title="用户总数" value={users.length} prefix={<TeamOutlined />}
+              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-info)' }} />
+          </Card>
+        </Col>
+        <Col xs={12} sm={8}>
+          <Card size="small" className="stat-card">
+            <Statistic title="SCRAM-256" value={users.filter(u => u.mechanism === 'SCRAM-SHA-256').length}
+              prefix={<LockOutlined />}
+              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-success)' }} />
+          </Card>
+        </Col>
+        <Col xs={12} sm={8}>
+          <Card size="small" className="stat-card">
+            <Statistic title="SCRAM-512" value={users.filter(u => u.mechanism === 'SCRAM-SHA-512').length}
+              prefix={<LockOutlined />}
+              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--brand-accent)' }} />
+          </Card>
+        </Col>
+      </Row>
       
       {clusters.length === 0 && (
         <Card>
-          <div style={{ textAlign: 'center', padding: '40px 0', color: '#666' }}>
+          <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-tertiary)' }}>
             暂无支持 SCRAM 用户管理的集群<br/>
             <span style={{ fontSize: 12 }}>仅支持 SASL 机制为 SCRAM-SHA-256 或 SCRAM-SHA-512 的集群</span>
           </div>
@@ -375,7 +370,6 @@ const ACLList: React.FC = () => {
         </Card>
       )}
 
-      {/* 创建用户弹窗 */}
       <Modal
         title="创建 SCRAM 用户"
         open={createUserVisible}
@@ -408,7 +402,6 @@ const ACLList: React.FC = () => {
         </Form>
       </Modal>
 
-      {/* 查看权限弹窗 */}
       <Modal
         title={`用户权限 - ${viewAclUsername}`}
         open={viewAclVisible}
@@ -440,7 +433,7 @@ const ACLList: React.FC = () => {
               key: 'permission_type', 
               width: 80,
               render: (permission_type: string) => (
-                <Tag color={permission_type === 'Allow' ? 'green' : 'red'}>
+                <Tag color={permission_type === 'Allow' ? 'success' : 'error'}>
                   {permission_type}
                 </Tag>
               )
@@ -451,12 +444,7 @@ const ACLList: React.FC = () => {
               key: 'action',
               width: 80,
               render: (_: any, record: UserACLInfo) => (
-                <Button 
-                  type="link" 
-                  danger 
-                  size="small"
-                  onClick={() => handleDeleteAcl(record)}
-                >
+                <Button type="link" danger size="small" onClick={() => handleDeleteAcl(record)}>
                   删除
                 </Button>
               ),
@@ -465,7 +453,6 @@ const ACLList: React.FC = () => {
         />
       </Modal>
 
-      {/* 权限设置弹窗 */}
       <Modal
         title={`权限设置 - ${selectedUsername}`}
         open={aclModalVisible}
@@ -508,8 +495,8 @@ const ACLList: React.FC = () => {
             </Select>
           </Form.Item>
           {selectedResourceType && (
-            <div style={{ color: '#666', fontSize: 12, marginTop: -8, marginBottom: 16 }}>
-              提示：已根据资源类型 <b>{selectedResourceType}</b> 过滤可用操作
+            <div style={{ padding: '8px 12px', background: 'var(--color-info-bg)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--text-secondary)' }}>
+              已根据资源类型 <strong>{selectedResourceType}</strong> 过滤可用操作
             </div>
           )}
         </Form>

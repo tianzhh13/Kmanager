@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Space, Modal, Form, Input, Select, Tag, message, Popconfirm, Transfer } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, StopOutlined, CheckOutlined, SettingOutlined, ClusterOutlined } from '@ant-design/icons'
+import { Table, Button, Space, Modal, Form, Input, Select, Tag, message, Popconfirm, Transfer, Row, Col, Statistic, Card } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, StopOutlined, CheckOutlined, SettingOutlined, ClusterOutlined, TeamOutlined, SafetyOutlined, UserSwitchOutlined } from '@ant-design/icons'
 import api from '../services/api'
 import { clusterAPI } from '../services/cluster'
 import TopicPermissionModal from '../components/TopicPermissionModal'
@@ -31,7 +31,6 @@ const UserManagement: React.FC = () => {
   const [form] = Form.useForm()
   const [permModalVisible, setPermModalVisible] = useState(false)
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
-  // 集群授权相关
   const [clusterAuthModalVisible, setClusterAuthModalVisible] = useState(false)
   const [clusterAuthUser, setClusterAuthUser] = useState<User | null>(null)
   const [allClusters, setAllClusters] = useState<Cluster[]>([])
@@ -69,7 +68,6 @@ const UserManagement: React.FC = () => {
     }
   }
 
-  // 编辑用户
   const handleEdit = (record: User) => {
     setEditingUser(record)
     setIsEditModal(true)
@@ -84,7 +82,6 @@ const UserManagement: React.FC = () => {
     if (!editingUser) return
     try {
       const values = await form.validateFields()
-      // 不传密码则不修改密码
       const updateData: any = {
         username: values.username,
         email: values.email,
@@ -114,7 +111,6 @@ const UserManagement: React.FC = () => {
     }
   }
 
-  // 修复：禁用/启用用 POST（后端路由是 POST）
   const handleToggleStatus = async (userId: number, currentStatus: string) => {
     try {
       if (currentStatus === 'active') {
@@ -135,17 +131,14 @@ const UserManagement: React.FC = () => {
     setPermModalVisible(true)
   }
 
-  // 集群授权
   const handleOpenClusterAuth = async (user: User) => {
     setClusterAuthUser(user)
     setClusterAuthModalVisible(true)
     setClusterAuthLoading(true)
     try {
-      // 获取所有集群
       const clustersRes = await clusterAPI.list()
       const clusters = clustersRes.data || []
       setAllClusters(clusters)
-      // 获取用户已授权的集群（使用新 API）
       const userClustersRes = await api.get(`/clusters/user/${user.user_id}`)
       const userClusterIds = (userClustersRes.data.data || []).map((c: Cluster) => c.cluster_id)
       setUserClusters(userClusterIds)
@@ -165,19 +158,14 @@ const UserManagement: React.FC = () => {
     if (!clusterAuthUser) return
     setClusterAuthLoading(true)
     try {
-      // 计算需要新增和删除的集群
       const toAdd = targetClusters.filter(id => !userClusters.includes(id))
       const toRemove = userClusters.filter(id => !targetClusters.includes(id))
-
-      // 批量授权
       for (const clusterId of toAdd) {
         await api.post(`/clusters/${clusterId}/grant`, { user_id: clusterAuthUser.user_id })
       }
-      // 批量撤销
       for (const clusterId of toRemove) {
         await api.post(`/clusters/${clusterId}/revoke`, { user_id: clusterAuthUser.user_id })
       }
-
       message.success('集群授权更新成功')
       setClusterAuthModalVisible(false)
       setClusterAuthUser(null)
@@ -189,49 +177,39 @@ const UserManagement: React.FC = () => {
   }
 
   const columns = [
-    { title: 'ID', dataIndex: 'user_id', key: 'user_id', width: 60 },
-    { title: '用户名', dataIndex: 'username', key: 'username' },
-    { title: '邮箱', dataIndex: 'email', key: 'email' },
+    { title: 'ID', dataIndex: 'user_id', key: 'user_id', width: 60,
+      render: (v: number) => <span style={{ color: 'var(--text-tertiary)' }}>{v}</span>,
+    },
+    { title: '用户名', dataIndex: 'username', key: 'username',
+      render: (text: string) => <strong style={{ color: 'var(--text-heading)' }}>{text}</strong>,
+    },
+    { title: '邮箱', dataIndex: 'email', key: 'email',
+      render: (text: string) => <span className="text-mono" style={{ fontSize: 12 }}>{text}</span>,
+    },
     { title: '角色', dataIndex: 'role', key: 'role',
       render: (role: string) => {
-        const colorMap: Record<string, string> = {
-          super_admin: 'red',
-          cluster_admin: 'blue',
-          normal_user: 'green',
-        }
-        const labelMap: Record<string, string> = {
-          super_admin: '超级管理员',
-          cluster_admin: '集群管理员',
-          normal_user: '普通用户',
-        }
+        const colorMap: Record<string, string> = { super_admin: 'error', cluster_admin: 'processing', normal_user: 'success' }
+        const labelMap: Record<string, string> = { super_admin: '超级管理员', cluster_admin: '集群管理员', normal_user: '普通用户' }
         return <Tag color={colorMap[role] || 'default'}>{labelMap[role] || role}</Tag>
       }
     },
     { title: '状态', dataIndex: 'status', key: 'status',
       render: (status: string) => (
-        <Tag color={status === 'active' ? 'success' : 'error'}>
-          {status === 'active' ? '活跃' : '禁用'}
-        </Tag>
+        <Tag color={status === 'active' ? 'success' : 'error'}>{status === 'active' ? '活跃' : '禁用'}</Tag>
       )
     },
-    { title: '创建时间', dataIndex: 'created_at', key: 'created_at' },
+    { title: '创建时间', dataIndex: 'created_at', key: 'created_at',
+      render: (text: string) => <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{text}</span>,
+    },
     { title: '操作', key: 'action', width: 350,
       render: (_: any, record: User) => (
         <Space>
-          <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
-            编辑
-          </Button>
-          {/* 集群管理员：授权集群 */}
+          <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
           {record.role === 'cluster_admin' && (
-            <Button type="link" icon={<ClusterOutlined />} onClick={() => handleOpenClusterAuth(record)}>
-              授权集群
-            </Button>
+            <Button type="link" icon={<ClusterOutlined />} onClick={() => handleOpenClusterAuth(record)}>授权集群</Button>
           )}
-          {/* 普通用户：分配 Topic 权限 */}
           {record.role === 'normal_user' && (
-            <Button type="link" icon={<SettingOutlined />} onClick={() => handleOpenPermModal(record)}>
-              分配权限
-            </Button>
+            <Button type="link" icon={<SettingOutlined />} onClick={() => handleOpenPermModal(record)}>分配权限</Button>
           )}
           <Popconfirm
             title={record.status === 'active' ? '确定要禁用该用户吗？' : '确定要启用该用户吗？'}
@@ -241,10 +219,7 @@ const UserManagement: React.FC = () => {
               {record.status === 'active' ? '禁用' : '启用'}
             </Button>
           </Popconfirm>
-          <Popconfirm
-            title="确定要删除该用户吗？"
-            onConfirm={() => handleDelete(record.user_id)}
-          >
+          <Popconfirm title="确定要删除该用户吗？" onConfirm={() => handleDelete(record.user_id)}>
             <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
           </Popconfirm>
         </Space>
@@ -252,7 +227,6 @@ const UserManagement: React.FC = () => {
     },
   ]
 
-  // Transfer 数据源
   const transferDataSource = allClusters.map(c => ({
     key: String(c.cluster_id),
     title: c.cluster_name,
@@ -260,12 +234,51 @@ const UserManagement: React.FC = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h1>用户管理</h1>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)}>
-          创建用户
-        </Button>
+      <div className="page-header">
+        <div className="page-header-row">
+          <div>
+            <h1>用户管理</h1>
+            <div className="page-accent-line" />
+          </div>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)}>
+            创建用户
+          </Button>
+        </div>
       </div>
+
+      {/* 统计卡片 */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
+        <Col xs={12} sm={6}>
+          <Card size="small" className="stat-card">
+            <Statistic title="用户总数" value={total} prefix={<TeamOutlined />}
+              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--brand-primary)' }} />
+          </Card>
+        </Col>
+        <Col xs={12} sm={6}>
+          <Card size="small" className="stat-card">
+            <Statistic title="超级管理员"
+              value={users.filter(u => u.role === 'super_admin').length}
+              prefix={<SafetyOutlined />}
+              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-error)' }} />
+          </Card>
+        </Col>
+        <Col xs={12} sm={6}>
+          <Card size="small" className="stat-card">
+            <Statistic title="集群管理员"
+              value={users.filter(u => u.role === 'cluster_admin').length}
+              prefix={<UserSwitchOutlined />}
+              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-info)' }} />
+          </Card>
+        </Col>
+        <Col xs={12} sm={6}>
+          <Card size="small" className="stat-card">
+            <Statistic title="普通用户"
+              value={users.filter(u => u.role === 'normal_user').length}
+              prefix={<TeamOutlined />}
+              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-success)' }} />
+          </Card>
+        </Col>
+      </Row>
 
       <Table
         columns={columns}
@@ -281,7 +294,6 @@ const UserManagement: React.FC = () => {
         locale={{ emptyText: '暂无用户数据' }}
       />
 
-      {/* 创建用户弹窗 */}
       <Modal
         title="创建用户"
         open={isModalVisible}
@@ -309,7 +321,6 @@ const UserManagement: React.FC = () => {
         </Form>
       </Modal>
 
-      {/* 编辑用户弹窗 */}
       <Modal
         title="编辑用户"
         open={isEditModal}
@@ -337,7 +348,6 @@ const UserManagement: React.FC = () => {
         </Form>
       </Modal>
 
-      {/* 集群授权弹窗 */}
       <Modal
         title={`集群授权 - ${clusterAuthUser?.username || ''}`}
         open={clusterAuthModalVisible}
@@ -360,7 +370,6 @@ const UserManagement: React.FC = () => {
         />
       </Modal>
 
-      {/* Topic 权限分配弹窗 */}
       <TopicPermissionModal
         visible={permModalVisible}
         user={selectedUser ? { user_id: selectedUser.user_id, username: selectedUser.username } : null}

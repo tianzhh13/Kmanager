@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"net/http"
@@ -25,12 +25,12 @@ func NewScramUserHandler(scramSvc *scram.Service) *ScramUserHandler {
 func (h *ScramUserHandler) CreateUser(c *gin.Context) {
 	var req scram.CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
 		return
 	}
 
 	if err := h.scramSvc.CreateUser(c.Request.Context(), &req); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -58,7 +58,7 @@ func (h *ScramUserHandler) DeleteUser(c *gin.Context) {
 	}
 
 	if err := h.scramSvc.DeleteUser(c.Request.Context(), clusterID, username); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -79,7 +79,10 @@ func (h *ScramUserHandler) ListUsers(c *gin.Context) {
 	}
 
 	if offsetStr := c.Query("offset"); offsetStr != "" {
-		offset, _ := strconv.Atoi(offsetStr)
+		offset, err := strconv.Atoi(offsetStr)
+		if err != nil || offset < 0 {
+			offset = 0
+		}
 		req.Offset = offset
 	}
 
@@ -89,10 +92,16 @@ func (h *ScramUserHandler) ListUsers(c *gin.Context) {
 	} else {
 		req.Limit = 20
 	}
+	if req.Limit > 100 {
+		req.Limit = 100
+	}
+	if req.Limit < 1 {
+		req.Limit = 20
+	}
 
 	resp, err := h.scramSvc.ListUsers(c.Request.Context(), &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 
@@ -109,7 +118,7 @@ func (h *ScramUserHandler) SyncUsers(c *gin.Context) {
 	}
 
 	if err := h.scramSvc.SyncUsers(c.Request.Context(), clusterID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
 

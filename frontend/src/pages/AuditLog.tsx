@@ -29,14 +29,12 @@ const AuditLogPage: React.FC = () => {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   
-  // 筛选条件
   const [username, setUsername] = useState<string>('')
   const [action, setAction] = useState<string>('')
   const [resourceType, setResourceType] = useState<string>('')
   const [status, setStatus] = useState<string>('')
   const [dateRange, setDateRange] = useState<[string, string] | null>(null)
   
-  // 详情弹窗
   const [detailVisible, setDetailVisible] = useState(false)
   const [currentLog, setCurrentLog] = useState<AuditLog | null>(null)
 
@@ -47,11 +45,7 @@ const AuditLogPage: React.FC = () => {
   const loadLogs = async () => {
     setLoading(true)
     try {
-      const params: any = {
-        page,
-        page_size: pageSize
-      }
-      
+      const params: any = { page, page_size: pageSize }
       if (username) params.username = username
       if (action) params.operation = action
       if (resourceType) params.resource_type = resourceType
@@ -60,7 +54,6 @@ const AuditLogPage: React.FC = () => {
         params.start_time = dateRange[0]
         params.end_time = dateRange[1]
       }
-
       const res = await auditLogAPI.list(params)
       setLogs(res.data.data || [])
       setTotal(res.data.total || 0)
@@ -101,10 +94,7 @@ const AuditLogPage: React.FC = () => {
         params.start_time = dateRange[0]
         params.end_time = dateRange[1]
       }
-
       const res = await auditLogAPI.export(params)
-      
-      // 下载文件
       const blob = new Blob([format === 'json' ? JSON.stringify(res.data, null, 2) : res.data], {
         type: format === 'json' ? 'application/json' : 'text/csv'
       })
@@ -114,7 +104,6 @@ const AuditLogPage: React.FC = () => {
       link.download = `audit_logs_${new Date().toISOString()}.${format}`
       link.click()
       window.URL.revokeObjectURL(url)
-      
       message.success('导出成功')
     } catch (error) {
       message.error('导出失败')
@@ -127,23 +116,16 @@ const AuditLogPage: React.FC = () => {
   }
 
   const getStatusColor = (status: string) => {
-    return status === 'success' ? 'green' : 'red'
+    return status === 'success' ? 'success' : 'error'
   }
 
   const getActionColor = (action: string) => {
     const colorMap: Record<string, string> = {
-      login: 'blue',
-      logout: 'default',
-      create: 'green',
-      update: 'orange',
-      delete: 'red',
-      grant: 'purple',
-      revoke: 'magenta'
+      login: 'processing', logout: 'default', create: 'success', update: 'warning',
+      delete: 'error', grant: 'purple', revoke: 'magenta'
     }
     for (const key of Object.keys(colorMap)) {
-      if (action.includes(key)) {
-        return colorMap[key]
-      }
+      if (action.includes(key)) return colorMap[key]
     }
     return 'default'
   }
@@ -154,13 +136,14 @@ const AuditLogPage: React.FC = () => {
       dataIndex: 'created_at',
       key: 'created_at',
       width: 180,
-      render: (text: string) => new Date(text).toLocaleString('zh-CN')
+      render: (text: string) => <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{new Date(text).toLocaleString('zh-CN')}</span>,
     },
     {
       title: '用户',
       dataIndex: 'username',
       key: 'username',
-      width: 120
+      width: 120,
+      render: (text: string) => <strong style={{ color: 'var(--text-heading)' }}>{text}</strong>,
     },
     {
       title: '操作',
@@ -169,17 +152,9 @@ const AuditLogPage: React.FC = () => {
       width: 150,
       render: (text: string) => <Tag color={getActionColor(text)}>{text}</Tag>
     },
-    {
-      title: '资源类型',
-      dataIndex: 'resource',
-      key: 'resource',
-      width: 100
-    },
-    {
-      title: '资源ID',
-      dataIndex: 'resource_id',
-      key: 'resource_id',
-      width: 100
+    { title: '资源类型', dataIndex: 'resource', key: 'resource', width: 100 },
+    { title: '资源ID', dataIndex: 'resource_id', key: 'resource_id', width: 100,
+      render: (text: string) => <span className="text-mono" style={{ fontSize: 12 }}>{text}</span>,
     },
     {
       title: '状态',
@@ -194,18 +169,15 @@ const AuditLogPage: React.FC = () => {
       title: 'IP地址',
       dataIndex: 'ip_address',
       key: 'ip_address',
-      width: 140
+      width: 140,
+      render: (text: string) => <span className="text-mono" style={{ fontSize: 12 }}>{text}</span>,
     },
     {
       title: '操作',
       key: 'action',
       width: 80,
       render: (_, record) => (
-        <Button 
-          type="link" 
-          icon={<EyeOutlined />} 
-          onClick={() => showDetail(record)}
-        >
+        <Button type="link" icon={<EyeOutlined />} onClick={() => showDetail(record)}>
           详情
         </Button>
       )
@@ -254,7 +226,6 @@ const AuditLogPage: React.FC = () => {
     { label: '认证', value: 'auth' },
     { label: '监控', value: 'monitor' },
     { label: '审计日志', value: 'audit_log' },
-    { label: '仪表盘', value: 'dashboard' },
     { label: '系统', value: 'system' },
   ]
 
@@ -264,64 +235,59 @@ const AuditLogPage: React.FC = () => {
   ]
 
   return (
-    <div style={{ padding: 24 }}>
-      <Card title="审计日志">
+    <div>
+      <div className="page-header">
+        <h1>审计日志</h1>
+        <div className="page-accent-line" />
+      </div>
+
+      <Card>
         {/* 筛选条件 */}
-        <Space wrap style={{ marginBottom: 16 }}>
-          <Search
-            placeholder="搜索用户名"
-            onSearch={handleSearch}
-            style={{ width: 200 }}
-            allowClear
-          />
-          <Select
-            placeholder="操作类型"
-            value={action || undefined}
-            onChange={(val) => { setAction(val || ''); setPage(1) }}
-            style={{ width: 150 }}
-            options={actionOptions}
-            allowClear
-          />
-          <Select
-            placeholder="资源类型"
-            value={resourceType || undefined}
-            onChange={(val) => { setResourceType(val || ''); setPage(1) }}
-            style={{ width: 120 }}
-            options={resourceOptions}
-            allowClear
-          />
-          <Select
-            placeholder="状态"
-            value={status || undefined}
-            onChange={(val) => { setStatus(val || ''); setPage(1) }}
-            style={{ width: 100 }}
-            options={statusOptions}
-            allowClear
-          />
-          <RangePicker
-            showTime
-            onChange={handleDateChange}
-          />
-          <Button onClick={handleReset}>重置</Button>
-        </Space>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+          <Space wrap>
+            <Search
+              placeholder="搜索用户名"
+              onSearch={handleSearch}
+              style={{ width: 200 }}
+              allowClear
+            />
+            <Select
+              placeholder="操作类型"
+              value={action || undefined}
+              onChange={(val) => { setAction(val || ''); setPage(1) }}
+              style={{ width: 150 }}
+              options={actionOptions}
+              allowClear
+            />
+            <Select
+              placeholder="资源类型"
+              value={resourceType || undefined}
+              onChange={(val) => { setResourceType(val || ''); setPage(1) }}
+              style={{ width: 120 }}
+              options={resourceOptions}
+              allowClear
+            />
+            <Select
+              placeholder="状态"
+              value={status || undefined}
+              onChange={(val) => { setStatus(val || ''); setPage(1) }}
+              style={{ width: 100 }}
+              options={statusOptions}
+              allowClear
+            />
+            <RangePicker showTime onChange={handleDateChange} />
+            <Button onClick={handleReset}>重置</Button>
+          </Space>
+          <Space>
+            <Button icon={<DownloadOutlined />} onClick={() => handleExport('csv')}>
+              导出 CSV
+            </Button>
+            <Button icon={<DownloadOutlined />} onClick={() => handleExport('json')}>
+              导出 JSON
+            </Button>
+          </Space>
+        </div>
 
-        {/* 导出按钮 */}
-        <Space style={{ marginBottom: 16, float: 'right' }}>
-          <Button 
-            icon={<DownloadOutlined />} 
-            onClick={() => handleExport('csv')}
-          >
-            导出 CSV
-          </Button>
-          <Button 
-            icon={<DownloadOutlined />} 
-            onClick={() => handleExport('json')}
-          >
-            导出 JSON
-          </Button>
-        </Space>
-
-        {/* 日志表格 */}
         <Table
           columns={columns}
           dataSource={logs}
@@ -334,15 +300,11 @@ const AuditLogPage: React.FC = () => {
             showSizeChanger: true,
             showQuickJumper: true,
             showTotal: (total) => `共 ${total} 条`,
-            onChange: (p, ps) => {
-              setPage(p)
-              setPageSize(ps)
-            }
+            onChange: (p, ps) => { setPage(p); setPageSize(ps) }
           }}
         />
       </Card>
 
-      {/* 详情弹窗 */}
       <Modal
         title="审计日志详情"
         open={detailVisible}
@@ -351,18 +313,32 @@ const AuditLogPage: React.FC = () => {
         width={600}
       >
         {currentLog && (
-          <div>
-            <p><strong>时间：</strong>{new Date(currentLog.created_at).toLocaleString('zh-CN')}</p>
-            <p><strong>用户：</strong>{currentLog.username}</p>
-            <p><strong>操作：</strong>{currentLog.action}</p>
-            <p><strong>资源类型：</strong>{currentLog.resource}</p>
-            <p><strong>资源ID：</strong>{currentLog.resource_id}</p>
-            <p><strong>状态：</strong><Tag color={getStatusColor(currentLog.status)}>{currentLog.status}</Tag></p>
-            <p><strong>IP地址：</strong>{currentLog.ip_address}</p>
-            <p><strong>用户代理：</strong>{currentLog.user_agent}</p>
-            <p><strong>详情：</strong>{currentLog.details || '-'}</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: '8px 16px', fontSize: 13 }}>
+              <span style={{ color: 'var(--text-tertiary)' }}>时间</span>
+              <span>{new Date(currentLog.created_at).toLocaleString('zh-CN')}</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>用户</span>
+              <span><strong>{currentLog.username}</strong></span>
+              <span style={{ color: 'var(--text-tertiary)' }}>操作</span>
+              <span><Tag color={getActionColor(currentLog.action)}>{currentLog.action}</Tag></span>
+              <span style={{ color: 'var(--text-tertiary)' }}>资源类型</span>
+              <span>{currentLog.resource}</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>资源ID</span>
+              <span className="text-mono">{currentLog.resource_id}</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>状态</span>
+              <span><Tag color={getStatusColor(currentLog.status)}>{currentLog.status === 'success' ? '成功' : '失败'}</Tag></span>
+              <span style={{ color: 'var(--text-tertiary)' }}>IP地址</span>
+              <span className="text-mono">{currentLog.ip_address}</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>用户代理</span>
+              <span style={{ wordBreak: 'break-all' }}>{currentLog.user_agent}</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>详情</span>
+              <span>{currentLog.details || '-'}</span>
+            </div>
             {currentLog.error_msg && (
-              <p><strong>错误信息：</strong><span style={{ color: 'red' }}>{currentLog.error_msg}</span></p>
+              <div style={{ padding: '10px 12px', background: 'var(--color-error-bg)', borderRadius: 'var(--radius-md)', fontSize: 13 }}>
+                <span style={{ color: 'var(--text-tertiary)', marginRight: 8 }}>错误信息：</span>
+                <span style={{ color: 'var(--color-error)' }}>{currentLog.error_msg}</span>
+              </div>
             )}
           </div>
         )}

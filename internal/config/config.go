@@ -67,6 +67,7 @@ type DatabaseConfig struct {
 	Username        string `mapstructure:"username"`
 	Password        string `mapstructure:"password"`
 	Database        string `mapstructure:"database"`
+	SSLMode         string `mapstructure:"ssl_mode"` // MySQL: false/true/custom, PostgreSQL: disable/require/verify-ca/verify-full
 	MaxOpenConns    int    `mapstructure:"max_open_conns"`
 	MaxIdleConns    int    `mapstructure:"max_idle_conns"`
 	ConnMaxLifetime int    `mapstructure:"conn_max_lifetime"` // 秒
@@ -154,6 +155,7 @@ func setDefaults() {
 	viper.SetDefault("database.max_open_conns", 50)
 	viper.SetDefault("database.max_idle_conns", 10)
 	viper.SetDefault("database.conn_max_lifetime", 3600)
+	viper.SetDefault("database.ssl_mode", "disable")
 
 	// JWT 默认配置
 	viper.SetDefault("jwt.secret", "change-this-secret-key")

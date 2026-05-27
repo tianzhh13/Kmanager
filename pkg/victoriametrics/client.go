@@ -39,12 +39,31 @@ type Metric struct {
 	Labels map[string]string
 }
 
-// Write 写入指标（Prometheus remote write 格式）
+const writeBatchSize = 5000 // 每批最大写入指标数
+
+// Write 写入指标（Prometheus remote write 格式，自动分片）
 func (c *Client) Write(ctx context.Context, metrics []Metric) error {
 	if !c.enabled {
 		return nil
 	}
 
+	// 分片写入，每批最多 writeBatchSize 条
+	for i := 0; i < len(metrics); i += writeBatchSize {
+		end := i + writeBatchSize
+		if end > len(metrics) {
+			end = len(metrics)
+		}
+		batch := metrics[i:end]
+		if err := c.writeBatch(ctx, batch); err != nil {
+			return fmt.Errorf("write metrics batch [%d:%d] failed: %w", i, end, err)
+		}
+	}
+
+	return nil
+}
+
+// writeBatch 写入单批指标
+func (c *Client) writeBatch(ctx context.Context, metrics []Metric) error {
 	// 构建 Prometheus 格式数据
 	var buf bytes.Buffer
 	for _, m := range metrics {
@@ -149,6 +168,36 @@ func (c *Client) QueryRange(ctx context.Context, query string, start, end time.T
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("query range failed: status=%d, body=%s", resp.StatusCode, string(body))
+	}
+
+	return io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024)) // 限制 50MB
+}
+
+// QueryInstant 即时查询
+func (c *Client) QueryInstant(ctx context.Context, query string) ([]byte, error) {
+	if !c.enabled {
+		return nil, fmt.Errorf("victoriametrics is not enabled")
+	}
+
+	queryURL := fmt.Sprintf("%s/api/v1/query?query=%s",
+		c.queryURL,
+		url.QueryEscape(query),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", queryURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request failed: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("query instant failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("query instant failed: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
 	return io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024)) // 限制 50MB

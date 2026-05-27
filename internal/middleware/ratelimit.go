@@ -20,7 +20,7 @@ type limiterEntry struct {
 // RateLimiter 限流器
 type RateLimiter struct {
 	limiters    map[string]*limiterEntry
-	mu          sync.RWMutex
+	mu          sync.Mutex
 	rate        rate.Limit
 	burst       int
 	cleanupDone chan struct{}
@@ -41,6 +41,16 @@ func NewRateLimiter(rps float64, burst int) *RateLimiter {
 	go rl.cleanupLoop()
 
 	return rl
+}
+
+// Stop 停止限流器后台清理 goroutine
+func (r *RateLimiter) Stop() {
+	select {
+	case <-r.cleanupDone:
+		// 已关闭
+	default:
+		close(r.cleanupDone)
+	}
 }
 
 // cleanupLoop 后台清理循环
@@ -73,25 +83,10 @@ func (r *RateLimiter) cleanupStaleEntries() {
 
 // getLimiter 获取或创建用户的限流器
 func (r *RateLimiter) getLimiter(key string) *rate.Limiter {
-	r.mu.RLock()
-	entry, exists := r.limiters[key]
-	r.mu.RUnlock()
-
-	if exists {
-		// 更新最后访问时间
-		r.mu.Lock()
-		if entry, exists = r.limiters[key]; exists {
-			entry.lastAccess = time.Now()
-		}
-		r.mu.Unlock()
-		return entry.limiter
-	}
-
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// 双重检查
-	if entry, exists = r.limiters[key]; exists {
+	if entry, exists := r.limiters[key]; exists {
 		entry.lastAccess = time.Now()
 		return entry.limiter
 	}
