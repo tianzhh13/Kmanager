@@ -6,6 +6,9 @@ WORKDIR /app
 # 安装构建依赖
 RUN apk add --no-cache gcc musl-dev make
 
+# 设置 Go 代理（国内加速）
+ENV GOPROXY=https://goproxy.cn,direct
+
 # 复制依赖文件
 COPY go.mod go.sum ./
 RUN go mod download
