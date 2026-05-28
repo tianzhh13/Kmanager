@@ -1,54 +1,90 @@
-# Binaries
+# ==============================
+# 本地编译 + Docker 打包 模式
+# 只允许以下文件进入 Docker 构建上下文：
+#   - 本地编译的 Linux 二进制（kafka-management-platform, kafka-collector）
+#   - 前端构建产物（frontend/dist/）
+#   - 配置模板（configs/config.yaml.example）
+#   - 数据库脚本（scripts/init_db*.sql）
+#   - 启动脚本（deploy/entrypoint.sh）
+# ==============================
+
+# ---- 需要进入的文件（不能被排除）----
+# kafka-management-platform   Linux 二进制（本地编译）
+# kafka-collector             Linux 二进制（本地编译）
+# frontend/dist/              前端构建产物
+# configs/config.yaml.example 配置模板
+# scripts/init_db.sql         MySQL 初始化脚本
+# scripts/init_db_postgres.sql PostgreSQL 初始化脚本
+# deploy/entrypoint.sh        启动脚本
+
+# ---- 排除所有不需要的 ----
+
+# Git 仓库数据（不进镜像）
+.git/
+.gitignore
+
+# Go 源码和依赖（本地已编译，不需要）
+internal/
+pkg/
+cmd/
+go.mod
+go.sum
+vendor/
+
+# 前端源码和依赖（本地已构建，不需要）
+frontend/src/
+frontend/node_modules/
+frontend/package.json
+frontend/package-lock.json
+frontend/tsconfig.json
+frontend/tsconfig.node.json
+frontend/vite.config.ts
+frontend/index.html
+frontend/public/
+
+# Windows 本地编译产物（只保留 Linux 二进制）
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-kafka-management-platform
-kafka-collector
 
-# IDE
+# 文档
+docs/
+README.md
+*.md
+
+# IDE 和工具
 .idea/
 .vscode/
 .kiro/
 .sisyphus/
 
-# Git
-.git/
-.gitignore
+# Docker 相关文件
+Dockerfile
+.dockerignore
+docker-compose*.yaml
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Docs & Logs
-docs/
+# 日志和临时文件
 *.log
 logs/
-stdout.log
-stderr.log
-
-# Frontend
-frontend/node_modules/
-frontend/dist/
-
-# Config (use mounted volume)
-configs/config.yaml
-!configs/config.yaml.example
-
-# Kerberos (use mounted volume)
-kerberos/
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
-# Build & Temp
 bin/
 build/
 tmp/
 temp/
 
-# Specs
-.kiro/
+# 实际配置文件（含密码，由环境变量生成）
+configs/config.yaml
+
+# Kerberos 文件（运行时挂载）
+kerberos/
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 其他
+.DS_Store
+Thumbs.db
+.specs/
