@@ -1,3 +1,22 @@
+# 构建阶段
+FROM golang:1.21-alpine AS builder
+
+WORKDIR /app
+
+# 安装构建依赖
+RUN apk add --no-cache gcc musl-dev
+
+# 复制依赖文件
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 复制源代码
+COPY . .
+
+# 构建
+RUN CGO_ENABLED=1 GOOS=linux go build -o kafka-management-platform cmd/server/main.go
+
+# 运行阶段
 FROM alpine:latest
 
 WORKDIR /app
@@ -5,23 +24,12 @@ WORKDIR /app
 # 安装运行时依赖
 RUN apk add --no-cache ca-certificates tzdata
 
-# 复制本地编译的二进制
-COPY kafka-management-platform .
-COPY kafka-collector .
+# 复制构建产物
+COPY --from=builder /app/kafka-management-platform .
+COPY --from=builder /app/configs/config.yaml.example ./config.yaml.example
+COPY --from=builder /app/scripts/init_db.sql ./scripts/init_db.sql
 
-# 复制前端构建产物
-COPY frontend/dist ./frontend/dist
-
-# 复制配置模板和数据库脚本
-COPY configs/config.yaml.example .
-COPY scripts/init_db.sql ./scripts/
-COPY scripts/init_db_postgres.sql ./scripts/
-
-# 复制启动脚本
-COPY deploy/entrypoint.sh .
-RUN chmod +x ./entrypoint.sh
-
-# 创建非 root 用户
+# 创建非root用户
 RUN adduser -D -u 1000 appuser
 USER appuser
 
@@ -29,4 +37,4 @@ USER appuser
 EXPOSE 8080
 
 # 启动命令
-ENTRYPOINT ["./entrypoint.sh", "./kafka-management-platform"]
+ENTRYPOINT ["./kafka-management-platform"]
