@@ -1,52 +1,72 @@
-version: '3.8'
-
 services:
   app:
-    build: .
-    container_name: kafka-management-platform
+    image: kmanager:latest
+    container_name: kmanager-app
     ports:
-      - "8080:8080"
-    environment:
-      - GIN_MODE=release
+      - "18080:18080"
     volumes:
-      - ./configs/config.yaml:/app/config.yaml:ro
-    depends_on:
-      - mysql
+      - ./logs:/var/log/kmanager
+    environment:
+      - SERVER_PORT=18080
+      - SERVER_MODE=release
+      - DB_TYPE=mysql
+      - DB_HOST=<your_db_host>
+      - DB_PORT=3306
+      - DB_USERNAME=<your_db_user>
+      - DB_PASSWORD=<your_db_password>
+      - DB_NAME=kafka_management
+      - JWT_SECRET=<your_jwt_secret>
+      - ENCRYPTION_KEY=<your_encryption_key>
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - LOG_OUTPUT=/var/log/kmanager/server.log
+      - LOG_MAX_SIZE=100
+      - LOG_MAX_BACKUPS=5
+      - LOG_MAX_AGE=30
+      - LOG_COMPRESS=true
+      - CORS_ORIGINS=http://<your_host>:18080
+      - VM_ENABLED=true
+      - VM_WRITE_URL=http://<your_vm_host>:8428/api/v1/import/prometheus
+      - VM_QUERY_URL=http://<your_vm_host>:8428
+      - SYNC_INTERVAL=30
+      - SESSION_IDLE_TIMEOUT=15
+      - COLLECTOR_CONCURRENCY=10
+      - COLLECTOR_INTERVAL=30
     restart: unless-stopped
     networks:
-      - kafka-platform
+      - kmanager-net
 
-  mysql:
-    image: mysql:8.0
-    container_name: kafka-mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: root_password
-      MYSQL_DATABASE: kafka_management
-    ports:
-      - "3306:3306"
+  collector:
+    image: kmanager:latest
+    container_name: kmanager-collector
+    entrypoint: ["./entrypoint.sh", "./kafka-collector"]
     volumes:
-      - mysql_data:/var/lib/mysql
-      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
+      - ./logs:/var/log/kmanager
+    environment:
+      - DB_TYPE=mysql
+      - DB_HOST=<your_db_host>
+      - DB_PORT=3306
+      - DB_USERNAME=<your_db_user>
+      - DB_PASSWORD=<your_db_password>
+      - DB_NAME=kafka_management
+      - JWT_SECRET=<your_jwt_secret>
+      - ENCRYPTION_KEY=<your_encryption_key>
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - LOG_OUTPUT=/var/log/kmanager/collector.log
+      - LOG_MAX_SIZE=100
+      - LOG_MAX_BACKUPS=5
+      - LOG_MAX_AGE=30
+      - LOG_COMPRESS=true
+      - VM_ENABLED=true
+      - VM_WRITE_URL=http://<your_vm_host>:8428/api/v1/import/prometheus
+      - VM_QUERY_URL=http://<your_vm_host>:8428
+      - COLLECTOR_CONCURRENCY=10
+      - COLLECTOR_INTERVAL=30
     restart: unless-stopped
     networks:
-      - kafka-platform
-
-  # 可选：Redis 用于缓存
-  # redis:
-  #   image: redis:7-alpine
-  #   container_name: kafka-redis
-  #   ports:
-  #     - "6379:6379"
-  #   volumes:
-  #     - redis_data:/data
-  #   restart: unless-stopped
-  #   networks:
-  #     - kafka-platform
-
-volumes:
-  mysql_data:
-  # redis_data:
+      - kmanager-net
 
 networks:
-  kafka-platform:
+  kmanager-net:
     driver: bridge
