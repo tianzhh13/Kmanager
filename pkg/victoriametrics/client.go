@@ -39,7 +39,11 @@ type Metric struct {
 	Labels map[string]string
 }
 
-const writeBatchSize = 5000 // 每批最大写入指标数
+const (
+	writeBatchSize = 5000 // 每批最大写入指标数
+	appLabel       = "app"
+	appName        = "kmanager"
+)
 
 // Write 写入指标（Prometheus remote write 格式，自动分片）
 func (c *Client) Write(ctx context.Context, metrics []Metric) error {
@@ -71,6 +75,11 @@ func (c *Client) writeBatch(ctx context.Context, metrics []Metric) error {
 		if len(m.Labels) > 0 {
 			buf.WriteString("{")
 			first := true
+			// 注入固定标签 app=kmanager
+			buf.WriteString(appLabel)
+			buf.WriteString("=\"")
+			buf.WriteString(appName)
+			buf.WriteString("\"")
 			for k, v := range m.Labels {
 				if !first {
 					buf.WriteString(",")
