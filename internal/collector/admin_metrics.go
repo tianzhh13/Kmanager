@@ -2,23 +2,31 @@ package collector
 
 import (
 	"context"
-	"log"
 	"strconv"
 	"strings"
 
+	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/pkg/kafka"
 	"kafka-management-platform/pkg/victoriametrics"
 )
 
 // collectAdminMetrics 采集 AdminClient 指标（元数据 + 消费者组 + 分区 Offset）
-// 返回指标列表和 nil 错误表示成功，非 nil 错误表示严重失败
-func (c *Collector) collectAdminMetrics(ctx context.Context, cluster *models.Cluster, partitionDetails []kafka.TopicPartitionInfo) []victoriametrics.Metric {
+// 返回指标列表和 bool 表示 AdminClient 是否健康（能拿到 broker 数据）
+func (c *Collector) collectAdminMetrics(ctx context.Context, cluster *models.Cluster, partitionDetails []kafka.TopicPartitionInfo) ([]victoriametrics.Metric, bool) {
 	// 1. 获取集群指标（包含 brokers, consumer groups, topic count）
 	metrics, err := c.monitorSvc.GetClusterMetrics(ctx, cluster.ClusterID)
 	if err != nil {
-		log.Printf("[Collector] Failed to get cluster metrics for cluster %d: %v", cluster.ClusterID, err)
-		return nil
+		logger.Error("Failed to get cluster metrics", "cluster_id", cluster.ClusterID, "cluster_name", cluster.ClusterName, "error", err)
+		return nil, false
+	}
+
+	// 判断 AdminClient 是否真正拿到了数据
+	adminHealthy := metrics.BrokerCount > 0
+	if !adminHealthy {
+		logger.Warn("AdminClient returned empty data (broker_count=0), cluster may be unreachable",
+			"cluster_id", cluster.ClusterID, "cluster_name", cluster.ClusterName,
+			"kafka_exporter_available", metrics.KafkaExporterAvailable)
 	}
 
 	baseLabels := map[string]string{
@@ -61,7 +69,7 @@ func (c *Collector) collectAdminMetrics(ctx context.Context, cluster *models.Clu
 			)
 		}
 	} else {
-		log.Printf("[Collector] Failed to get topic partition count for cluster %d: %v", cluster.ClusterID, err)
+		logger.Warn("Failed to get topic partition count", "cluster_id", cluster.ClusterID, "error", err)
 	}
 
 	// 5. 分区详情指标（副本、ISR、Leader、Offset 等）
@@ -75,13 +83,13 @@ func (c *Collector) collectAdminMetrics(ctx context.Context, cluster *models.Clu
 		// 获取所有分区的 LogEndOffset
 		endOffsets, err := c.monitorSvc.GetTopicPartitionOffsets(ctx, cluster.ClusterID, tpMap)
 		if err != nil {
-			log.Printf("[Collector] Failed to get end offsets for cluster %d: %v", cluster.ClusterID, err)
+			logger.Warn("Failed to get end offsets", "cluster_id", cluster.ClusterID, "error", err)
 		}
 
 		// 获取所有分区的 LogStartOffset
 		startOffsets, err := c.monitorSvc.GetTopicPartitionStartOffsets(ctx, cluster.ClusterID, tpMap)
 		if err != nil {
-			log.Printf("[Collector] Failed to get start offsets for cluster %d: %v", cluster.ClusterID, err)
+			logger.Warn("Failed to get start offsets", "cluster_id", cluster.ClusterID, "error", err)
 		}
 
 		for _, pd := range partitionDetails {
@@ -218,11 +226,16 @@ func (c *Collector) collectAdminMetrics(ctx context.Context, cluster *models.Clu
 		victoriametrics.Metric{Name: "kafka_total_lag", Value: float64(totalLag), Labels: baseLabels},
 	)
 
-	if len(vmMetrics) > 0 {
-		log.Printf("[Collector] Cluster %d: collected %d admin metrics", cluster.ClusterID, len(vmMetrics))
-	}
+	logger.Info("Collected admin metrics",
+		"cluster_id", cluster.ClusterID,
+		"cluster_name", cluster.ClusterName,
+		"metrics", len(vmMetrics),
+		"brokers", metrics.BrokerCount,
+		"topics", metrics.TopicCount,
+		"consumer_groups", len(metrics.ConsumerGroups),
+		"healthy", adminHealthy)
 
-	return vmMetrics
+	return vmMetrics, adminHealthy
 }
 
 // copyLabels 复制标签 map

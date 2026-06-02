@@ -2,9 +2,9 @@ package collector
 
 import (
 	"context"
-	"log"
 	"strconv"
 
+	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/service/monitor"
 	"kafka-management-platform/pkg/victoriametrics"
@@ -33,7 +33,7 @@ func (c *Collector) collectJMXMetrics(ctx context.Context, cluster *models.Clust
 	// 1. 获取原始 JMX 指标
 	rawMetrics, err := multiClient.FetchAllBrokerRawMetrics(ctx)
 	if err != nil {
-		log.Printf("[Collector] Failed to fetch JMX metrics for cluster %d: %v", cluster.ClusterID, err)
+		logger.Warn("Failed to fetch JMX metrics", "cluster_id", cluster.ClusterID, "error", err)
 	} else {
 		// 构建查找索引：directMappings + brokerTopicMappings
 		allDirectMap := make(map[string]string)
@@ -200,7 +200,7 @@ func (c *Collector) collectJMXMetrics(ctx context.Context, cluster *models.Clust
 	}
 
 	if len(vmMetrics) > 0 {
-		log.Printf("[Collector] Cluster %d: collected %d JMX metrics", cluster.ClusterID, len(vmMetrics))
+		logger.Info("Collected JMX metrics", "cluster_id", cluster.ClusterID, "metrics", len(vmMetrics))
 	}
 
 	return vmMetrics

@@ -3,10 +3,10 @@ package monitor
 import (
 	"context"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 
+	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/pkg/encryption"
 	"kafka-management-platform/pkg/kafka"
@@ -214,7 +214,7 @@ func (s *KafkaExporterService) GetConsumerGroupInfo(ctx context.Context, cluster
 	// 4. 批量获取 LogEndOffset
 	endOffsets, err := adminClient.GetTopicPartitionOffsets(topicPartitions)
 	if err != nil {
-		log.Printf("[KafkaExporter] Error getting topic end offsets: %v", err)
+		logger.Warn("Error getting topic end offsets", "error", err)
 	}
 
 	// 5. 计算每个 Topic 的 Lag
@@ -273,7 +273,7 @@ func (s *KafkaExporterService) GetConsumerGroupInfo(ctx context.Context, cluster
 
 // GetAllConsumerGroupLags 获取所有消费者组的 Lag（内置 Kafka Exporter 核心功能）
 func (s *KafkaExporterService) GetAllConsumerGroupLags(ctx context.Context, clusterID int64) ([]*ConsumerGroupInfo, error) {
-	log.Printf("[KafkaExporter] Getting all consumer group lags for cluster %d", clusterID)
+	logger.Info("Getting all consumer group lags", "cluster_id", clusterID)
 
 	adminClient, err := s.getAdminClient(ctx, clusterID)
 	if err != nil {
@@ -287,7 +287,7 @@ func (s *KafkaExporterService) GetAllConsumerGroupLags(ctx context.Context, clus
 		return nil, fmt.Errorf("failed to list consumer groups: %w", err)
 	}
 
-	log.Printf("[KafkaExporter] Found %d consumer groups", len(groups))
+	logger.Info("Found consumer groups", "count", len(groups))
 
 	// 2. 批量描述消费者组
 	groupIDs := make([]string, 0, len(groups))
@@ -315,7 +315,7 @@ func (s *KafkaExporterService) GetAllConsumerGroupLags(ctx context.Context, clus
 
 		offsetResp, err := adminClient.ListConsumerGroupOffsets(desc.GroupId, nil)
 		if err != nil {
-			log.Printf("[KafkaExporter] Error getting offsets for group %s: %v", desc.GroupId, err)
+			logger.Warn("Error getting offsets for group", "group", desc.GroupId, "error", err)
 			continue
 		}
 
@@ -334,14 +334,14 @@ func (s *KafkaExporterService) GetAllConsumerGroupLags(ctx context.Context, clus
 	// 4. 批量获取所有 Topic 分区的 LogEndOffset
 	endOffsets, err := adminClient.GetTopicPartitionOffsets(topicPartitions)
 	if err != nil {
-		log.Printf("[KafkaExporter] Error getting topic end offsets: %v", err)
+		logger.Warn("Error getting topic end offsets", "error", err)
 	}
 
 	// 5. 计算每个消费者组的 Lag
 	var result []*ConsumerGroupInfo
 	for _, desc := range descs {
 		if desc.ErrorCode != 0 {
-			log.Printf("[KafkaExporter] Error describing group %s: code %d", desc.GroupId, desc.ErrorCode)
+			logger.Warn("Error describing group", "group", desc.GroupId, "error_code", desc.ErrorCode)
 			continue
 		}
 
@@ -384,7 +384,7 @@ func (s *KafkaExporterService) GetAllConsumerGroupLags(ctx context.Context, clus
 				if lag > 0 && currentOffset >= 0 {
 					ls, err := adminClient.CalculateConsumerGroupLagSeconds(topic, partition, currentOffset, endOffset)
 					if err != nil {
-						log.Printf("[KafkaExporter] Failed to calculate lag seconds for %s/%d: %v", topic, partition, err)
+						logger.Warn("Failed to calculate lag seconds", "topic", topic, "partition", partition, "error", err)
 						lagSeconds = -1
 					} else {
 						lagSeconds = ls
@@ -420,7 +420,7 @@ func (s *KafkaExporterService) GetAllConsumerGroupLags(ctx context.Context, clus
 		result = append(result, info)
 	}
 
-	log.Printf("[KafkaExporter] Processed %d consumer groups", len(result))
+	logger.Info("Processed consumer groups", "count", len(result))
 	return result, nil
 }
 
