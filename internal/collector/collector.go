@@ -194,19 +194,29 @@ func (c *Collector) collectCluster(ctx context.Context, cluster *models.Cluster)
 	}
 
 	// 并行采集 AdminClient 指标 + JMX 指标
-	var adminMetrics, jmxMetrics []victoriametrics.Metric
+	var (
+		adminMetrics []victoriametrics.Metric
+		jmxMetrics   []victoriametrics.Metric
+		adminHealthy bool
+	)
 	var wg sync.WaitGroup
 
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		adminMetrics = c.collectAdminMetrics(ctx, cluster, partitionDetails)
+		adminMetrics, adminHealthy = c.collectAdminMetrics(ctx, cluster, partitionDetails)
 	}()
 	go func() {
 		defer wg.Done()
 		jmxMetrics = c.collectJMXMetrics(ctx, cluster)
 	}()
 	wg.Wait()
+
+	// 如果 AdminClient 不健康，记录警告（仍写入 VM，方便监控异常）
+	if !adminHealthy {
+		logger.Warn("AdminClient unhealthy, metrics may be zero values",
+			"cluster_id", cluster.ClusterID, "cluster_name", cluster.ClusterName)
+	}
 
 	// 合并写入 VM（一次 HTTP 请求）
 	all := append(adminMetrics, jmxMetrics...)

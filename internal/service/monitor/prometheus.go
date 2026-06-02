@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
 
 	"kafka-management-platform/internal/cache"
+	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/pkg/encryption"
 	"kafka-management-platform/pkg/kafka"
@@ -85,7 +85,7 @@ func (s *Service) getJMXClient(clusterID int64, jmxURL string) *JMXClient {
 
 // GetClusterMetrics 获取集群监控指标（整合 JMX + Kafka Exporter）
 func (s *Service) GetClusterMetrics(ctx context.Context, clusterID int64) (*ClusterMetricsResponse, error) {
-	log.Printf("[Monitor] Getting cluster metrics for cluster %d", clusterID)
+	logger.Debug("Getting cluster metrics", "cluster_id", clusterID)
 
 	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
 	if err != nil {
@@ -106,7 +106,7 @@ func (s *Service) GetClusterMetrics(ctx context.Context, clusterID int64) (*Clus
 			brokerMetrics, err := multiClient.GetAggregatedMetrics(jmxCtx)
 			jmxCancel()
 			if err != nil {
-				log.Printf("[Monitor] Failed to get JMX metrics (10s timeout): %v", err)
+				logger.Warn("Failed to get JMX metrics (10s timeout)", "cluster_id", clusterID, "error", err)
 				response.JMXExporterAvailable = false
 			} else {
 				response.BrokerMetrics = brokerMetrics
@@ -118,7 +118,7 @@ func (s *Service) GetClusterMetrics(ctx context.Context, clusterID int64) (*Clus
 	// 2. 从内置 Kafka Exporter 获取消费者组 Lag
 	consumerGroups, err := s.kafkaExporter.GetAllConsumerGroupLags(ctx, clusterID)
 	if err != nil {
-		log.Printf("[Monitor] Failed to get consumer group lags: %v", err)
+		logger.Warn("Failed to get consumer group lags", "cluster_id", clusterID, "error", err)
 		response.KafkaExporterAvailable = false
 	} else {
 		response.ConsumerGroups = consumerGroups
@@ -128,7 +128,7 @@ func (s *Service) GetClusterMetrics(ctx context.Context, clusterID int64) (*Clus
 	// 3. 获取元数据
 	metadata, err := s.kafkaExporter.GetClusterMetadata(ctx, clusterID)
 	if err != nil {
-		log.Printf("[Monitor] Failed to get cluster metadata: %v", err)
+		logger.Warn("Failed to get cluster metadata", "cluster_id", clusterID, "error", err)
 	} else {
 		response.Brokers = metadata.Brokers
 		response.BrokerCount = len(metadata.Brokers)

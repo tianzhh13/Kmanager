@@ -74,21 +74,18 @@ func (c *Client) writeBatch(ctx context.Context, metrics []Metric) error {
 		buf.WriteString(m.Name)
 		if len(m.Labels) > 0 {
 			buf.WriteString("{")
-			first := true
 			// 注入固定标签 app=kmanager
 			buf.WriteString(appLabel)
 			buf.WriteString("=\"")
 			buf.WriteString(appName)
 			buf.WriteString("\"")
+			// 用户标签前面一律加逗号（app 已在上面输出）
 			for k, v := range m.Labels {
-				if !first {
-					buf.WriteString(",")
-				}
+				buf.WriteString(",")
 				buf.WriteString(k)
 				buf.WriteString("=\"")
 				buf.WriteString(escapeLabelValue(v))
 				buf.WriteString("\"")
-				first = false
 			}
 			buf.WriteString("}")
 		}
