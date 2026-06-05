@@ -256,6 +256,7 @@ body {
   position: relative;
   z-index: 10;
   transition: width 380ms cubic-bezier(0.32, 0.72, 0, 1);
+  height: 100dvh;
 }
 
 .app-sidebar::after {
