@@ -1,12 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Card, Select, Spin, Statistic, Table, Space, Tag, Alert } from 'antd'
+import { Select, Spin, Alert } from 'antd'
 import ReactECharts from 'echarts-for-react'
 import dayjs, { Dayjs } from 'dayjs'
 import axios from '../../services/api'
 import DashboardGrid from '../../components/DashboardGrid'
 import { usePromqlOverrides, useDefaultPromqls, PromqlDebugger, PromqlDebugButton } from '../../components/PromqlDebugger'
-import { buildLineChartOption, buildMultiSeriesChartOption, formatBytesForChart } from '../../utils/chartOptions'
+import {
+  createAreaChartOption,
+  createMultiLineChartOption,
+  buildMultiSeriesChartOption,
+  formatBytesForChart,
+} from '../../utils/chartOptions'
+import type { MultiLineSeries } from '../../utils/chartOptions'
 import { metricsAPI, BatchQueryItem, extractInstantValue, extractMultiSeries, extractErrorRate } from '../../services/metrics'
+import { StatCard, SectionTitle, LabelTag } from '../../components/bento'
 
 interface ClusterOption {
   cluster_id: number
@@ -22,6 +29,47 @@ interface BrokerMonitorProps {
   jmxAvailable?: boolean
 }
 
+// ─── Helper: aggregate broker-keyed data or extract single broker ───
+
+type BrokerRecord = Record<string, { times: string[]; values: number[] }>
+
+function aggregateBrokerSeries(data: BrokerRecord): { times: string[]; values: number[] } {
+  const entries = Object.entries(data).filter(([, d]) => d && d.times && d.times.length > 0)
+  if (entries.length === 0) return { times: [], values: [] }
+  if (entries.length === 1) return entries[0][1]
+  const allTimes = new Set<string>()
+  entries.forEach(([, d]) => d.times.forEach(t => allTimes.add(t)))
+  const times = Array.from(allTimes).sort()
+  const values = times.map(t => {
+    let sum = 0
+    entries.forEach(([, d]) => {
+      const idx = d.times.indexOf(t)
+      if (idx >= 0) sum += d.values[idx]
+    })
+    return sum
+  })
+  return { times, values }
+}
+
+function getBrokerOrAggregate(
+  data: any,
+  selectedBroker: string,
+): { times: string[]; values: number[] } {
+  if (!data) return { times: [], values: [] }
+  const brokers: BrokerRecord = data.brokers || {}
+  const single = data.single
+  if (selectedBroker !== 'all') {
+    if (single) return single
+    if (brokers[selectedBroker]) return brokers[selectedBroker]
+    // Try matching by key
+    const keys = Object.keys(brokers)
+    if (keys.length === 1) return brokers[keys[0]]
+  }
+  return aggregateBrokerSeries(brokers)
+}
+
+// ─── Component ───
+
 const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quickRange, customRange, activeTab, jmxAvailable }) => {
   const [brokerOverviewData, setBrokerOverviewData] = useState<any[]>([])
   const [brokerOverviewLoading, setBrokerOverviewLoading] = useState(false)
@@ -30,57 +78,57 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
   const [brokerList, setBrokerList] = useState<{ id: string; host: string }[]>([])
   const [brokerChartLoading, setBrokerChartLoading] = useState(false)
 
-  const [brokerRequestLatencyData, setBrokerRequestLatencyData] = useState<Record<string, { times: string[]; values: number[] }>>({})
+  const [brokerRequestLatencyData, setBrokerRequestLatencyData] = useState<any>({})
   const [brokerReplicaLagData, setBrokerReplicaLagData] = useState<{ times: string[]; values: number[] }>({ times: [], values: [] })
-  const [brokerBytesInData, setBrokerBytesInData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerBytesOutData, setBrokerBytesOutData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerQueueTimeData, setBrokerQueueTimeData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerLocalTimeData, setBrokerLocalTimeData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerRemoteTimeData, setBrokerRemoteTimeData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerThrottleTimeData, setBrokerThrottleTimeData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerErrorsData, setBrokerErrorsData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerReplicationInData, setBrokerReplicationInData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerReplicationOutData, setBrokerReplicationOutData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerReassignmentInData, setBrokerReassignmentInData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerReassignmentOutData, setBrokerReassignmentOutData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerIsrShrinksData, setBrokerIsrShrinksData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerIsrExpandsData, setBrokerIsrExpandsData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerResponseQueueData, setBrokerResponseQueueData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerHandlerIdleData, setBrokerHandlerIdleData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerNetworkIdleData, setBrokerNetworkIdleData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerDiskReadData, setBrokerDiskReadData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerDiskWriteData, setBrokerDiskWriteData] = useState<Record<string, { times: string[]; values: number[] }>>({})
+  const [brokerBytesInData, setBrokerBytesInData] = useState<any>({})
+  const [brokerBytesOutData, setBrokerBytesOutData] = useState<any>({})
+  const [brokerQueueTimeData, setBrokerQueueTimeData] = useState<any>({})
+  const [brokerLocalTimeData, setBrokerLocalTimeData] = useState<any>({})
+  const [brokerRemoteTimeData, setBrokerRemoteTimeData] = useState<any>({})
+  const [brokerThrottleTimeData, setBrokerThrottleTimeData] = useState<any>({})
+  const [brokerErrorsData, setBrokerErrorsData] = useState<BrokerRecord>({})
+  const [brokerReplicationInData, setBrokerReplicationInData] = useState<any>({})
+  const [brokerReplicationOutData, setBrokerReplicationOutData] = useState<any>({})
+  const [brokerReassignmentInData, setBrokerReassignmentInData] = useState<any>({})
+  const [brokerReassignmentOutData, setBrokerReassignmentOutData] = useState<any>({})
+  const [brokerIsrShrinksData, setBrokerIsrShrinksData] = useState<any>({})
+  const [brokerIsrExpandsData, setBrokerIsrExpandsData] = useState<any>({})
+  const [brokerResponseQueueData, setBrokerResponseQueueData] = useState<any>({})
+  const [brokerHandlerIdleData, setBrokerHandlerIdleData] = useState<any>({})
+  const [brokerNetworkIdleData, setBrokerNetworkIdleData] = useState<any>({})
+  const [brokerDiskReadData, setBrokerDiskReadData] = useState<any>({})
+  const [brokerDiskWriteData, setBrokerDiskWriteData] = useState<any>({})
   const [brokerIsrUpdatesFailed, setBrokerIsrUpdatesFailed] = useState<number>(0)
-  const [brokerControllerEventQueueData, setBrokerControllerEventQueueData] = useState<Record<string, { times: string[]; values: number[] }>>({})
+  const [brokerControllerEventQueueData, setBrokerControllerEventQueueData] = useState<any>({})
   const [brokerUncleanLeaderElections, setBrokerUncleanLeaderElections] = useState<number>(0)
-  const [brokerDelayedOperationsData, setBrokerDelayedOperationsData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerPurgatorySizeData, setBrokerPurgatorySizeData] = useState<Record<string, { times: string[]; values: number[] }>>({})
+  const [brokerDelayedOperationsData, setBrokerDelayedOperationsData] = useState<any>({})
+  const [brokerPurgatorySizeData, setBrokerPurgatorySizeData] = useState<any>({})
   const [brokerDelayedFetchExpires, setBrokerDelayedFetchExpires] = useState<number>(0)
-  const [brokerMinFetchRateData, setBrokerMinFetchRateData] = useState<Record<string, { times: string[]; values: number[] }>>({})
+  const [brokerMinFetchRateData, setBrokerMinFetchRateData] = useState<any>({})
   const [brokerFailedPartitionsCount, setBrokerFailedPartitionsCount] = useState<number>(0)
   const [brokerDeadThreadCount, setBrokerDeadThreadCount] = useState<number>(0)
-  const [brokerLogFlushTimeData, setBrokerLogFlushTimeData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerProcessCpuData, setBrokerProcessCpuData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerProcessResidentMemoryData, setBrokerProcessResidentMemoryData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerProcessVirtualMemoryData, setBrokerProcessVirtualMemoryData] = useState<Record<string, { times: string[]; values: number[] }>>({})
+  const [brokerLogFlushTimeData, setBrokerLogFlushTimeData] = useState<any>({})
+  const [brokerProcessCpuData, setBrokerProcessCpuData] = useState<any>({})
+  const [brokerProcessResidentMemoryData, setBrokerProcessResidentMemoryData] = useState<any>({})
+  const [brokerProcessVirtualMemoryData, setBrokerProcessVirtualMemoryData] = useState<any>({})
   const [brokerProcessStartTime, setBrokerProcessStartTime] = useState<number>(0)
   const [brokerProcessMaxFds, setBrokerProcessMaxFds] = useState<number>(0)
-  const [brokerProcessOpenFdsData, setBrokerProcessOpenFdsData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerLogCleanerMaxDirtyData, setBrokerLogCleanerMaxDirtyData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerLogCleanerTimeSinceLastRunData, setBrokerLogCleanerTimeSinceLastRunData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerLogCleanerUncleanableBytesData, setBrokerLogCleanerUncleanableBytesData] = useState<Record<string, { times: string[]; values: number[] }>>({})
+  const [brokerProcessOpenFdsData, setBrokerProcessOpenFdsData] = useState<any>({})
+  const [brokerLogCleanerMaxDirtyData, setBrokerLogCleanerMaxDirtyData] = useState<any>({})
+  const [brokerLogCleanerTimeSinceLastRunData, setBrokerLogCleanerTimeSinceLastRunData] = useState<any>({})
+  const [brokerLogCleanerUncleanableBytesData, setBrokerLogCleanerUncleanableBytesData] = useState<any>({})
   const [brokerLogCleanerUncleanablePartitions, setBrokerLogCleanerUncleanablePartitions] = useState<number>(0)
-  const [brokerLogCleanerRecopyData, setBrokerLogCleanerRecopyData] = useState<Record<string, { times: string[]; values: number[] }>>({})
+  const [brokerLogCleanerRecopyData, setBrokerLogCleanerRecopyData] = useState<any>({})
   const [brokerLogCleanerDeadThreads, setBrokerLogCleanerDeadThreads] = useState<number>(0)
-  const [brokerLogCleanerMaxBufferData, setBrokerLogCleanerMaxBufferData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerLogCleanerMaxCleanTimeData, setBrokerLogCleanerMaxCleanTimeData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerLogCleanerMaxCompactionDelayData, setBrokerLogCleanerMaxCompactionDelayData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerJvmGcData, setBrokerJvmGcData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerJvmGcCountData, setBrokerJvmGcCountData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerJvmMemoryPoolData, setBrokerJvmMemoryPoolData] = useState<Record<string, { times: string[]; values: number[] }>>({})
-  const [brokerJvmThreadsData, setBrokerJvmThreadsData] = useState<Record<string, { times: string[]; values: number[] }>>({})
+  const [brokerLogCleanerMaxBufferData, setBrokerLogCleanerMaxBufferData] = useState<any>({})
+  const [brokerLogCleanerMaxCleanTimeData, setBrokerLogCleanerMaxCleanTimeData] = useState<any>({})
+  const [brokerLogCleanerMaxCompactionDelayData, setBrokerLogCleanerMaxCompactionDelayData] = useState<any>({})
+  const [brokerJvmGcData, setBrokerJvmGcData] = useState<any>({})
+  const [brokerJvmGcCountData, setBrokerJvmGcCountData] = useState<any>({})
+  const [brokerJvmMemoryPoolData, setBrokerJvmMemoryPoolData] = useState<any>({})
+  const [brokerJvmThreadsData, setBrokerJvmThreadsData] = useState<any>({})
   const [brokerJvmDeadlockedThreads, setBrokerJvmDeadlockedThreads] = useState<number>(0)
-  const [brokerJvmBufferPoolData, setBrokerJvmBufferPoolData] = useState<Record<string, { times: string[]; values: number[] }>>({})
+  const [brokerJvmBufferPoolData, setBrokerJvmBufferPoolData] = useState<any>({})
   const [debugOpen, setDebugOpen] = useState(false)
   const { overrides, getQ, setOverride, resetOverride, resetAll } = usePromqlOverrides('broker_monitor')
   const { q, defaultPromqls } = useDefaultPromqls(getQ)
@@ -140,6 +188,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     jvmDead: '死锁线程数',
     jvmBuf: 'JVM Buffer 池已用',
   }
+
   const getTimeRange = useCallback((): { start: Dayjs; end: Dayjs; step: string } => {
     let end: Dayjs, start: Dayjs, step: string
     if (timeRange === 'custom' && customRange) {
@@ -166,19 +215,9 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     return { start, end, step }
   }, [timeRange, quickRange, customRange])
 
-  // 包装 buildMultiSeriesChartOption，自动注入 fullTimes
+  // Legacy compat: wrap buildMultiSeriesChartOption
   const buildChart = (title: string, data: any, color: string, unit: string, fmt?: (v: number) => string) => {
     return buildMultiSeriesChartOption(title, data, color, unit, fmt, fullTimes)
-  }
-
-  const getBrokerLatencyChartOption = (title: string, data: any) => {
-    if (!data || (!data.single && Object.keys(data.brokers || {}).length === 0)) {
-      return { title: { text: title, left: 'center', textStyle: { fontSize: 14, color: '#999' } }, graphic: { type: 'text', left: 'center', top: 'middle', style: { text: '暂无数据', fill: '#999', fontSize: 14 } }, xAxis: { type: 'category', data: [] }, yAxis: { type: 'value' }, series: [] }
-    }
-    if (data.single) {
-      return buildLineChartOption(title, data.single, '#1890ff', 'ms')
-    }
-    return buildChart(title, data.brokers, '#1890ff', 'ms')
   }
 
   const loadBrokerOverview = useCallback(async () => {
@@ -207,11 +246,11 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
       const instantEnd = dayjs()
 
       const rangeQuery = (id: string, query: string): BatchQueryItem => ({
-        id, query, start: start.unix(), end: end.unix(), step
+        id, query, start: start.unix(), end: end.unix(), step,
       })
 
       const instantQuery = (id: string, query: string): BatchQueryItem => ({
-        id, query, start: instantStart.unix(), end: instantEnd.unix(), step: '60s'
+        id, query, start: instantStart.unix(), end: instantEnd.unix(), step: '60s',
       })
 
       const queries: BatchQueryItem[] = [
@@ -272,7 +311,6 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
 
       const { data: batchRes } = await metricsAPI.batchQuery(queries)
       const r = batchRes.results
-
       const getMulti = (id: string): any => extractMultiSeries(r[id])
       const getInstant = (id: string) => extractInstantValue(r[id])
 
@@ -331,15 +369,14 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
       const jvmBufPoolRes = getMulti('jvmBuf')
 
       setBrokerRequestLatencyData({ produce: proRes, fetchConsumer: fetchRes, fetchFollower: followerRes })
-
       if (selectedBroker === 'all' && lagRes.brokers && Object.keys(lagRes.brokers).length > 0) {
         const allTimes = new Set<string>()
-        const lagBrokers = lagRes.brokers as Record<string, { times: string[]; values: number[] }>
-        Object.values(lagBrokers).forEach((b: { times: string[]; values: number[] }) => b.times.forEach(t => allTimes.add(t)))
+        const lagBrokers = lagRes.brokers as BrokerRecord
+        Object.values(lagBrokers).forEach((b) => b.times.forEach(t => allTimes.add(t)))
         const times = Array.from(allTimes).sort()
         const values = times.map(t => {
           let maxVal = 0
-          Object.values(lagBrokers).forEach((b: { times: string[]; values: number[] }) => {
+          Object.values(lagBrokers).forEach((b) => {
             const idx = b.times.indexOf(t)
             if (idx >= 0 && b.values[idx] > maxVal) maxVal = b.values[idx]
           })
@@ -400,7 +437,6 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
       setBrokerJvmDeadlockedThreads(jvmDeadlockedRes || 0)
       setBrokerJvmBufferPoolData(jvmBufPoolRes)
 
-      // 根据查询范围生成完整时间轴，供图表补全缺失数据
       const times: string[] = []
       let cursor = getTimeRange().start
       const { end: endTs, step: stepStr } = getTimeRange()
@@ -429,9 +465,258 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     }
   }, [selectedBroker, quickRange, customRange, timeRange])
 
+  // ─── Chart data builders (merged 43→23) ───
+
+  /** Build a single-series area chart from metric state data */
+  const mkArea = (
+    data: { times: string[]; values: number[] },
+    color: string,
+    unit: string,
+    fmt?: (v: number) => string,
+  ) => createAreaChartOption('', data, color, unit, fmt)
+
+  /** Build a multi-line chart combining multiple metrics into one chart */
+  const mkMulti = (seriesList: MultiLineSeries[], yAxisName: string, fmt?: (v: number) => string) =>
+    createMultiLineChartOption('', seriesList, yAxisName, fmt)
+
+  /** Extract series from metric state data for multi-line charts */
+  const ms = (
+    data: any,
+    name: string,
+  ): MultiLineSeries => {
+    const d = getBrokerOrAggregate(data, selectedBroker)
+    return { name, times: d.times, values: d.values }
+  }
+
+  /** Build cross-broker multi-line chart (per-broker breakdown for single metric) */
+  const mkBrokerChart = (
+    data: any,
+    unit: string,
+    fmt?: (v: number) => string,
+  ) => {
+    const brokers: BrokerRecord = data?.brokers || {}
+    if (selectedBroker !== 'all' && data?.single) {
+      return createAreaChartOption('', data.single, '#f97316', unit, fmt)
+    }
+    if (selectedBroker !== 'all') {
+      const b = brokers[selectedBroker]
+      if (b) return createAreaChartOption('', b, '#f97316', unit, fmt)
+      if (Object.keys(brokers).length === 1) return createAreaChartOption('', Object.values(brokers)[0], '#f97316', unit, fmt)
+    }
+    return buildChart('', brokers, '#f97316', unit, fmt)
+  }
+
+  const chartKey = `${selectedBroker}-${quickRange}`
+
+  // 23 merged chart definitions
+  const chartItems = jmxAvailable ? [
+    // ─── 延迟 ───
+    { i: 'bk-replica-lag', x: 0, y: 0, w: 6, h: 6, group: '延迟', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="副本同步 Lag" />
+        <ReactECharts key={`rl-${chartKey}`} option={mkArea(brokerReplicaLagData, '#ef4444', 'Lag')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-req-latency', x: 6, y: 0, w: 6, h: 6, group: '延迟', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="请求延迟 P99" />
+        <ReactECharts key={`rlat-${chartKey}`} option={mkMulti([
+          ms(brokerRequestLatencyData.produce, 'Produce'),
+          ms(brokerRequestLatencyData.fetchConsumer, 'Fetch'),
+          ms(brokerRequestLatencyData.fetchFollower, 'Follower'),
+        ], 'ms')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-proc-latency', x: 0, y: 6, w: 12, h: 6, group: '延迟', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="处理延迟 P99" />
+        <ReactECharts key={`plat-${chartKey}`} option={mkMulti([
+          ms(brokerQueueTimeData, 'Queue'),
+          ms(brokerLocalTimeData, 'Local'),
+          ms(brokerRemoteTimeData, 'Remote'),
+          ms(brokerThrottleTimeData, 'Throttle'),
+        ], 'ms')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    // ─── 吞吐 ───
+    { i: 'bk-bytes-io', x: 0, y: 12, w: 6, h: 6, group: '吞吐', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="字节流入 / 流出" />
+        <ReactECharts key={`bio-${chartKey}`} option={mkMulti([
+          ms(brokerBytesInData, 'In'),
+          ms(brokerBytesOutData, 'Out'),
+        ], 'B/s', (v) => formatBytesForChart(v))} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-repl-io', x: 6, y: 12, w: 6, h: 6, group: '吞吐', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="副本同步流入 / 流出" />
+        <ReactECharts key={`rio-${chartKey}`} option={mkMulti([
+          ms(brokerReplicationInData, 'In'),
+          ms(brokerReplicationOutData, 'Out'),
+        ], 'B/s', (v) => formatBytesForChart(v))} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-reassign-io', x: 0, y: 18, w: 6, h: 6, group: '吞吐', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="分区迁移流入 / 流出" />
+        <ReactECharts key={`raio-${chartKey}`} option={mkMulti([
+          ms(brokerReassignmentInData, 'In'),
+          ms(brokerReassignmentOutData, 'Out'),
+        ], 'B/s', (v) => formatBytesForChart(v))} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    // ─── 错误与ISR ───
+    { i: 'bk-errors', x: 6, y: 18, w: 6, h: 6, group: '错误与ISR', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="请求错误速率" />
+        <ReactECharts key={`err-${chartKey}`} option={buildChart('请求错误速率', brokerErrorsData, '#ef4444', 'errors/s')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-isr', x: 0, y: 24, w: 6, h: 6, group: '错误与ISR', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="ISR 收缩 / 扩展" />
+        <ReactECharts key={`isr-${chartKey}`} option={mkMulti([
+          ms(brokerIsrShrinksData, 'Shrink'),
+          ms(brokerIsrExpandsData, 'Expand'),
+        ], '次/秒')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    // ─── 队列与处理 ───
+    { i: 'bk-resp-queue', x: 6, y: 24, w: 6, h: 6, group: '队列与处理', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="响应队列大小" />
+        <ReactECharts key={`rq-${chartKey}`} option={mkBrokerChart(brokerResponseQueueData, '个')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-idle', x: 0, y: 30, w: 6, h: 6, group: '队列与处理', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="Handler / 网络 Processor 空闲率" />
+        <ReactECharts key={`idle-${chartKey}`} option={mkMulti([
+          ms(brokerHandlerIdleData, 'Handler'),
+          ms(brokerNetworkIdleData, 'Network'),
+        ], '%', (v) => (v * 100).toFixed(1) + '%')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    // ─── 磁盘 ───
+    { i: 'bk-disk-io', x: 6, y: 30, w: 6, h: 6, group: '磁盘', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="磁盘读 / 写速率" />
+        <ReactECharts key={`disk-${chartKey}`} option={mkMulti([
+          ms(brokerDiskReadData, 'Read'),
+          ms(brokerDiskWriteData, 'Write'),
+        ], 'B/s', (v) => formatBytesForChart(v))} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    // ─── Controller与延迟 ───
+    { i: 'bk-ctrl-event', x: 0, y: 36, w: 6, h: 6, group: 'Controller与延迟', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="Controller 事件排队耗时" />
+        <ReactECharts key={`ctrl-${chartKey}`} option={mkBrokerChart(brokerControllerEventQueueData, 'ms')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-delay-purg', x: 6, y: 36, w: 6, h: 6, group: 'Controller与延迟', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="延迟操作 / Purgatory" />
+        <ReactECharts key={`dpurg-${chartKey}`} option={mkMulti([
+          ms(brokerDelayedOperationsData, 'Delayed Ops'),
+          ms(brokerPurgatorySizeData, 'Purgatory'),
+        ], '个')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-follower-io', x: 0, y: 42, w: 6, h: 6, group: 'Controller与延迟', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="Follower 最小拉取 / Flush P99" />
+        <ReactECharts key={`fio-${chartKey}`} option={mkMulti([
+          ms(brokerMinFetchRateData, 'Min Fetch'),
+          ms(brokerLogFlushTimeData, 'Flush'),
+        ], '')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    // ─── 资源 ───
+    { i: 'bk-cpu', x: 6, y: 42, w: 6, h: 6, group: '资源', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="进程 CPU 使用率" />
+        <ReactECharts key={`cpu-${chartKey}`} option={mkBrokerChart(brokerProcessCpuData, '%', (v) => (v * 100).toFixed(2) + '%')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-mem', x: 0, y: 48, w: 6, h: 6, group: '资源', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="进程驻留 / 虚拟内存" />
+        <ReactECharts key={`mem-${chartKey}`} option={mkMulti([
+          ms(brokerProcessResidentMemoryData, 'Resident'),
+          ms(brokerProcessVirtualMemoryData, 'Virtual'),
+        ], 'B', (v) => formatBytesForChart(v))} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-fds', x: 6, y: 48, w: 6, h: 6, group: '资源', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="已用文件描述符" />
+        <ReactECharts key={`fds-${chartKey}`} option={mkBrokerChart(brokerProcessOpenFdsData, '个')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-dirty', x: 0, y: 54, w: 6, h: 6, group: '资源', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="最大脏比例 / 不可清理字节" />
+        <ReactECharts key={`dirty-${chartKey}`} option={mkMulti([
+          ms(brokerLogCleanerMaxDirtyData, 'Dirty %'),
+          ms(brokerLogCleanerUncleanableBytesData, 'Uncleanable'),
+        ], '')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    // ─── LogCleaner ───
+    { i: 'bk-cleaner-status', x: 6, y: 54, w: 6, h: 6, group: 'LogCleaner', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="Cleaner 运行状态" />
+        <ReactECharts key={`cstat-${chartKey}`} option={mkMulti([
+          ms(brokerLogCleanerTimeSinceLastRunData, '上次清理间隔'),
+          ms(brokerLogCleanerRecopyData, '重复制比例'),
+          ms(brokerLogCleanerMaxBufferData, '缓冲利用率'),
+        ], '')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-cleaner-latency', x: 0, y: 60, w: 6, h: 6, group: 'LogCleaner', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="Cleaner 延迟" />
+        <ReactECharts key={`clat-${chartKey}`} option={mkMulti([
+          ms(brokerLogCleanerMaxCleanTimeData, '清理时间'),
+          ms(brokerLogCleanerMaxCompactionDelayData, '压缩延迟'),
+        ], '秒')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    // ─── GC与JVM ───
+    { i: 'bk-gc', x: 6, y: 60, w: 6, h: 6, group: 'GC与JVM', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="GC 耗时 / 次数" />
+        <ReactECharts key={`gc-${chartKey}`} option={mkMulti([
+          ms(brokerJvmGcData, 'Time'),
+          ms(brokerJvmGcCountData, 'Count'),
+        ], '')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-jvm-mem', x: 0, y: 66, w: 6, h: 6, group: 'GC与JVM', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="JVM 内存池 / Buffer" />
+        <ReactECharts key={`jvmem-${chartKey}`} option={mkMulti([
+          ms(brokerJvmMemoryPoolData, 'Mem Pool'),
+          ms(brokerJvmBufferPoolData, 'Buffer Pool'),
+        ], 'B', (v) => formatBytesForChart(v))} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+    { i: 'bk-jvm-threads', x: 6, y: 66, w: 6, h: 6, group: 'GC与JVM', component:
+      <div className="bento-card"><div className="bento-card-inner">
+        <SectionTitle title="JVM 线程数" />
+        <ReactECharts key={`jt-${chartKey}`} option={mkBrokerChart(brokerJvmThreadsData, '个')} style={{ height: 220 }} notMerge={true} />
+      </div></div>,
+    },
+  ] : []
+
+  // ─── Render ───
+
   return (
     <Spin spinning={brokerOverviewLoading || brokerChartLoading}>
-      <Space style={{ marginBottom: 16 }} wrap>
+      {/* Broker Selector + PromQL Debug */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <Select
           placeholder="选择 Broker"
           value={selectedBroker}
@@ -443,92 +728,75 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
           ]}
         />
         <PromqlDebugButton onClick={() => setDebugOpen(true)} overrideCount={Object.keys(overrides).length} />
-      </Space>
+      </div>
 
-      <Card size="small" title="Broker 总览" style={{ marginBottom: 16 }}>
-        <Table
-          size="small"
-          dataSource={brokerOverviewData}
-          loading={brokerOverviewLoading}
-          rowKey="broker_id"
-          pagination={false}
-          columns={[
-            { title: 'Broker ID', dataIndex: 'broker_id', key: 'broker_id', width: 100 },
-            { title: 'Host', dataIndex: 'broker_host', key: 'broker_host' },
-            { title: 'Leader Percent', dataIndex: 'leader_percent', key: 'leader_percent', width: 130, render: (val: number) => `${val?.toFixed(1) ?? 0}%`, sorter: (a: any, b: any) => a.leader_percent - b.leader_percent },
-            { title: 'Leader 个数', dataIndex: 'leader_count', key: 'leader_count', width: 110, sorter: (a: any, b: any) => a.leader_count - b.leader_count },
-            { title: 'Replicas 个数', dataIndex: 'replica_count', key: 'replica_count', width: 120, sorter: (a: any, b: any) => a.replica_count - b.replica_count },
-            { title: '角色', dataIndex: 'is_controller', key: 'is_controller', width: 100, render: (isController: boolean) => <Tag color={isController ? 'red' : 'default'}>{isController ? 'Controller' : 'Follower'}</Tag> },
-          ]}
-        />
-      </Card>
+      {/* Instant Stat Cards (10) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 20 }}>
+        <StatCard label="ISR 更新失败" value={brokerIsrUpdatesFailed} color={brokerIsrUpdatesFailed === 0 ? '#10b981' : '#ef4444'} />
+        <StatCard label="Unclean Leader 选举" value={brokerUncleanLeaderElections} color={brokerUncleanLeaderElections === 0 ? '#10b981' : '#ef4444'} />
+        <StatCard label="Follower 失败分区" value={brokerFailedPartitionsCount} color={brokerFailedPartitionsCount === 0 ? '#10b981' : '#ef4444'} />
+        <StatCard label="Follower 死线程" value={brokerDeadThreadCount} color={brokerDeadThreadCount === 0 ? '#10b981' : '#ef4444'} />
+        <StatCard label="Fetch 延迟过期" value={brokerDelayedFetchExpires} />
+        <StatCard label="进程启动时间" value={brokerProcessStartTime ? new Date(brokerProcessStartTime * 1000).toLocaleString() : '-'} />
+        <StatCard label="最大文件描述符" value={brokerProcessMaxFds} />
+        <StatCard label="死锁线程数" value={brokerJvmDeadlockedThreads} color={brokerJvmDeadlockedThreads === 0 ? '#10b981' : '#ef4444'} />
+        <StatCard label="不可清理分区" value={brokerLogCleanerUncleanablePartitions} />
+        <StatCard label="Cleaner 死线程" value={brokerLogCleanerDeadThreads} color={brokerLogCleanerDeadThreads === 0 ? '#10b981' : '#ef4444'} />
+      </div>
 
+      {/* Broker Overview Rows */}
+      {brokerOverviewData.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <SectionTitle title="Broker 总览" />
+          <div style={{ overflowX: 'auto' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr 120px 100px 100px 100px', gap: 0, minWidth: 700 }}>
+              {/* Header */}
+              <div className="bento-grid-header">Broker ID</div>
+              <div className="bento-grid-header">Host</div>
+              <div className="bento-grid-header">Leader Percent</div>
+              <div className="bento-grid-header">Leader</div>
+              <div className="bento-grid-header">Replicas</div>
+              <div className="bento-grid-header">角色</div>
+              {/* Rows */}
+              {brokerOverviewData.map((b: any) => (
+                <React.Fragment key={b.broker_id}>
+                  <div className="bento-grid-cell mono">{b.broker_id}</div>
+                  <div className="bento-grid-cell mono">{b.broker_host}</div>
+                  <div className="bento-grid-cell mono">{b.leader_percent?.toFixed(1) ?? 0}%</div>
+                  <div className="bento-grid-cell mono">{b.leader_count}</div>
+                  <div className="bento-grid-cell mono">{b.replica_count}</div>
+                  <div className="bento-grid-cell">
+                    <LabelTag text={b.is_controller ? 'Controller' : 'Follower'} color={b.is_controller ? 'red' : 'blue'} />
+                  </div>
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* JMX Unavailable Alert */}
       {!jmxAvailable && (
-        <Alert message="JMX Exporter 未配置" description="Broker 级别指标（延迟、流量、JVM 等）依赖 JMX Exporter，请在集群配置中设置 JMX Exporter URL" type="warning" showIcon style={{ marginBottom: 16 }} />
+        <Alert
+          message="JMX Exporter 未配置"
+          description="Broker 级别指标（延迟、流量、JVM 等）依赖 JMX Exporter，请在集群配置中设置 JMX Exporter URL"
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
       )}
 
+      {/* Merged Charts (23) */}
       {jmxAvailable && (
-      <DashboardGrid
-        storageKey="broker-monitor"
-        cols={{ lg: 12, md: 12, sm: 6, xs: 4 }}
-        rowHeight={45}
-        items={[
-          { i: 'isr-failed', x: 0, y: 0, w: 3, h: 2, component: <Card size="small"><Statistic title="ISR 更新失败" value={brokerIsrUpdatesFailed} valueStyle={{ color: brokerIsrUpdatesFailed === 0 ? '#52c41a' : '#f5222d', fontSize: 18 }} /></Card> },
-          { i: 'unclean-leader', x: 3, y: 0, w: 3, h: 2, component: <Card size="small"><Statistic title="Unclean Leader 选举" value={brokerUncleanLeaderElections} valueStyle={{ color: brokerUncleanLeaderElections === 0 ? '#52c41a' : '#f5222d', fontSize: 18 }} /></Card> },
-          { i: 'failed-partitions', x: 6, y: 0, w: 3, h: 2, component: <Card size="small"><Statistic title="Follower 失败分区" value={brokerFailedPartitionsCount} valueStyle={{ color: brokerFailedPartitionsCount === 0 ? '#52c41a' : '#f5222d', fontSize: 18 }} /></Card> },
-          { i: 'dead-threads', x: 9, y: 0, w: 3, h: 2, component: <Card size="small"><Statistic title="Follower 死线程" value={brokerDeadThreadCount} valueStyle={{ color: brokerDeadThreadCount === 0 ? '#52c41a' : '#f5222d', fontSize: 18 }} /></Card> },
-          { i: 'fetch-expires', x: 0, y: 2, w: 3, h: 2, component: <Card size="small"><Statistic title="Fetch 延迟过期" value={brokerDelayedFetchExpires} valueStyle={{ fontSize: 18 }} /></Card> },
-          { i: 'process-start', x: 3, y: 2, w: 3, h: 2, component: <Card size="small"><Statistic title="进程启动时间" value={brokerProcessStartTime ? new Date(brokerProcessStartTime * 1000).toLocaleString() : '-'} valueStyle={{ fontSize: 14 }} /></Card> },
-          { i: 'max-fds', x: 6, y: 2, w: 3, h: 2, component: <Card size="small"><Statistic title="最大文件描述符" value={brokerProcessMaxFds} valueStyle={{ fontSize: 18 }} /></Card> },
-          { i: 'deadlocked', x: 9, y: 2, w: 3, h: 2, component: <Card size="small"><Statistic title="死锁线程数" value={brokerJvmDeadlockedThreads} valueStyle={{ color: brokerJvmDeadlockedThreads === 0 ? '#52c41a' : '#f5222d', fontSize: 18 }} /></Card> },
-          { i: 'uncleanable-parts', x: 0, y: 4, w: 3, h: 2, component: <Card size="small"><Statistic title="不可清理分区" value={brokerLogCleanerUncleanablePartitions} valueStyle={{ fontSize: 18 }} /></Card> },
-          { i: 'cleaner-dead', x: 3, y: 4, w: 3, h: 2, component: <Card size="small"><Statistic title="Cleaner 死线程" value={brokerLogCleanerDeadThreads} valueStyle={{ color: brokerLogCleanerDeadThreads === 0 ? '#52c41a' : '#f5222d', fontSize: 18 }} /></Card> },
-          { i: 'latency-produce', x: 0, y: 6, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`lp-${selectedBroker}-${quickRange}`} option={getBrokerLatencyChartOption('生产请求延迟 P99', brokerRequestLatencyData.produce)} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'latency-fetch', x: 4, y: 6, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`lf-${selectedBroker}-${quickRange}`} option={getBrokerLatencyChartOption('消费请求延迟 P99', brokerRequestLatencyData.fetchConsumer)} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'latency-follower', x: 8, y: 6, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`lfo-${selectedBroker}-${quickRange}`} option={getBrokerLatencyChartOption('副本同步延迟 P99', brokerRequestLatencyData.fetchFollower)} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'replica-lag', x: 0, y: 12, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`rl-${selectedBroker}-${quickRange}`} option={buildLineChartOption('副本同步 Lag', brokerReplicaLagData, '#f5222d', 'Lag')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'errors', x: 6, y: 12, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`err-${selectedBroker}-${quickRange}`} option={buildChart('请求错误速率', brokerErrorsData, '#f5222d', 'errors/s')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'queue-time', x: 0, y: 18, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`qt-${selectedBroker}-${quickRange}`} option={getBrokerLatencyChartOption('请求排队延迟 P99', brokerQueueTimeData)} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'local-time', x: 4, y: 18, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`lt-${selectedBroker}-${quickRange}`} option={getBrokerLatencyChartOption('本地处理延迟 P99', brokerLocalTimeData)} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'remote-time', x: 8, y: 18, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`rt-${selectedBroker}-${quickRange}`} option={getBrokerLatencyChartOption('远程等待延迟 P99', brokerRemoteTimeData)} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'throttle-time', x: 0, y: 24, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`tt-${selectedBroker}-${quickRange}`} option={getBrokerLatencyChartOption('限流延迟 P99', brokerThrottleTimeData)} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'bytes-in', x: 6, y: 24, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`bi-${selectedBroker}-${quickRange}`} option={buildChart('字节流入速率', brokerBytesInData.brokers || {}, '#52c41a', 'bytes/s', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'bytes-out', x: 0, y: 30, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`bo-${selectedBroker}-${quickRange}`} option={buildChart('字节流出速率', brokerBytesOutData.brokers || {}, '#faad14', 'bytes/s', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'repl-in', x: 6, y: 30, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`ri-${selectedBroker}-${quickRange}`} option={buildChart('副本同步流入', brokerReplicationInData.brokers || {}, '#1890ff', 'B/s', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'repl-out', x: 0, y: 36, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`ro-${selectedBroker}-${quickRange}`} option={buildChart('副本同步流出', brokerReplicationOutData.brokers || {}, '#722ed1', 'B/s', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'reassign-in', x: 4, y: 36, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`rai-${selectedBroker}-${quickRange}`} option={buildChart('分区迁移流入', brokerReassignmentInData.brokers || {}, '#13c2c2', 'B/s', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'reassign-out', x: 8, y: 36, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`rao-${selectedBroker}-${quickRange}`} option={buildChart('分区迁移流出', brokerReassignmentOutData.brokers || {}, '#eb2f96', 'B/s', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'isr-shrinks', x: 0, y: 42, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`is-${selectedBroker}-${quickRange}`} option={buildChart('ISR 收缩速率', brokerIsrShrinksData.brokers || {}, '#f5222d', '次/秒')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'isr-expands', x: 4, y: 42, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`ie-${selectedBroker}-${quickRange}`} option={buildChart('ISR 扩展速率', brokerIsrExpandsData.brokers || {}, '#52c41a', '次/秒')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'response-queue', x: 8, y: 42, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`rq-${selectedBroker}-${quickRange}`} option={buildChart('响应队列大小', brokerResponseQueueData.brokers || {}, '#1890ff', '个')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'handler-idle', x: 0, y: 48, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`hi-${selectedBroker}-${quickRange}`} option={buildChart('Handler 空闲率', brokerHandlerIdleData.brokers || {}, '#52c41a', '%', (v) => (v * 100).toFixed(1) + '%')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'network-idle', x: 4, y: 48, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`ni-${selectedBroker}-${quickRange}`} option={buildChart('网络 Processor 空闲率', brokerNetworkIdleData.brokers || {}, '#722ed1', '%', (v) => (v * 100).toFixed(1) + '%')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'disk-read', x: 8, y: 48, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`dr-${selectedBroker}-${quickRange}`} option={buildChart('磁盘读取速率', brokerDiskReadData.brokers || {}, '#1890ff', 'B/s', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'disk-write', x: 0, y: 54, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`dw-${selectedBroker}-${quickRange}`} option={buildChart('磁盘写入速率', brokerDiskWriteData.brokers || {}, '#faad14', 'B/s', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'controller-event', x: 6, y: 54, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`ce-${selectedBroker}-${quickRange}`} option={buildChart('Controller 事件排队耗时', brokerControllerEventQueueData.brokers || {}, '#722ed1', 'ms')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'delayed-ops', x: 0, y: 60, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`do-${selectedBroker}-${quickRange}`} option={buildChart('延迟操作数', brokerDelayedOperationsData.brokers || {}, '#f5222d', '个')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'min-fetch', x: 4, y: 60, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`mf-${selectedBroker}-${quickRange}`} option={buildChart('Follower 最小拉取速率', brokerMinFetchRateData.brokers || {}, '#1890ff', '条/秒')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'log-flush', x: 8, y: 60, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`lf2-${selectedBroker}-${quickRange}`} option={buildChart('日志 Flush 耗时 P99', brokerLogFlushTimeData.brokers || {}, '#faad14', 'ms')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'purgatory', x: 0, y: 66, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`pg-${selectedBroker}-${quickRange}`} option={buildChart('Purgatory 大小', brokerPurgatorySizeData.brokers || {}, '#faad14', '个')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'cpu-usage', x: 4, y: 66, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`cpu-${selectedBroker}-${quickRange}`} option={buildChart('进程 CPU 使用率', brokerProcessCpuData.brokers || {}, '#1890ff', '%', (v) => (v * 100).toFixed(2) + '%')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'resident-mem', x: 8, y: 66, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`rm-${selectedBroker}-${quickRange}`} option={buildChart('进程驻留内存', brokerProcessResidentMemoryData.brokers || {}, '#52c41a', 'B', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'virtual-mem', x: 0, y: 72, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`vm-${selectedBroker}-${quickRange}`} option={buildChart('进程虚拟内存', brokerProcessVirtualMemoryData.brokers || {}, '#722ed1', 'B', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'open-fds', x: 4, y: 72, w: 8, h: 6, component: <Card size="small"><ReactECharts key={`of-${selectedBroker}-${quickRange}`} option={buildChart('已用文件描述符', brokerProcessOpenFdsData.brokers || {}, '#faad14', '个')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'max-dirty', x: 0, y: 78, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`md-${selectedBroker}-${quickRange}`} option={buildChart('最大脏比例', brokerLogCleanerMaxDirtyData.brokers || {}, '#f5222d', '%')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'time-since', x: 4, y: 78, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`ts-${selectedBroker}-${quickRange}`} option={buildChart('上次清理间隔', brokerLogCleanerTimeSinceLastRunData.brokers || {}, '#1890ff', 'ms')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'uncleanable-bytes', x: 8, y: 78, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`ub-${selectedBroker}-${quickRange}`} option={buildChart('不可清理字节数', brokerLogCleanerUncleanableBytesData.brokers || {}, '#faad14', 'B', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'recopy', x: 0, y: 84, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`rc-${selectedBroker}-${quickRange}`} option={buildChart('Cleaner 重新复制比例', brokerLogCleanerRecopyData.brokers || {}, '#722ed1', '%')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'max-buffer', x: 4, y: 84, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`mb-${selectedBroker}-${quickRange}`} option={buildChart('Cleaner 最大缓冲利用率', brokerLogCleanerMaxBufferData.brokers || {}, '#13c2c2', '%')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'max-clean', x: 8, y: 84, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`mc-${selectedBroker}-${quickRange}`} option={buildChart('Cleaner 最大清理时间', brokerLogCleanerMaxCleanTimeData.brokers || {}, '#eb2f96', '秒')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'max-compact', x: 0, y: 90, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`mc2-${selectedBroker}-${quickRange}`} option={buildChart('Cleaner 最大压缩延迟', brokerLogCleanerMaxCompactionDelayData.brokers || {}, '#fa8c16', '秒')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'gc-sum', x: 6, y: 90, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`gs-${selectedBroker}-${quickRange}`} option={buildChart('GC 耗时', brokerJvmGcData.brokers || {}, '#f5222d', '秒')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'gc-count', x: 0, y: 96, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`gc-${selectedBroker}-${quickRange}`} option={buildChart('GC 次数', brokerJvmGcCountData.brokers || {}, '#faad14', '次')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'jvm-mem', x: 4, y: 96, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`jm-${selectedBroker}-${quickRange}`} option={buildChart('JVM 内存池已用', brokerJvmMemoryPoolData.brokers || {}, '#1890ff', 'B', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'jvm-threads', x: 8, y: 96, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`jt-${selectedBroker}-${quickRange}`} option={buildChart('JVM 线程数', brokerJvmThreadsData.brokers || {}, '#52c41a', '个')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'jvm-buffer', x: 0, y: 102, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`jb-${selectedBroker}-${quickRange}`} option={buildChart('JVM Buffer 池已用', brokerJvmBufferPoolData.brokers || {}, '#722ed1', 'B', (v) => formatBytesForChart(v))} style={{ height: 250 }} notMerge={true} /></Card> },
-        ]}
-      />
+        <DashboardGrid
+          storageKey="broker-monitor-v2"
+          cols={{ lg: 12, md: 12, sm: 6, xs: 4 }}
+          rowHeight={45}
+          items={chartItems}
+        />
       )}
+
+      {/* Promql Debugger */}
       <PromqlDebugger
         open={debugOpen}
         onClose={() => setDebugOpen(false)}

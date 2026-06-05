@@ -109,6 +109,7 @@ func (t *tempKeytabStore) cleanupLoop() {
 type Service struct {
 	clusterRepo     repository.ClusterRepository
 	clusterUserRepo repository.ClusterUserRepository
+	topicRepo       repository.TopicRepository
 	encryptionSvc   *encryption.Service
 	kerberosMgr     *kerberos.Manager
 }
@@ -117,6 +118,7 @@ type Service struct {
 func NewService(
 	clusterRepo repository.ClusterRepository,
 	clusterUserRepo repository.ClusterUserRepository,
+	topicRepo repository.TopicRepository,
 	encryptionSvc *encryption.Service,
 	kerberosMgr *kerberos.Manager,
 ) *Service {
@@ -127,6 +129,7 @@ func NewService(
 	return &Service{
 		clusterRepo:     clusterRepo,
 		clusterUserRepo: clusterUserRepo,
+		topicRepo:       topicRepo,
 		encryptionSvc:   encryptionSvc,
 		kerberosMgr:     kerberosMgr,
 	}
@@ -726,4 +729,9 @@ func (s *Service) GetAuthConfigForCluster(ctx context.Context, clusterID int64) 
 	}
 
 	return cluster, authConfigJSON, nil
+}
+
+// GetTopicCountByCluster 获取每集群的 Topic 数量
+func (s *Service) GetTopicCountByCluster(ctx context.Context) (map[int64]int64, error) {
+	return s.topicRepo.CountByCluster(ctx)
 }

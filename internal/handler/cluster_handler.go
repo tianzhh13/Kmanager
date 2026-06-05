@@ -10,6 +10,7 @@ import (
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/service/auth"
 	"kafka-management-platform/internal/service/cluster"
+	"kafka-management-platform/internal/service/monitor"
 
 	"github.com/gin-gonic/gin"
 )
@@ -18,13 +19,15 @@ import (
 type ClusterHandler struct {
 	clusterSvc    *cluster.Service
 	permissionSvc *auth.PermissionService
+	monitorSvc    *monitor.Service
 }
 
 // NewClusterHandler 创建集群处理器实例
-func NewClusterHandler(clusterSvc *cluster.Service, permissionSvc *auth.PermissionService) *ClusterHandler {
+func NewClusterHandler(clusterSvc *cluster.Service, permissionSvc *auth.PermissionService, monitorSvc *monitor.Service) *ClusterHandler {
 	return &ClusterHandler{
 		clusterSvc:    clusterSvc,
 		permissionSvc: permissionSvc,
+		monitorSvc:    monitorSvc,
 	}
 }
 
@@ -164,7 +167,32 @@ func (h *ClusterHandler) GetCluster(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, result)
+	// 附加 stats 字段（broker_count / topic_count / health_status）
+	healthStatus := h.monitorSvc.GetClustersHealthStatus(c.Request.Context(), []int64{clusterID})
+	brokerCounts := h.monitorSvc.GetBrokerCountByCluster(c.Request.Context(), []int64{clusterID})
+	topicCounts, _ := h.clusterSvc.GetTopicCountByCluster(c.Request.Context())
+
+	type clusterWithStats struct {
+		*models.Cluster
+		BrokerCount  *int   `json:"broker_count"`
+		TopicCount   *int64 `json:"topic_count"`
+		HealthStatus string `json:"health_status"`
+	}
+
+	resp := clusterWithStats{Cluster: result}
+	if bc, ok := brokerCounts[clusterID]; ok {
+		resp.BrokerCount = &bc
+	}
+	if tc, ok := topicCounts[clusterID]; ok {
+		resp.TopicCount = &tc
+	}
+	if hs, ok := healthStatus[clusterID]; ok {
+		resp.HealthStatus = hs
+	} else {
+		resp.HealthStatus = "unknown"
+	}
+
+	c.JSON(200, resp)
 }
 
 // ListClusters 获取集群列表
@@ -190,6 +218,55 @@ func (h *ClusterHandler) ListClusters(c *gin.Context) {
 	clusters, total, err := h.clusterSvc.ListClusters(c.Request.Context(), userID, models.UserRole(role), offset, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		return
+	}
+
+	// 扩展字段：with_stats=true 时附加 broker_count / topic_count / health_status
+	withStats := c.Query("with_stats") == "true"
+	if withStats && len(clusters) > 0 {
+		clusterIDs := make([]int64, len(clusters))
+		for i, cl := range clusters {
+			clusterIDs[i] = cl.ClusterID
+		}
+
+		// 并发获取 VM 数据
+		healthStatus := h.monitorSvc.GetClustersHealthStatus(c.Request.Context(), clusterIDs)
+		brokerCounts := h.monitorSvc.GetBrokerCountByCluster(c.Request.Context(), clusterIDs)
+
+		// 获取 per-cluster topic count
+		topicCounts, _ := h.clusterSvc.GetTopicCountByCluster(c.Request.Context())
+
+		// 附加到响应
+		type clusterWithStats struct {
+			*models.Cluster
+			BrokerCount  *int   `json:"broker_count"`
+			TopicCount   *int64 `json:"topic_count"`
+			HealthStatus string `json:"health_status"`
+		}
+
+		result := make([]clusterWithStats, len(clusters))
+		for i, cl := range clusters {
+			item := clusterWithStats{Cluster: cl}
+			if bc, ok := brokerCounts[cl.ClusterID]; ok {
+				item.BrokerCount = &bc
+			}
+			if tc, ok := topicCounts[cl.ClusterID]; ok {
+				item.TopicCount = &tc
+			}
+			if hs, ok := healthStatus[cl.ClusterID]; ok {
+				item.HealthStatus = hs
+			} else {
+				item.HealthStatus = "unknown"
+			}
+			result[i] = item
+		}
+
+		c.JSON(200, gin.H{
+			"data":      result,
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+		})
 		return
 	}
 

@@ -1,11 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Card, Row, Col, Select, Spin, Statistic, Space, Tag, Alert, Checkbox, Table } from 'antd'
+import { Select, Spin, Alert } from 'antd'
 import ReactECharts from 'echarts-for-react'
 import dayjs, { Dayjs } from 'dayjs'
 import DashboardGrid from '../../components/DashboardGrid'
 import { usePromqlOverrides, useDefaultPromqls, PromqlDebugger, PromqlDebugButton } from '../../components/PromqlDebugger'
 import { ClusterMetricsResponse, metricsAPI, BatchQueryItem, extractInstantValue } from '../../services/metrics'
-import { buildLineChartOption, buildBarChartOption, buildPartitionChartOption, formatBytesForChart } from '../../utils/chartOptions'
+import {
+  createAreaChartOption,
+  createGroupedBarChartOption,
+  buildPartitionChartOption,
+  formatBytesForChart,
+} from '../../utils/chartOptions'
+import { StatCard, SectionTitle, LabelTag } from '../../components/bento'
 
 interface ClusterOption {
   cluster_id: number
@@ -41,6 +47,7 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
   const [topicConsumerGroups, setTopicConsumerGroups] = useState<string[]>([])
   const [topicLoading, setTopicLoading] = useState(false)
   const [selectedPartitions, setSelectedPartitions] = useState<number[]>([])
+  const [allPartitionsList, setAllPartitionsList] = useState<number[]>([])
   const [partitionMetrics, setPartitionMetrics] = useState<{
     produceRate: PartitionMetric[]
     consumeRate: PartitionMetric[]
@@ -65,7 +72,6 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
     under_replicated: 'Under Replicated 分区',
   }
 
-  /** 获取时间范围 */
   const getTimeRange = useCallback((): { start: Dayjs; end: Dayjs; step: string } => {
     let end: Dayjs, start: Dayjs, step: string
     if (timeRange === 'custom' && customRange) {
@@ -92,7 +98,6 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
     return { start, end, step }
   }, [timeRange, quickRange, customRange])
 
-  /** 加载 Topic 列表 */
   const loadTopics = useCallback(async () => {
     if (!cluster) return
     setTopicLoading(true)
@@ -109,11 +114,24 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
       const resp = res.data.results['topic_list']
       if (resp && resp.status === 'success') {
         const topicMap = new Map<string, TopicInfo>()
-        resp.data.result.forEach(r => {
+        const topicPartitionsMap = new Map<string, Set<number>>()
+        resp.data.result.forEach((r: any) => {
           const name = r.metric.topic
-          if (name && !topicMap.has(name)) {
-            topicMap.set(name, { name, partitions: parseInt(r.metric.partition_count || '0') || 1, replication_factor: 1 })
+          if (name) {
+            if (!topicMap.has(name)) {
+              topicMap.set(name, { name, partitions: 1, replication_factor: 1 })
+              topicPartitionsMap.set(name, new Set())
+            }
+            const partNum = parseInt(r.metric.partition)
+            if (!isNaN(partNum)) {
+              topicPartitionsMap.get(name)!.add(partNum)
+            }
           }
+        })
+        // Set correct partition count from actual partition labels
+        topicPartitionsMap.forEach((parts, name) => {
+          const info = topicMap.get(name)!
+          info.partitions = parts.size || 1
         })
         setTopics(Array.from(topicMap.values()))
       }
@@ -124,7 +142,6 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
     }
   }, [cluster])
 
-  /** 加载分区级别的指标 */
   const loadPartitionMetrics = useCallback(async () => {
     if (!cluster || !selectedTopic) return
     setTopicLoading(true)
@@ -141,7 +158,6 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
         },
       ]
 
-      // JMX 指标查询（仅 JMX Exporter 可用时才查）
       if (jmxAvailable) {
         queries.push(
           { id: 'log_size', query: q('log_size', `max by (partition) (kafka_log_log_size{cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
@@ -197,11 +213,25 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
 
       setTopicUnderReplicatedCount(extractInstantValue(r['under_replicated']))
 
-      const allPartitions = new Set<number>()
-      ;(r['produce_rate']?.data?.result || []).forEach((item: any) => {
-        if (item.metric.partition) allPartitions.add(parseInt(item.metric.partition))
+      const allParts = new Set<number>()
+      // Collect partitions from all available metric results
+      Object.values(r).forEach((result: any) => {
+        if (result?.data?.result) {
+          result.data.result.forEach((item: any) => {
+            if (item.metric.partition) allParts.add(parseInt(item.metric.partition))
+          })
+        }
       })
-      if (selectedPartitions.length === 0) setSelectedPartitions(Array.from(allPartitions).sort((a, b) => a - b))
+      // Fallback: if no partition data from metrics, generate from topic info
+      let partsList = Array.from(allParts).sort((a, b) => a - b)
+      if (partsList.length === 0) {
+        const topicInfo = topics.find(t => t.name === selectedTopic)
+        if (topicInfo && topicInfo.partitions > 0) {
+          partsList = Array.from({ length: topicInfo.partitions }, (_, i) => i)
+        }
+      }
+      setAllPartitionsList(partsList)
+      if (selectedPartitions.length === 0) setSelectedPartitions(partsList)
     } catch (error) {
       console.error('Failed to load partition metrics', error)
     } finally {
@@ -209,14 +239,12 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
     }
   }, [cluster, selectedTopic, selectedConsumerGroup, getTimeRange, jmxAvailable, overrides])
 
-  // 当切换到 Topic 监控 Tab 时加载 Topic 列表
+  // Load topics on tab activation
   useEffect(() => {
-    if (activeTab === 'topic' && cluster) {
-      loadTopics()
-    }
+    if (activeTab === 'topic' && cluster) loadTopics()
   }, [activeTab, cluster, loadTopics])
 
-  // 当选择 Topic 时加载该 Topic 的消费组列表
+  // Load consumer groups for selected topic
   useEffect(() => {
     if (selectedTopic && metrics?.consumer_groups) {
       const cgs = metrics.consumer_groups
@@ -230,51 +258,29 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
     }
   }, [selectedTopic, metrics?.consumer_groups])
 
-  // 当选择 Topic 时重置分区指标
+  // Reset partition metrics on topic change
   useEffect(() => {
     setPartitionMetrics({ produceRate: [], consumeRate: [], lag: [] })
     setSelectedPartitions([])
+    setAllPartitionsList([])
   }, [selectedTopic])
 
-  // 当选择 ConsumerGroup 时重置消费相关指标
+  // Reset consumer metrics on consumer group change
   useEffect(() => {
     setPartitionMetrics(prev => ({ ...prev, consumeRate: [], lag: [] }))
   }, [selectedConsumerGroup])
 
-  // 当选择 Topic 时加载分区指标
+  // Load partition metrics on topic/consumer/range change
   useEffect(() => {
-    if (selectedTopic && cluster && activeTab === 'topic') {
-      loadPartitionMetrics()
-    }
+    if (selectedTopic && cluster && activeTab === 'topic') loadPartitionMetrics()
   }, [selectedTopic, selectedConsumerGroup, cluster, quickRange, customRange, timeRange, activeTab, loadPartitionMetrics])
 
-  // ISR vs Replica 图表
-  const getIsrVsReplicaChartOption = () => {
-    if (topicIsrVsReplicaData.isr.length === 0 && topicIsrVsReplicaData.replica.length === 0) {
-      return { title: { text: '分区 ISR 数 vs 副本数', left: 'center', textStyle: { fontSize: 14, color: '#999' } }, graphic: { type: 'text', left: 'center', top: 'middle', style: { text: '暂无数据', fill: '#999', fontSize: 14 } }, xAxis: { type: 'category', data: [] }, yAxis: { type: 'value' }, series: [] }
-    }
-    const allPartitions = new Set<number>()
-    topicIsrVsReplicaData.isr.forEach(p => allPartitions.add(p.partition))
-    topicIsrVsReplicaData.replica.forEach(p => allPartitions.add(p.partition))
-    const sortedPartitions = Array.from(allPartitions).sort((a, b) => a - b)
-    const isrValues = sortedPartitions.map(p => { const m = topicIsrVsReplicaData.isr.find(m => m.partition === p); return m && m.values.length > 0 ? m.values[m.values.length - 1].value : 0 })
-    const replicaValues = sortedPartitions.map(p => { const m = topicIsrVsReplicaData.replica.find(m => m.partition === p); return m && m.values.length > 0 ? m.values[m.values.length - 1].value : 0 })
-    return buildBarChartOption('分区 ISR 数 vs 副本数', sortedPartitions.map(p => `分区${p}`), [
-      { name: 'ISR 数', data: isrValues, color: '#52c41a' },
-      { name: '副本数', data: replicaValues, color: '#1890ff' },
-    ], '个数')
-  }
+  // ─── Chart builders ───
 
-  // Topic 总速率图表
-  const getTotalRateOption = (title: string, data: PartitionMetric[], unit: string, color: string, cgLabel?: string) => {
-    if (cgLabel && !selectedConsumerGroup) {
-      return { title: { text: title, left: 'center', textStyle: { fontSize: 14, color: '#999' } }, graphic: { type: 'text', left: 'center', top: 'middle', style: { text: '请选择消费组', fill: '#999', fontSize: 14 } }, xAxis: { type: 'category', data: [] }, yAxis: { type: 'value' }, series: [] }
-    }
+  const getTotalRateOption = (data: PartitionMetric[], unit: string, color: string, cgLabel?: string) => {
+    if (cgLabel && !selectedConsumerGroup) return createAreaChartOption('', { times: [], values: [] })
     const hasData = data.some(p => p.values.length > 0)
-    if (!hasData) {
-      const emptyText = cgLabel ? '该消费组未消费此 Topic' : '暂无数据'
-      return { title: { text: title, left: 'center', textStyle: { fontSize: 14, color: '#999' } }, graphic: { type: 'text', left: 'center', top: 'middle', style: { text: emptyText, fill: '#999', fontSize: 14 } }, xAxis: { type: 'category', data: [] }, yAxis: { type: 'value' }, series: [] }
-    }
+    if (!hasData) return createAreaChartOption('', { times: [], values: [] })
     const allTimes = new Set<string>()
     data.forEach(p => p.values.forEach(v => allTimes.add(v.time)))
     const times = Array.from(allTimes).sort()
@@ -283,13 +289,67 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
       data.forEach(p => { const found = p.values.find(v => v.time === t); if (found) sum += found.value })
       return sum
     })
-    return buildLineChartOption(title, { times, values: totalValues }, color, unit)
+    return createAreaChartOption('', { times, values: totalValues }, color, unit)
+  }
+
+  const getIsrVsReplicaChartOption = () => {
+    if (topicIsrVsReplicaData.isr.length === 0 && topicIsrVsReplicaData.replica.length === 0) {
+      return createGroupedBarChartOption([], [], '')
+    }
+    const allParts = new Set<number>()
+    topicIsrVsReplicaData.isr.forEach(p => allParts.add(p.partition))
+    topicIsrVsReplicaData.replica.forEach(p => allParts.add(p.partition))
+    const sorted = Array.from(allParts).sort((a, b) => a - b)
+    const categories = sorted.map(p => `分区${p}`)
+    const isrValues = sorted.map(p => {
+      const m = topicIsrVsReplicaData.isr.find(m => m.partition === p)
+      return m && m.values.length > 0 ? m.values[m.values.length - 1].value : 0
+    })
+    const replicaValues = sorted.map(p => {
+      const m = topicIsrVsReplicaData.replica.find(m => m.partition === p)
+      return m && m.values.length > 0 ? m.values[m.values.length - 1].value : 0
+    })
+    return createGroupedBarChartOption(categories, [
+      { name: 'ISR 数', data: isrValues, color: '#10b981' },
+      { name: '副本数', data: replicaValues, color: '#3b82f6' },
+    ], '个数')
+  }
+
+  const chartKey = `${selectedTopic}-${selectedConsumerGroup}-${selectedPartitions.join('-')}`
+
+  // Consumer group data for custom rows
+  const consumerGroupRows = React.useMemo(() => {
+    if (!selectedTopic || !metrics?.consumer_groups) return []
+    return metrics.consumer_groups
+      .filter(cg => cg.topics.some(t => t.topic === selectedTopic))
+      .map(cg => {
+        const topicData = cg.topics.filter(t => t.topic === selectedTopic)
+        return {
+          group_id: cg.group_id,
+          state: cg.state,
+          member_count: cg.member_count || 0,
+          partitions: topicData.length,
+          lag: topicData.reduce((s, t) => s + t.lag, 0),
+        }
+      })
+  }, [selectedTopic, metrics?.consumer_groups])
+
+  const cgStateColor = (state: string): 'green' | 'red' | 'orange' | 'blue' | 'neutral' => {
+    switch (state) {
+      case 'Stable': return 'green'
+      case 'Dead': return 'red'
+      case 'Empty': return 'orange'
+      case 'PreparingRebalance':
+      case 'CompletingRebalance': return 'orange'
+      default: return 'blue'
+    }
   }
 
   return (
     <>
     <Spin spinning={topicLoading}>
-      <Space style={{ marginBottom: 16 }} wrap>
+      {/* Topic + Consumer Group Selectors + PromQL Debug */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <Select
           placeholder="选择 Topic"
           value={selectedTopic}
@@ -310,86 +370,164 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
           filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
         />
         <PromqlDebugButton onClick={() => setDebugOpen(true)} overrideCount={Object.keys(overrides).length} />
-      </Space>
+      </div>
 
       {!selectedTopic ? (
         <Alert message="请选择 Topic" description="选择 Topic 后将显示该 Topic 的详细监控信息" type="info" />
       ) : (
         <>
-          <Card size="small" title="Topic 概览" style={{ marginBottom: 16 }}>
-            <Row gutter={24}>
-              <Col span={6}><Statistic title="Topic 名称" value={selectedTopic} valueStyle={{ fontSize: 16 }} /></Col>
-              <Col span={6}><Statistic title="分区数" value={topics.find(t => t.name === selectedTopic)?.partitions || 0} /></Col>
-              <Col span={6}><Statistic title="消费组数量" value={topicConsumerGroups.length} /></Col>
-              <Col span={6}>
-                <Statistic
-                  title="总 Lag"
-                  value={metrics?.consumer_groups?.filter(cg => cg.topics.some(t => t.topic === selectedTopic)).reduce((sum, cg) => sum + cg.topics.filter(t => t.topic === selectedTopic).reduce((s, t) => s + t.lag, 0), 0) || 0}
-                  valueStyle={{ color: '#f5222d' }}
-                />
-              </Col>
-            </Row>
-            {topicConsumerGroups.length === 0 ? (
-              <Alert message="该 Topic 暂无消费组" type="info" style={{ marginTop: 16 }} />
-            ) : (
-              <div style={{ marginTop: 16 }}>
-                <h4 style={{ marginBottom: 8 }}>消费组列表（点击选中）</h4>
-                <Table
-                  size="small"
-                  dataSource={metrics?.consumer_groups?.filter(cg => cg.topics.some(t => t.topic === selectedTopic)).map(cg => {
-                    const topicData = cg.topics.filter(t => t.topic === selectedTopic)
-                    return { group_id: cg.group_id, state: cg.state, member_count: cg.member_count || 0, topic_lag: topicData.reduce((s, t) => s + t.lag, 0), topic: selectedTopic, partitions: topicData.length }
-                  }) || []}
-                  columns={[
-                    { title: '消费组', dataIndex: 'group_id', key: 'group_id' },
-                    { title: '状态', dataIndex: 'state', key: 'state', render: (state: string) => <Tag color={state === 'Stable' ? 'green' : state === 'Dead' ? 'red' : 'default'}>{state}</Tag> },
-                    { title: '成员数', dataIndex: 'member_count', key: 'member_count' },
-                    { title: '消费分区数', dataIndex: 'partitions', key: 'partitions' },
-                    { title: 'Lag', dataIndex: 'topic_lag', key: 'topic_lag', render: (val: number) => val?.toLocaleString() || 0 },
-                  ]}
-                  rowKey="group_id"
-                  pagination={false}
-                  onRow={(record: any) => ({
-                    onClick: () => setSelectedConsumerGroup(record.group_id),
-                    style: { cursor: 'pointer', backgroundColor: selectedConsumerGroup === record.group_id ? '#e6f7ff' : undefined }
-                  })}
-                />
-              </div>
-            )}
-          </Card>
+          {/* Topic Overview Stat Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+            <div className="bento-card"><div className="bento-card-inner" style={{ padding: '16px 20px' }}>
+              <div className="stat-label">TOPIC</div>
+              <div style={{ fontSize: 16, fontWeight: 700, marginTop: 6, fontFamily: "'JetBrains Mono', monospace" }}>{selectedTopic}</div>
+            </div></div>
+            <StatCard label="PARTITIONS" value={topics.find(t => t.name === selectedTopic)?.partitions || 0} />
+            <StatCard label="CG COUNT" value={topicConsumerGroups.length} />
+            <StatCard
+              label="TOTAL LAG"
+              value={metrics?.consumer_groups?.filter(cg => cg.topics.some(t => t.topic === selectedTopic)).reduce((sum, cg) => sum + cg.topics.filter(t => t.topic === selectedTopic).reduce((s, t) => s + t.lag, 0), 0) || 0}
+              color="#ef4444"
+            />
+          </div>
 
-          {partitionMetrics.produceRate.length > 0 && (
-            <Card size="small" title="分区选择（点击筛选要查看的分区）" style={{ marginBottom: 16 }}>
-              <div style={{ maxHeight: 120, overflowY: 'auto' }}>
-                <Checkbox.Group value={selectedPartitions} onChange={(values) => setSelectedPartitions(values as number[])}>
-                  <Space wrap>
-                    {partitionMetrics.produceRate.map(p => p.partition).sort((a, b) => a - b).map(p => (
-                      <Checkbox key={p} value={p}>分区 {p}</Checkbox>
-                    ))}
-                  </Space>
-                </Checkbox.Group>
+          {/* Consumer Group Custom Rows */}
+          {topicConsumerGroups.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <SectionTitle title="消费组列表" />
+              <div style={{ overflowX: 'auto' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px 80px 90px 100px', gap: 0, minWidth: 500 }}>
+                  <div className="bento-grid-header">GROUP</div>
+                  <div className="bento-grid-header">STATE</div>
+                  <div className="bento-grid-header">MEMBERS</div>
+                  <div className="bento-grid-header">PARTITIONS</div>
+                  <div className="bento-grid-header">LAG</div>
+                  {consumerGroupRows.map(cg => (
+                    <React.Fragment key={cg.group_id}>
+                      <div
+                        className="bento-grid-cell mono"
+                        style={{ cursor: 'pointer', backgroundColor: selectedConsumerGroup === cg.group_id ? 'rgba(249,115,22,0.08)' : undefined }}
+                        onClick={() => setSelectedConsumerGroup(cg.group_id)}
+                      >
+                        {cg.group_id}
+                      </div>
+                      <div className="bento-grid-cell" onClick={() => setSelectedConsumerGroup(cg.group_id)} style={{ cursor: 'pointer', backgroundColor: selectedConsumerGroup === cg.group_id ? 'rgba(249,115,22,0.08)' : undefined }}>
+                        <LabelTag text={cg.state} color={cgStateColor(cg.state)} />
+                      </div>
+                      <div className="bento-grid-cell mono" onClick={() => setSelectedConsumerGroup(cg.group_id)} style={{ cursor: 'pointer', backgroundColor: selectedConsumerGroup === cg.group_id ? 'rgba(249,115,22,0.08)' : undefined }}>{cg.member_count}</div>
+                      <div className="bento-grid-cell mono" onClick={() => setSelectedConsumerGroup(cg.group_id)} style={{ cursor: 'pointer', backgroundColor: selectedConsumerGroup === cg.group_id ? 'rgba(249,115,22,0.08)' : undefined }}>{cg.partitions}</div>
+                      <div className="bento-grid-cell mono" onClick={() => setSelectedConsumerGroup(cg.group_id)} style={{ cursor: 'pointer', backgroundColor: selectedConsumerGroup === cg.group_id ? 'rgba(249,115,22,0.08)' : undefined }}>{cg.lag?.toLocaleString() || 0}</div>
+                    </React.Fragment>
+                  ))}
+                </div>
               </div>
-            </Card>
+            </div>
           )}
 
+          {topicConsumerGroups.length === 0 && (
+            <Alert message="该 Topic 暂无消费组" type="info" style={{ marginBottom: 16 }} />
+          )}
+
+          {/* Partition Multi-Select */}
+          {allPartitionsList.length > 0 && (
+            <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#57534e', whiteSpace: 'nowrap' }}>Partitions</span>
+              <Select
+                mode="multiple"
+                placeholder="选择分区"
+                value={selectedPartitions}
+                onChange={(values) => setSelectedPartitions(values as number[])}
+                style={{ minWidth: 240, maxWidth: 480 }}
+                options={allPartitionsList.map(p => ({ label: `Partition ${p}`, value: p }))}
+                allowClear
+                maxTagCount={3}
+                maxTagPlaceholder={(omitted) => `+${omitted.length}`}
+                dropdownRender={(menu) => (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 12px', borderBottom: '1px solid #ebe8e3' }}>
+                      <a style={{ fontSize: 12, fontWeight: 600, color: '#f97316' }} onClick={() => setSelectedPartitions([...allPartitionsList])}>全选</a>
+                      <a style={{ fontSize: 12, fontWeight: 600, color: '#f97316' }} onClick={() => setSelectedPartitions([])}>清空</a>
+                    </div>
+                    {menu}
+                  </div>
+                )}
+              />
+            </div>
+          )}
+
+          {/* Charts */}
           <DashboardGrid
             storageKey="topic-monitor"
             cols={{ lg: 12, md: 12, sm: 6, xs: 4 }}
             rowHeight={45}
             items={[
-              { i: 'total-produce', x: 0, y: 0, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`tp-${selectedTopic}`} option={getTotalRateOption('Topic 生产速率', partitionMetrics.produceRate, 'msg/s', '#1890ff')} style={{ height: 240 }} notMerge={true} /></Card> },
-              { i: 'total-consume', x: 4, y: 0, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`tc-${selectedTopic}-${selectedConsumerGroup}`} option={getTotalRateOption('消费组消费速率', partitionMetrics.consumeRate, 'msg/s', '#52c41a', 'cg')} style={{ height: 240 }} notMerge={true} /></Card> },
-              { i: 'total-lag', x: 8, y: 0, w: 4, h: 6, component: <Card size="small"><ReactECharts key={`tl-${selectedTopic}-${selectedConsumerGroup}`} option={getTotalRateOption('消费组 Lag', partitionMetrics.lag, 'Lag', '#f5222d', 'cg')} style={{ height: 240 }} notMerge={true} /></Card> },
-              ...(jmxAvailable ? [{ i: 'under-replicated', x: 0, y: 6, w: 3, h: 2, component: <Card size="small"><Statistic title="Under Replicated 分区" value={topicUnderReplicatedCount} valueStyle={{ color: topicUnderReplicatedCount === 0 ? '#52c41a' : '#f5222d', fontSize: 20 }} /></Card> }] : []),
+              // Topic-level rates
+              { i: 'total-produce', x: 0, y: 0, w: 4, h: 6, component:
+                <div className="bento-card"><div className="bento-card-inner">
+                  <SectionTitle title="Topic 生产速率" />
+                  <ReactECharts key={`tp-${chartKey}`} option={getTotalRateOption(partitionMetrics.produceRate, 'msg/s', '#f97316')} style={{ height: 240 }} notMerge={true} />
+                </div></div>,
+              },
+              { i: 'total-consume', x: 4, y: 0, w: 4, h: 6, component:
+                <div className="bento-card"><div className="bento-card-inner">
+                  <SectionTitle title="消费组消费速率" />
+                  <ReactECharts key={`tc-${chartKey}`} option={getTotalRateOption(partitionMetrics.consumeRate, 'msg/s', '#10b981', 'cg')} style={{ height: 240 }} notMerge={true} />
+                </div></div>,
+              },
+              { i: 'total-lag', x: 8, y: 0, w: 4, h: 6, component:
+                <div className="bento-card"><div className="bento-card-inner">
+                  <SectionTitle title="消费组 Lag" />
+                  <ReactECharts key={`tl-${chartKey}`} option={getTotalRateOption(partitionMetrics.lag, 'Lag', '#ef4444', 'cg')} style={{ height: 240 }} notMerge={true} />
+                </div></div>,
+              },
+              // Partition-level charts
               ...(selectedPartitions.length > 0 ? [
-                { i: 'partition-produce', x: 0, y: 8, w: 12, h: 7, component: <Card size="small"><ReactECharts key={`pp-${selectedTopic}-${selectedPartitions.join('-')}`} option={buildPartitionChartOption('Topic 生产速率（按分区）', partitionMetrics.produceRate, selectedPartitions, 'msg/s')} style={{ height: 280 }} notMerge={true} /></Card> },
-                { i: 'partition-consume', x: 0, y: 15, w: 6, h: 7, component: <Card size="small"><ReactECharts key={`pc-${selectedTopic}-${selectedConsumerGroup}-${selectedPartitions.join('-')}`} option={buildPartitionChartOption('消费组消费速率（按分区）', partitionMetrics.consumeRate, selectedPartitions, 'msg/s', undefined, selectedConsumerGroup ? '暂无数据' : '请选择消费组')} style={{ height: 280 }} notMerge={true} /></Card> },
-                { i: 'partition-lag', x: 6, y: 15, w: 6, h: 7, component: <Card size="small"><ReactECharts key={`pl-${selectedTopic}-${selectedConsumerGroup}-${selectedPartitions.join('-')}`} option={buildPartitionChartOption('消费组 Lag（按分区）', partitionMetrics.lag, selectedPartitions, 'Lag', (v: number) => v.toLocaleString(), selectedConsumerGroup ? '暂无数据' : '请选择消费组')} style={{ height: 280 }} notMerge={true} /></Card> },
-              ] : []),
-              ...(jmxAvailable ? [
-              { i: 'log-size', x: 0, y: 22, w: 12, h: 7, component: <Card size="small"><ReactECharts key={`ls-${selectedTopic}-${selectedPartitions.join('-')}`} option={buildPartitionChartOption('Topic 日志大小（按分区）', topicLogSizeData, selectedPartitions, 'bytes', formatBytesForChart)} style={{ height: 280 }} notMerge={true} /></Card> },
-              { i: 'log-end-offset', x: 0, y: 29, w: 12, h: 7, component: <Card size="small"><ReactECharts key={`leo-${selectedTopic}-${selectedPartitions.join('-')}`} option={buildPartitionChartOption('Topic LogEndOffset（按分区）', topicLogEndOffsetData, selectedPartitions, 'Offset')} style={{ height: 280 }} notMerge={true} /></Card> },
-              { i: 'isr-vs-replica', x: 0, y: 36, w: 12, h: 7, component: <Card size="small"><ReactECharts key={`ivr-${selectedTopic}`} option={getIsrVsReplicaChartOption()} style={{ height: 280 }} notMerge={true} /></Card> },
+                { i: 'partition-produce', x: 0, y: 6, w: 12, h: 7, component:
+                  <div className="bento-card"><div className="bento-card-inner">
+                    <SectionTitle title="分区生产速率" />
+                    <ReactECharts key={`pp-${chartKey}`} option={buildPartitionChartOption('', partitionMetrics.produceRate, selectedPartitions, 'msg/s')} style={{ height: 260 }} notMerge={true} />
+                  </div></div>,
+                },
+                { i: 'partition-consume', x: 0, y: 13, w: 6, h: 7, component:
+                  <div className="bento-card"><div className="bento-card-inner">
+                    <SectionTitle title="分区消费速率" />
+                    <ReactECharts key={`pc-${chartKey}`} option={buildPartitionChartOption('', partitionMetrics.consumeRate, selectedPartitions, 'msg/s', undefined, selectedConsumerGroup ? undefined : '请选择消费组')} style={{ height: 260 }} notMerge={true} />
+                  </div></div>,
+                },
+                { i: 'partition-lag', x: 6, y: 13, w: 6, h: 7, component:
+                  <div className="bento-card"><div className="bento-card-inner">
+                    <SectionTitle title="分区 Lag" />
+                    <ReactECharts key={`pl-${chartKey}`} option={buildPartitionChartOption('', partitionMetrics.lag, selectedPartitions, 'Lag', (v: number) => v.toLocaleString(), selectedConsumerGroup ? undefined : '请选择消费组')} style={{ height: 260 }} notMerge={true} />
+                  </div></div>,
+                },
+                // JMX charts
+                ...(jmxAvailable ? [
+                  { i: 'log-size', x: 0, y: 20, w: 12, h: 7, component:
+                    <div className="bento-card"><div className="bento-card-inner">
+                      <SectionTitle title="日志大小" />
+                      <ReactECharts key={`ls-${chartKey}`} option={buildPartitionChartOption('', topicLogSizeData, selectedPartitions, 'bytes', formatBytesForChart)} style={{ height: 260 }} notMerge={true} />
+                    </div></div>,
+                  },
+                  { i: 'log-end-offset', x: 0, y: 27, w: 12, h: 7, component:
+                    <div className="bento-card"><div className="bento-card-inner">
+                      <SectionTitle title="LogEndOffset" />
+                      <ReactECharts key={`leo-${chartKey}`} option={buildPartitionChartOption('', topicLogEndOffsetData, selectedPartitions, 'Offset')} style={{ height: 260 }} notMerge={true} />
+                    </div></div>,
+                  },
+                  { i: 'isr-vs-replica', x: 0, y: 34, w: 12, h: 7, component:
+                    <div className="bento-card"><div className="bento-card-inner">
+                      <SectionTitle title="ISR vs Replica" />
+                      <ReactECharts key={`ivr-${selectedTopic}`} option={getIsrVsReplicaChartOption()} style={{ height: 240 }} notMerge={true} />
+                    </div></div>,
+                  },
+                  { i: 'under-replicated', x: 0, y: 41, w: 12, h: 2, component:
+                    <div className="bento-card"><div className="bento-card-inner" style={{ padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div className="stat-label" style={{ margin: 0 }}>UNDER-REPLICATED PARTITIONS (JMX)</div>
+                      <div className="stat-value" style={{ fontSize: 22, color: topicUnderReplicatedCount === 0 ? '#10b981' : '#ef4444' }}>{topicUnderReplicatedCount}</div>
+                      <LabelTag text={topicUnderReplicatedCount === 0 ? 'NORMAL' : 'WARNING'} color={topicUnderReplicatedCount === 0 ? 'green' : 'red'} />
+                    </div></div>,
+                  },
+                ] : []),
               ] : []),
             ]}
           />
@@ -403,8 +541,8 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
       overrides={overrides}
       onSetOverride={setOverride}
       onResetOverride={resetOverride}
-        onResetAll={resetAll}
-        labelMap={queryLabels}
+      onResetAll={resetAll}
+      labelMap={queryLabels}
     />
     </>
   )
