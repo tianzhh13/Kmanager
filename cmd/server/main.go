@@ -25,11 +25,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 环境变量覆盖日志输出路径
+	logOutputPath := cfg.Log.OutputPath
+	if envPath := os.Getenv("LOG_OUTPUT_PATH"); envPath != "" {
+		logOutputPath = envPath
+	}
+
 	// 初始化日志（依赖配置）
 	if err := logger.InitWithConfig(
 		cfg.Log.Level,
 		cfg.Log.Format,
-		cfg.Log.OutputPath,
+		logOutputPath,
 		cfg.Log.MaxSize,
 		cfg.Log.MaxBackups,
 		cfg.Log.MaxAge,
