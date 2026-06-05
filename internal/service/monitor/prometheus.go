@@ -757,7 +757,7 @@ func (s *Service) GetDashboardVMData(ctx context.Context, clusterIDs []int64) *D
 	for i := 0; i < len(queries); i++ {
 		r := <-resultCh
 		if r.err != nil {
-			log.Printf("[Monitor] VM query '%s' failed: %v", r.name, r.err)
+			logger.Warn("VM query failed", "name", r.name, "error", r.err)
 			continue
 		}
 		results[r.name] = r.data
