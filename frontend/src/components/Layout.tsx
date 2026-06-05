@@ -150,7 +150,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const currentPageName = routeBreadcrumb[location.pathname] || ''
 
   return (
-    <AntLayout className="app-layout" style={{ minHeight: '100vh' }}>
+    <AntLayout className="app-layout" style={{ minHeight: '100dvh' }}>
       <Sider
         trigger={null}
         collapsible

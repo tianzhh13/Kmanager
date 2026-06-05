@@ -228,3 +228,8 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, keyword stri
 
 	return users, total, nil
 }
+
+// CountByRole 按角色统计活跃用户
+func (s *Service) CountByRole(ctx context.Context) (map[string]int64, error) {
+	return s.userRepo.CountByRole(ctx)
+}

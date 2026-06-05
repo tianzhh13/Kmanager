@@ -21,7 +21,7 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 		c.Header("Cache-Control", "no-store, no-cache, must-revalidate, private")
 		c.Header("Pragma", "no-cache")
 		// 内容安全策略
-		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'")
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:")
 
 		c.Next()
 	}

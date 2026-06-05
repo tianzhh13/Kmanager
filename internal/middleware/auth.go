@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -23,8 +25,13 @@ const (
 	ContextKeyToken = "raw_token"
 )
 
+// userStatusCacheRef 用户状态缓存引用（用于外部失效）
+var userStatusCacheRef cache.Cache
+
 // AuthMiddleware JWT 认证中间件
-func AuthMiddleware(jwtSvc *jwt.Service, blacklistCache *cache.TokenBlacklistCache, userRepo repository.UserRepository) gin.HandlerFunc {
+func AuthMiddleware(jwtSvc *jwt.Service, blacklistCache *cache.TokenBlacklistCache, userRepo repository.UserRepository, userStatusCache cache.Cache) gin.HandlerFunc {
+	userStatusCacheRef = userStatusCache
+
 	return func(c *gin.Context) {
 		var tokenString string
 
@@ -68,10 +75,35 @@ func AuthMiddleware(jwtSvc *jwt.Service, blacklistCache *cache.TokenBlacklistCac
 			return
 		}
 
-		// 检查用户状态（禁用用户无法访问）
+		// 检查用户状态（禁用用户无法访问），带缓存减少数据库查询
 		if userRepo != nil {
-			user, err := userRepo.FindByID(c.Request.Context(), claims.UserID)
-			if err != nil || user.Status != models.UserStatusActive {
+			userID := claims.UserID
+			disabled := false
+
+			// 先查缓存
+			if userStatusCache != nil {
+				cacheKey := fmt.Sprintf("user_status:%d", userID)
+				if cached, err := userStatusCache.Get(c.Request.Context(), cacheKey); err == nil && cached != nil {
+					if active, ok := cached.(bool); ok {
+						disabled = !active
+					}
+				}
+			}
+
+			// 缓存未命中或已失效，查数据库
+			if !disabled {
+				user, err := userRepo.FindByID(c.Request.Context(), userID)
+				active := err == nil && user.Status == models.UserStatusActive
+				disabled = !active
+
+				// 写入缓存（TTL 0 使用缓存默认值 30 秒）
+				if userStatusCache != nil {
+					cacheKey := fmt.Sprintf("user_status:%d", userID)
+					_ = userStatusCache.Set(c.Request.Context(), cacheKey, active, 0)
+				}
+			}
+
+			if disabled {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "account is disabled"})
 				c.Abort()
 				return
@@ -85,6 +117,14 @@ func AuthMiddleware(jwtSvc *jwt.Service, blacklistCache *cache.TokenBlacklistCac
 		c.Set(ContextKeyToken, tokenString) // 保存原始 Token，用于退出登录时加入黑名单
 
 		c.Next()
+	}
+}
+
+// InvalidateUserStatusCache 失效指定用户的认证状态缓存（用于禁用/启用用户后立即生效）
+func InvalidateUserStatusCache(userID int64) {
+	if userStatusCacheRef != nil {
+		key := fmt.Sprintf("user_status:%d", userID)
+		_ = userStatusCacheRef.Delete(context.Background(), key)
 	}
 }
 

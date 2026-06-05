@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Card, Spin, message, Tabs } from 'antd'
+import { Spin, message } from 'antd'
 import { clusterAPI } from '../services/cluster'
 import { metricsAPI, ClusterMetricsResponse } from '../services/metrics'
 import { Dayjs } from 'dayjs'
@@ -69,62 +69,21 @@ const Monitor: React.FC = () => {
     loadMetrics()
   }, [selectedCluster])
 
-  const tabItems = [
-    {
-      key: 'overview',
-      label: '集群概览',
-      children: selectedCluster ? (
-        <ClusterOverview
-          cluster={selectedCluster}
-          timeRange={timeRange}
-          quickRange={quickRange}
-          customRange={customRange}
-          metrics={metrics}
-          jmxAvailable={metrics?.jmx_exporter_available ?? false}
-        />
-      ) : null,
-    },
-    {
-      key: 'broker',
-      label: 'Broker 监控',
-      children: selectedCluster ? (
-        <BrokerMonitor
-          cluster={selectedCluster}
-          timeRange={timeRange}
-          quickRange={quickRange}
-          customRange={customRange}
-          activeTab={activeTab}
-          jmxAvailable={metrics?.jmx_exporter_available ?? false}
-        />
-      ) : null,
-    },
-    {
-      key: 'topic',
-      label: 'Topic 监控',
-      children: selectedCluster ? (
-        <TopicMonitor
-          cluster={selectedCluster}
-          timeRange={timeRange}
-          quickRange={quickRange}
-          customRange={customRange}
-          metrics={metrics}
-          activeTab={activeTab}
-          jmxAvailable={metrics?.jmx_exporter_available ?? false}
-        />
-      ) : null,
-    },
+  const tabs = [
+    { key: 'overview', label: '集群概览' },
+    { key: 'broker', label: 'Broker 监控' },
+    { key: 'topic', label: 'Topic 监控' },
   ]
 
   return (
     <div>
+      {/* Header with controls inline */}
       <div className="page-header">
-        <h1>监控中心</h1>
-        <div className="page-accent-line" />
-      </div>
-
-      <Card
-        title={null}
-        extra={
+        <div className="page-header-row">
+          <div>
+            <h1>监控中心</h1>
+            <div className="page-accent-line" />
+          </div>
           <MonitorControls
             selectedCluster={selectedCluster?.cluster_id}
             onClusterChange={(clusterId) => {
@@ -139,16 +98,65 @@ const Monitor: React.FC = () => {
             customRange={customRange}
             onCustomRangeChange={setCustomRange}
           />
-        }
-      >
-        <Spin spinning={loading}>
-          <Tabs
-            activeKey={activeTab}
-            onChange={setActiveTab}
-            items={tabItems}
+        </div>
+      </div>
+
+      {/* Custom tabs */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20 }}>
+        {tabs.map(tab => (
+          <button
+            key={tab.key}
+            className={`bento-action-btn${activeTab === tab.key ? ' bento-pagination-btn--active' : ''}`}
+            style={{
+              padding: '8px 20px',
+              fontSize: 13,
+              fontWeight: activeTab === tab.key ? 700 : 500,
+              background: activeTab === tab.key ? 'var(--brand)' : 'var(--card)',
+              color: activeTab === tab.key ? '#fff' : 'var(--text-2)',
+              border: activeTab === tab.key ? 'none' : '1px solid var(--border)',
+              borderRadius: 10,
+            }}
+            onClick={() => setActiveTab(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      <Spin spinning={loading}>
+        {activeTab === 'overview' && selectedCluster && (
+          <ClusterOverview
+            cluster={selectedCluster}
+            timeRange={timeRange}
+            quickRange={quickRange}
+            customRange={customRange}
+            metrics={metrics}
+            jmxAvailable={metrics?.jmx_exporter_available ?? false}
           />
-        </Spin>
-      </Card>
+        )}
+        {activeTab === 'broker' && selectedCluster && (
+          <BrokerMonitor
+            cluster={selectedCluster}
+            timeRange={timeRange}
+            quickRange={quickRange}
+            customRange={customRange}
+            activeTab={activeTab}
+            jmxAvailable={metrics?.jmx_exporter_available ?? false}
+          />
+        )}
+        {activeTab === 'topic' && selectedCluster && (
+          <TopicMonitor
+            cluster={selectedCluster}
+            timeRange={timeRange}
+            quickRange={quickRange}
+            customRange={customRange}
+            metrics={metrics}
+            activeTab={activeTab}
+            jmxAvailable={metrics?.jmx_exporter_available ?? false}
+          />
+        )}
+      </Spin>
     </div>
   )
 }

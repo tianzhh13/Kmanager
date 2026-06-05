@@ -9,6 +9,11 @@ import (
 	"io"
 )
 
+const (
+	// encryptionVersionGCM GCM 加密版本标识
+	encryptionVersionGCM byte = 2
+)
+
 var (
 	// ErrEmptyPlaintext 空明文错误
 	ErrEmptyPlaintext = errors.New("plaintext cannot be empty")
@@ -43,73 +48,109 @@ func NewService(keyBase64 string) (*Service, error) {
 }
 
 // Encrypt 加密数据
-// 算法：AES-256-CFB
+// 算法：AES-256-GCM（认证加密，提供密文完整性验证）
 // 输入：明文字节数组
-// 输出：Base64 编码的密文（包含 IV）
+// 输出：Base64 编码的密文（包含版本标识 + nonce + 密文）
 func (s *Service) Encrypt(plaintext []byte) (string, error) {
-	// 前置条件检查
 	if len(plaintext) == 0 {
 		return "", ErrEmptyPlaintext
 	}
 
-	// 步骤 1：创建 AES cipher
+	// 创建 AES cipher
 	block, err := aes.NewCipher(s.key)
 	if err != nil {
 		return "", err
 	}
 
-	// 步骤 2：生成随机 IV（初始化向量）
-	iv := make([]byte, aes.BlockSize)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+	// 使用 GCM 模式
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
 		return "", err
 	}
 
-	// 步骤 3：使用 CFB 模式加密
-	stream := cipher.NewCFBEncrypter(block, iv)
-	ciphertext := make([]byte, len(plaintext))
-	stream.XORKeyStream(ciphertext, plaintext)
+	// 生成随机 nonce
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
 
-	// 步骤 4：将 IV 和密文组合（IV + ciphertext）
-	result := append(iv, ciphertext...)
+	// GCM 加密（自动附加认证标签）
+	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
 
-	// 步骤 5：Base64 编码
-	encoded := base64.StdEncoding.EncodeToString(result)
+	// 添加版本标识前缀（用于解密时自动识别算法）
+	result := append([]byte{encryptionVersionGCM}, ciphertext...)
 
-	return encoded, nil
+	return base64.StdEncoding.EncodeToString(result), nil
 }
 
 // Decrypt 解密数据
-// 算法：AES-256-CFB
-// 输入：Base64 编码的密文（包含 IV）
+// 支持自动识别版本：v2(GCM) 向前兼容旧版无前缀(CFB)
+// 输入：Base64 编码的密文
 // 输出：明文字节数组
 func (s *Service) Decrypt(ciphertextBase64 string) ([]byte, error) {
-	// 前置条件检查
 	if ciphertextBase64 == "" {
 		return nil, ErrEmptyCiphertext
 	}
 
-	// 步骤 1：Base64 解码
+	// Base64 解码
 	data, err := base64.StdEncoding.DecodeString(ciphertextBase64)
 	if err != nil {
 		return nil, errors.New("failed to decode ciphertext: " + err.Error())
 	}
 
-	// 步骤 2：检查数据长度（至少包含 IV）
-	if len(data) < aes.BlockSize {
-		return nil, ErrInvalidCiphertext
+	if len(data) == 0 {
+		return nil, ErrEmptyCiphertext
 	}
 
-	// 步骤 3：分离 IV 和密文
-	iv := data[:aes.BlockSize]
-	ciphertext := data[aes.BlockSize:]
+	// 根据版本标识选择解密算法
+	if data[0] == encryptionVersionGCM {
+		return s.decryptGCM(data[1:])
+	}
 
-	// 步骤 4：创建 AES cipher
+	// 无版本标识 → 旧版 CFB（向后兼容）
+	return s.decryptCFB(data)
+}
+
+// decryptGCM 使用 AES-256-GCM 解密
+func (s *Service) decryptGCM(data []byte) ([]byte, error) {
 	block, err := aes.NewCipher(s.key)
 	if err != nil {
 		return nil, err
 	}
 
-	// 步骤 5：使用 CFB 模式解密
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return nil, ErrInvalidCiphertext
+	}
+
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, ErrInvalidCiphertext
+	}
+
+	return plaintext, nil
+}
+
+// decryptCFB 使用 AES-256-CFB 解密（向后兼容旧版加密数据）
+func (s *Service) decryptCFB(data []byte) ([]byte, error) {
+	if len(data) < aes.BlockSize {
+		return nil, ErrInvalidCiphertext
+	}
+
+	iv := data[:aes.BlockSize]
+	ciphertext := data[aes.BlockSize:]
+
+	block, err := aes.NewCipher(s.key)
+	if err != nil {
+		return nil, err
+	}
+
 	stream := cipher.NewCFBDecrypter(block, iv)
 	plaintext := make([]byte, len(ciphertext))
 	stream.XORKeyStream(plaintext, ciphertext)

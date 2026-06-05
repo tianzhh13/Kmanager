@@ -33,10 +33,30 @@ export interface UpdateClusterRequest {
   status?: string
 }
 
+export interface ClusterWithStats extends Cluster {
+  broker_count?: number
+  topic_count?: number
+  health_status?: string
+}
+
+export interface ClusterListResponse {
+  data: ClusterWithStats[]
+  total: number
+  page: number
+  page_size: number
+}
+
 export const clusterAPI = {
-  list: async (page: number = 1, pageSize: number = 20) => {
+  list: async (page: number = 1, pageSize: number = 20, withStats?: boolean) => {
     const response = await api.get('/clusters', {
-      params: { page, page_size: pageSize },
+      params: { page, page_size: pageSize, with_stats: withStats || undefined },
+    })
+    return response.data
+  },
+
+  listWithStats: async (page: number = 1, pageSize: number = 100): Promise<ClusterListResponse> => {
+    const response = await api.get('/clusters', {
+      params: { page, page_size: pageSize, with_stats: true },
     })
     return response.data
   },
