@@ -156,7 +156,11 @@ func (w *SyncWorker) syncAllClustersWithRetry() {
 func (w *SyncWorker) syncClusterWithRetry(ctx context.Context, clusterID int64) {
 	var lastErr error
 	for i := 0; i < maxRetries; i++ {
-		if err := w.SyncCluster(ctx, clusterID); err != nil {
+		// 每次重试都有独立的超时控制（防止 Kafka 集群无响应时永久阻塞）
+		syncCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+		err := w.SyncCluster(syncCtx, clusterID)
+		cancel()
+		if err != nil {
 			lastErr = err
 			logger.Warn("Failed to sync cluster, retrying", "attempt", i+1, "max_retries", maxRetries, "cluster_id", clusterID, "error", err)
 			time.Sleep(retryInterval)
@@ -468,7 +472,8 @@ func (w *SyncWorker) RemoveAdminClient(clusterID int64) {
 
 // ManualSync 手动触发同步
 func (w *SyncWorker) ManualSync(clusterID int64) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
 	return w.SyncCluster(ctx, clusterID)
 }
 

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Space, Card, Modal, Form, Select, Input, message, Tag, Row, Col, Statistic } from 'antd'
-import { PlusOutlined, DeleteOutlined, SyncOutlined, KeyOutlined, EyeOutlined, LockOutlined, TeamOutlined } from '@ant-design/icons'
+import { Button, Modal, Form, Select, Input, message } from 'antd'
+import { PlusOutlined, DeleteOutlined, SyncOutlined, EyeOutlined, KeyOutlined } from '@ant-design/icons'
 import { scramUserService, ScramUser } from '../services/scramUser'
 import { clusterAPI } from '../services/cluster'
 import { createACL, getUserACLsFromKafka, deleteACLFromKafka, UserACLInfo } from '../services/acl'
+import { StatCard, LabelTag, SearchBar, AvatarInitials } from '../components/bento'
 
 interface Cluster {
   cluster_id: number
@@ -41,66 +42,39 @@ const RESOURCE_OPERATIONS: Record<string, { value: string; label: string }[]> = 
   ],
 }
 
+const AVATAR_COLORS = ['#f97316', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b']
+
 const ACLList: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [users, setUsers] = useState<ScramUser[]>([])
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [selectedClusterId, setSelectedClusterId] = useState<number | null>(null)
   const [syncing, setSyncing] = useState(false)
-  
+
   const [createUserVisible, setCreateUserVisible] = useState(false)
   const [createUserForm] = Form.useForm()
-  
+
   const [aclModalVisible, setAclModalVisible] = useState(false)
   const [aclForm] = Form.useForm()
   const [selectedUsername, setSelectedUsername] = useState<string>('')
   const [selectedResourceType, setSelectedResourceType] = useState<string>('')
-  
+
   const [viewAclVisible, setViewAclVisible] = useState(false)
   const [viewAclUsername, setViewAclUsername] = useState<string>('')
   const [userAcls, setUserAcls] = useState<UserACLInfo[]>([])
   const [viewAclLoading, setViewAclLoading] = useState(false)
-  
-  const columns = [
-    { title: '用户名', dataIndex: 'username', key: 'username',
-      render: (name: string) => <strong style={{ color: 'var(--text-heading)' }}>{name}</strong>,
-    },
-    { title: '认证机制', dataIndex: 'mechanism', key: 'mechanism', width: 150,
-      render: (v: string) => <Tag color="processing">{v}</Tag>,
-    },
-    { title: '同步状态', dataIndex: 'sync_status', key: 'sync_status', width: 100 },
-    { title: '最后同步时间', dataIndex: 'last_sync_at', key: 'last_sync_at', width: 180,
-      render: (text: string) => <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{text || '-'}</span>,
-    },
-    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 180,
-      render: (text: string) => <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{text || '-'}</span>,
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 250,
-      render: (_: any, record: ScramUser) => (
-        <Space>
-          <Button type="link" icon={<EyeOutlined />} onClick={() => handleViewAcls(record.username)}>
-            查看权限
-          </Button>
-          <Button type="link" icon={<KeyOutlined />} onClick={() => handleOpenAclModal(record.username)}>
-            权限设置
-          </Button>
-          <Button type="link" danger icon={<DeleteOutlined />} onClick={() => handleDeleteUser(record.username)}>
-            删除
-          </Button>
-        </Space>
-      ),
-    },
-  ]
+
+  const [searchText, setSearchText] = useState('')
+  const [expandedUser, setExpandedUser] = useState<string | null>(null)
+  const [expandedAcls, setExpandedAcls] = useState<UserACLInfo[]>([])
+  const [expandedAclsLoading, setExpandedAclsLoading] = useState(false)
 
   useEffect(() => {
     const loadClusters = async () => {
       try {
         const res = await clusterAPI.list(1, 100)
         const clusterList = res.data || []
-        const scramClusters = clusterList.filter((c: Cluster) => 
+        const scramClusters = clusterList.filter((c: Cluster) =>
           c.sasl_mechanism === 'SCRAM-SHA-256' || c.sasl_mechanism === 'SCRAM-SHA-512'
         )
         setClusters(scramClusters)
@@ -138,9 +112,9 @@ const ACLList: React.FC = () => {
       message.warning('请先选择集群')
       return
     }
-    createUserForm.setFieldsValue({ 
+    createUserForm.setFieldsValue({
       cluster_id: selectedClusterId,
-      mechanism: 'SCRAM-SHA-256' 
+      mechanism: 'SCRAM-SHA-256'
     })
     setCreateUserVisible(true)
   }
@@ -241,6 +215,26 @@ const ACLList: React.FC = () => {
     }
   }
 
+  const handleToggleExpand = async (username: string) => {
+    if (expandedUser === username) {
+      setExpandedUser(null)
+      setExpandedAcls([])
+      return
+    }
+    setExpandedUser(username)
+    setExpandedAclsLoading(true)
+    setExpandedAcls([])
+    try {
+      const principal = `User:${username}`
+      const acls = await getUserACLsFromKafka(selectedClusterId!, principal)
+      setExpandedAcls(acls)
+    } catch {
+      // inline expand silently fails
+    } finally {
+      setExpandedAclsLoading(false)
+    }
+  }
+
   const handleDeleteAcl = async (acl: UserACLInfo) => {
     Modal.confirm({
       title: '确认删除',
@@ -295,15 +289,31 @@ const ACLList: React.FC = () => {
     }
   }
 
+  const scram256Count = users.filter(u => u.mechanism === 'SCRAM-SHA-256').length
+  const scram512Count = users.filter(u => u.mechanism === 'SCRAM-SHA-512').length
+
+  const filteredUsers = users.filter(u =>
+    !searchText || u.username.toLowerCase().includes(searchText.toLowerCase())
+  )
+
+  const gridCols = '2fr 1fr 1.2fr 1.2fr 240px'
+
+  const getResourceTypeColor = (type: string): 'orange' | 'blue' | 'purple' => {
+    if (type === 'Topic') return 'orange'
+    if (type === 'Group') return 'blue'
+    return 'purple'
+  }
+
   return (
     <div>
+      {/* Header */}
       <div className="page-header">
         <div className="page-header-row">
           <div>
             <h1>SCRAM 用户管理</h1>
             <div className="page-accent-line" />
           </div>
-          <Space>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <Select
               placeholder="选择集群"
               value={selectedClusterId}
@@ -320,63 +330,125 @@ const ACLList: React.FC = () => {
             <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenCreateUser} disabled={!selectedClusterId}>
               创建用户
             </Button>
-          </Space>
+          </div>
         </div>
       </div>
 
-      {/* 统计卡片 */}
-      <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
-        <Col xs={12} sm={8}>
-          <Card size="small" className="stat-card">
-            <Statistic title="用户总数" value={users.length} prefix={<TeamOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-info)' }} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8}>
-          <Card size="small" className="stat-card">
-            <Statistic title="SCRAM-256" value={users.filter(u => u.mechanism === 'SCRAM-SHA-256').length}
-              prefix={<LockOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-success)' }} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8}>
-          <Card size="small" className="stat-card">
-            <Statistic title="SCRAM-512" value={users.filter(u => u.mechanism === 'SCRAM-SHA-512').length}
-              prefix={<LockOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--brand-accent)' }} />
-          </Card>
-        </Col>
-      </Row>
-      
+      {/* Stat cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
+        <StatCard label="USER TOTAL" value={users.length} />
+        <StatCard label="SCRAM-SHA-256" value={scram256Count} />
+        <StatCard label="SCRAM-SHA-512" value={scram512Count} />
+      </div>
+
       {clusters.length === 0 && (
-        <Card>
-          <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-tertiary)' }}>
-            暂无支持 SCRAM 用户管理的集群<br/>
-            <span style={{ fontSize: 12 }}>仅支持 SASL 机制为 SCRAM-SHA-256 或 SCRAM-SHA-512 的集群</span>
-          </div>
-        </Card>
-      )}
-      
-      {clusters.length > 0 && (
-        <Card>
-          <Table
-            columns={columns}
-            dataSource={users}
-            rowKey="user_id"
-            loading={loading}
-            pagination={{ pageSize: 20 }}
-            locale={{ emptyText: selectedClusterId ? '暂无用户数据' : '请先选择集群' }}
-          />
-        </Card>
+        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-3)' }}>
+          暂无支持 SCRAM 用户管理的集群<br />
+          <span style={{ fontSize: 12 }}>仅支持 SASL 机制为 SCRAM-SHA-256 或 SCRAM-SHA-512 的集群</span>
+        </div>
       )}
 
+      {clusters.length > 0 && (
+        <>
+          {/* Search */}
+          <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+            <SearchBar value={searchText} onChange={setSearchText} placeholder="搜索用户名..." />
+          </div>
+
+          {/* Table header */}
+          <div className="bento-table-header" style={{ gridTemplateColumns: gridCols }}>
+            <div>Username</div>
+            <div style={{ textAlign: 'center' }}>Mechanism</div>
+            <div style={{ textAlign: 'center' }}>Last Sync</div>
+            <div style={{ textAlign: 'center' }}>Created</div>
+            <div style={{ textAlign: 'right' }}>Actions</div>
+          </div>
+
+          {/* Table body */}
+          <div className="bento-table-body">
+            {loading && (
+              <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-3)' }}>加载中...</div>
+            )}
+            {!loading && filteredUsers.map((user, idx) => (
+              <div key={user.user_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                <div
+                  className="bento-table-row"
+                  style={{ gridTemplateColumns: gridCols, cursor: 'pointer' }}
+                  onClick={() => handleToggleExpand(user.username)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <AvatarInitials name={user.username} color={AVATAR_COLORS[idx % AVATAR_COLORS.length]} />
+                    <span style={{ fontWeight: 700, fontSize: 14, fontFamily: 'var(--font-mono)' }}>{user.username}</span>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <LabelTag text={user.mechanism} color={user.mechanism === 'SCRAM-SHA-256' ? 'purple' : 'blue'} />
+                  </div>
+                  <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-3)' }}>{user.last_sync_at ? user.last_sync_at.replace('T', ' ').replace(/\+08:00$/, '').replace(/\+00:00$/, '') : '-'}</div>
+                  <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-3)' }}>{user.created_at ? user.created_at.replace('T', ' ').replace(/\+08:00$/, '').replace(/\+00:00$/, '') : '-'}</div>
+                  <div style={{ textAlign: 'right', display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                    <button className="bento-action-btn" onClick={(e) => { e.stopPropagation(); handleViewAcls(user.username) }}>
+                      <EyeOutlined /> ACL
+                    </button>
+                    <button className="bento-action-btn bento-action-btn--primary" onClick={(e) => { e.stopPropagation(); handleOpenAclModal(user.username) }}>
+                      <KeyOutlined /> + Rule
+                    </button>
+                    <button className="bento-action-btn bento-action-btn--danger" onClick={(e) => { e.stopPropagation(); handleDeleteUser(user.username) }}>
+                      <DeleteOutlined /> 删除
+                    </button>
+                  </div>
+                </div>
+
+                {/* Inline ACL expand */}
+                {expandedUser === user.username && (
+                  <div style={{ padding: '0 24px 16px' }}>
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
+                        ACL Rules for {user.username}
+                      </div>
+                      {expandedAclsLoading && <div style={{ fontSize: 12, color: 'var(--text-3)' }}>加载中...</div>}
+                      {!expandedAclsLoading && expandedAcls.length === 0 && (
+                        <div style={{ fontSize: 12, color: 'var(--text-3)' }}>暂无权限规则</div>
+                      )}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {expandedAcls.map((acl, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                              background: 'var(--card)', borderRadius: 8,
+                              border: acl.permission_type === 'Deny' ? '1px solid rgba(239,68,68,0.15)' : 'none'
+                            }}
+                          >
+                            <LabelTag text={acl.resource_type} color={getResourceTypeColor(acl.resource_type)} />
+                            <span style={{ fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-mono)', flex: 1 }}>{acl.resource_name}</span>
+                            <span style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 600 }}>{acl.operation}</span>
+                            <LabelTag text={acl.permission_type} color={acl.permission_type === 'Allow' ? 'green' : 'red'} />
+                            <span style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{acl.host}</span>
+                            <button className="bento-action-btn bento-action-btn--danger" style={{ fontSize: 10, padding: '2px 8px' }} onClick={() => handleDeleteAcl(acl)}>
+                              删除
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+            {!loading && filteredUsers.length === 0 && (
+              <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-3)' }}>
+                {selectedClusterId ? '暂无用户数据' : '请先选择集群'}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Create User Modal */}
       <Modal
         title="创建 SCRAM 用户"
         open={createUserVisible}
-        onCancel={() => {
-          setCreateUserVisible(false)
-          createUserForm.resetFields()
-        }}
+        onCancel={() => { setCreateUserVisible(false); createUserForm.resetFields() }}
         onOk={() => createUserForm.submit()}
       >
         <Form form={createUserForm} layout="vertical" onFinish={handleCreateUser}>
@@ -402,64 +474,47 @@ const ACLList: React.FC = () => {
         </Form>
       </Modal>
 
+      {/* View ACL Modal */}
       <Modal
         title={`用户权限 - ${viewAclUsername}`}
         open={viewAclVisible}
-        onCancel={() => {
-          setViewAclVisible(false)
-          setUserAcls([])
-        }}
+        onCancel={() => { setViewAclVisible(false); setUserAcls([]) }}
         footer={[
-          <Button key="close" onClick={() => setViewAclVisible(false)}>
-            关闭
-          </Button>,
+          <Button key="close" onClick={() => setViewAclVisible(false)}>关闭</Button>,
         ]}
         width={800}
       >
-        <Table
-          dataSource={userAcls}
-          rowKey={(record, index) => `${record.resource_type}-${record.resource_name}-${record.operation}-${index}`}
-          loading={viewAclLoading}
-          size="small"
-          pagination={false}
-          locale={{ emptyText: '该用户暂无权限规则' }}
-          columns={[
-            { title: '资源类型', dataIndex: 'resource_type', key: 'resource_type', width: 100 },
-            { title: '资源名称', dataIndex: 'resource_name', key: 'resource_name' },
-            { title: '操作', dataIndex: 'operation', key: 'operation', width: 100 },
-            { 
-              title: '权限', 
-              dataIndex: 'permission_type', 
-              key: 'permission_type', 
-              width: 80,
-              render: (permission_type: string) => (
-                <Tag color={permission_type === 'Allow' ? 'success' : 'error'}>
-                  {permission_type}
-                </Tag>
-              )
-            },
-            { title: 'Host', dataIndex: 'host', key: 'host', width: 80 },
-            {
-              title: '操作',
-              key: 'action',
-              width: 80,
-              render: (_: any, record: UserACLInfo) => (
-                <Button type="link" danger size="small" onClick={() => handleDeleteAcl(record)}>
-                  删除
-                </Button>
-              ),
-            },
-          ]}
-        />
+        <div className="bento-table-header" style={{ gridTemplateColumns: '1fr 1.5fr 1fr 80px 80px 80px' }}>
+          <div>资源类型</div>
+          <div>资源名称</div>
+          <div>操作</div>
+          <div>权限</div>
+          <div>Host</div>
+          <div style={{ textAlign: 'right' }}>操作</div>
+        </div>
+        <div className="bento-table-body">
+          {viewAclLoading && <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>加载中...</div>}
+          {!viewAclLoading && userAcls.length === 0 && <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>该用户暂无权限规则</div>}
+          {!viewAclLoading && userAcls.map((acl, index) => (
+            <div key={`${acl.resource_type}-${acl.resource_name}-${acl.operation}-${index}`} className="bento-table-row" style={{ gridTemplateColumns: '1fr 1.5fr 1fr 80px 80px 80px' }}>
+              <LabelTag text={acl.resource_type} color={getResourceTypeColor(acl.resource_type)} />
+              <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}>{acl.resource_name}</span>
+              <span style={{ fontSize: 12 }}>{acl.operation}</span>
+              <LabelTag text={acl.permission_type} color={acl.permission_type === 'Allow' ? 'green' : 'red'} />
+              <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }}>{acl.host}</span>
+              <div style={{ textAlign: 'right' }}>
+                <button className="bento-action-btn bento-action-btn--danger" style={{ fontSize: 10 }} onClick={() => handleDeleteAcl(acl)}>删除</button>
+              </div>
+            </div>
+          ))}
+        </div>
       </Modal>
 
+      {/* Create ACL Modal */}
       <Modal
         title={`权限设置 - ${selectedUsername}`}
         open={aclModalVisible}
-        onCancel={() => {
-          setAclModalVisible(false)
-          aclForm.resetFields()
-        }}
+        onCancel={() => { setAclModalVisible(false); aclForm.resetFields() }}
         onOk={() => aclForm.submit()}
         width={600}
       >
@@ -478,8 +533,8 @@ const ACLList: React.FC = () => {
             <Input placeholder={selectedResourceType === 'Cluster' ? '集群资源通常填 kafka-cluster 或 *' : '资源名称（如 test-topic 或 * 表示所有）'} />
           </Form.Item>
           <Form.Item name="operation" label="操作" rules={[{ required: true, message: '请选择操作' }]}>
-            <Select 
-              placeholder={selectedResourceType ? '选择操作' : '请先选择资源类型'} 
+            <Select
+              placeholder={selectedResourceType ? '选择操作' : '请先选择资源类型'}
               mode="multiple"
               disabled={!selectedResourceType}
             >

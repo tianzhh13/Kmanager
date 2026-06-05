@@ -1,4 +1,4 @@
-﻿package handler
+package handler
 
 import (
 	"net/http"
@@ -134,6 +134,9 @@ func (h *UserHandler) DisableUser(c *gin.Context) {
 		return
 	}
 
+	// 立即失效认证中间件中的用户状态缓存
+	middleware.InvalidateUserStatusCache(userID)
+
 	c.JSON(http.StatusOK, gin.H{"message": "user disabled successfully"})
 }
 
@@ -149,6 +152,9 @@ func (h *UserHandler) EnableUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
 		return
 	}
+
+	// 立即失效认证中间件中的用户状态缓存
+	middleware.InvalidateUserStatusCache(userID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "user enabled successfully"})
 }
@@ -182,5 +188,28 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 		"total":     total,
 		"page":      page,
 		"page_size": pageSize,
+	})
+}
+
+// GetStats 获取用户角色统计
+// GET /api/v1/users/stats
+// 权限：SuperAdmin
+func (h *UserHandler) GetStats(c *gin.Context) {
+	countByRole, err := h.userSvc.CountByRole(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		return
+	}
+
+	var total int64
+	for _, count := range countByRole {
+		total += count
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total":         total,
+		"super_admin":   countByRole["super_admin"],
+		"cluster_admin": countByRole["cluster_admin"],
+		"normal_user":   countByRole["normal_user"],
 	})
 }

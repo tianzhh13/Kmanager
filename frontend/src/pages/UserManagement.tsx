@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Space, Modal, Form, Input, Select, Tag, message, Popconfirm, Transfer, Row, Col, Statistic, Card } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, StopOutlined, CheckOutlined, SettingOutlined, ClusterOutlined, TeamOutlined, SafetyOutlined, UserSwitchOutlined } from '@ant-design/icons'
+import { Button, Modal, Form, Input, Select, message, Transfer } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, StopOutlined, CheckOutlined, SettingOutlined, ClusterOutlined } from '@ant-design/icons'
 import api from '../services/api'
 import { clusterAPI } from '../services/cluster'
 import TopicPermissionModal from '../components/TopicPermissionModal'
+import { StatCard, LabelTag, SearchBar, AvatarInitials } from '../components/bento'
 
 interface User {
   user_id: number
@@ -19,6 +20,19 @@ interface Cluster {
   cluster_name: string
 }
 
+const AVATAR_COLORS = ['#f97316', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', '#06b6d4']
+
+const roleColorMap: Record<string, 'red' | 'blue' | 'green'> = {
+  super_admin: 'red',
+  cluster_admin: 'blue',
+  normal_user: 'green',
+}
+const roleLabelMap: Record<string, string> = {
+  super_admin: 'SUPER ADMIN',
+  cluster_admin: 'CLUSTER ADMIN',
+  normal_user: 'USER',
+}
+
 const UserManagement: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [isModalVisible, setIsModalVisible] = useState(false)
@@ -27,7 +41,7 @@ const UserManagement: React.FC = () => {
   const [users, setUsers] = useState<User[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(20)
+  const [pageSize] = useState(20)
   const [form] = Form.useForm()
   const [permModalVisible, setPermModalVisible] = useState(false)
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
@@ -37,6 +51,9 @@ const UserManagement: React.FC = () => {
   const [userClusters, setUserClusters] = useState<number[]>([])
   const [targetClusters, setTargetClusters] = useState<number[]>([])
   const [clusterAuthLoading, setClusterAuthLoading] = useState(false)
+  const [searchText, setSearchText] = useState('')
+  const [roleFilter, setRoleFilter] = useState<string>('')
+  const [statusFilter, setStatusFilter] = useState<string>('')
 
   useEffect(() => {
     fetchUsers()
@@ -102,13 +119,19 @@ const UserManagement: React.FC = () => {
   }
 
   const handleDelete = async (userId: number) => {
-    try {
-      await api.delete(`/users/${userId}`)
-      message.success('删除成功')
-      fetchUsers()
-    } catch (error: any) {
-      message.error(error.response?.data?.error || '删除失败')
-    }
+    Modal.confirm({
+      title: '确认删除',
+      content: '确定要删除该用户吗？此操作不可恢复。',
+      onOk: async () => {
+        try {
+          await api.delete(`/users/${userId}`)
+          message.success('删除成功')
+          fetchUsers()
+        } catch (error: any) {
+          message.error(error.response?.data?.error || '删除失败')
+        }
+      },
+    })
   }
 
   const handleToggleStatus = async (userId: number, currentStatus: string) => {
@@ -176,56 +199,18 @@ const UserManagement: React.FC = () => {
     }
   }
 
-  const columns = [
-    { title: 'ID', dataIndex: 'user_id', key: 'user_id', width: 60,
-      render: (v: number) => <span style={{ color: 'var(--text-tertiary)' }}>{v}</span>,
-    },
-    { title: '用户名', dataIndex: 'username', key: 'username',
-      render: (text: string) => <strong style={{ color: 'var(--text-heading)' }}>{text}</strong>,
-    },
-    { title: '邮箱', dataIndex: 'email', key: 'email',
-      render: (text: string) => <span className="text-mono" style={{ fontSize: 12 }}>{text}</span>,
-    },
-    { title: '角色', dataIndex: 'role', key: 'role',
-      render: (role: string) => {
-        const colorMap: Record<string, string> = { super_admin: 'error', cluster_admin: 'processing', normal_user: 'success' }
-        const labelMap: Record<string, string> = { super_admin: '超级管理员', cluster_admin: '集群管理员', normal_user: '普通用户' }
-        return <Tag color={colorMap[role] || 'default'}>{labelMap[role] || role}</Tag>
-      }
-    },
-    { title: '状态', dataIndex: 'status', key: 'status',
-      render: (status: string) => (
-        <Tag color={status === 'active' ? 'success' : 'error'}>{status === 'active' ? '活跃' : '禁用'}</Tag>
-      )
-    },
-    { title: '创建时间', dataIndex: 'created_at', key: 'created_at',
-      render: (text: string) => <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{text}</span>,
-    },
-    { title: '操作', key: 'action', width: 350,
-      render: (_: any, record: User) => (
-        <Space>
-          <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
-          {record.role === 'cluster_admin' && (
-            <Button type="link" icon={<ClusterOutlined />} onClick={() => handleOpenClusterAuth(record)}>授权集群</Button>
-          )}
-          {record.role === 'normal_user' && (
-            <Button type="link" icon={<SettingOutlined />} onClick={() => handleOpenPermModal(record)}>分配权限</Button>
-          )}
-          <Popconfirm
-            title={record.status === 'active' ? '确定要禁用该用户吗？' : '确定要启用该用户吗？'}
-            onConfirm={() => handleToggleStatus(record.user_id, record.status)}
-          >
-            <Button type="link" icon={record.status === 'active' ? <StopOutlined /> : <CheckOutlined />}>
-              {record.status === 'active' ? '禁用' : '启用'}
-            </Button>
-          </Popconfirm>
-          <Popconfirm title="确定要删除该用户吗？" onConfirm={() => handleDelete(record.user_id)}>
-            <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
-          </Popconfirm>
-        </Space>
-      )
-    },
-  ]
+  const superAdminCount = users.filter(u => u.role === 'super_admin').length
+  const clusterAdminCount = users.filter(u => u.role === 'cluster_admin').length
+  const normalUserCount = users.filter(u => u.role === 'normal_user').length
+
+  const filteredUsers = users.filter(u => {
+    if (searchText && !u.username.toLowerCase().includes(searchText.toLowerCase()) && !u.email.toLowerCase().includes(searchText.toLowerCase())) return false
+    if (roleFilter && u.role !== roleFilter) return false
+    if (statusFilter && u.status !== statusFilter) return false
+    return true
+  })
+
+  const gridCols = '36px 1.1fr 1.2fr 1fr 0.7fr 1.6fr 340px'
 
   const transferDataSource = allClusters.map(c => ({
     key: String(c.cluster_id),
@@ -234,6 +219,7 @@ const UserManagement: React.FC = () => {
 
   return (
     <div>
+      {/* Header */}
       <div className="page-header">
         <div className="page-header-row">
           <div>
@@ -246,54 +232,134 @@ const UserManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* 统计卡片 */}
-      <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
-        <Col xs={12} sm={6}>
-          <Card size="small" className="stat-card">
-            <Statistic title="用户总数" value={total} prefix={<TeamOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--brand-primary)' }} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card size="small" className="stat-card">
-            <Statistic title="超级管理员"
-              value={users.filter(u => u.role === 'super_admin').length}
-              prefix={<SafetyOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-error)' }} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card size="small" className="stat-card">
-            <Statistic title="集群管理员"
-              value={users.filter(u => u.role === 'cluster_admin').length}
-              prefix={<UserSwitchOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-info)' }} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card size="small" className="stat-card">
-            <Statistic title="普通用户"
-              value={users.filter(u => u.role === 'normal_user').length}
-              prefix={<TeamOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-success)' }} />
-          </Card>
-        </Col>
-      </Row>
+      {/* Stat cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 20 }}>
+        <StatCard label="USER TOTAL" value={total} />
+        <StatCard label="SUPER ADMIN" value={superAdminCount} color="red" />
+        <StatCard label="CLUSTER ADMIN" value={clusterAdminCount} color="blue" />
+        <StatCard label="NORMAL USER" value={normalUserCount} color="green" />
+      </div>
 
-      <Table
-        columns={columns}
-        dataSource={users}
-        rowKey="user_id"
-        loading={loading}
-        pagination={{
-          current: page,
-          pageSize,
-          total,
-          onChange: (p, ps) => { setPage(p); setPageSize(ps) },
-        }}
-        locale={{ emptyText: '暂无用户数据' }}
-      />
+      {/* Search & filters */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <SearchBar value={searchText} onChange={setSearchText} placeholder="搜索用户名或邮箱..." />
+        <Select
+          placeholder="全部角色"
+          value={roleFilter || undefined}
+          onChange={(val) => setRoleFilter(val || '')}
+          style={{ width: 150 }}
+          allowClear
+        >
+          <Select.Option value="super_admin">超级管理员</Select.Option>
+          <Select.Option value="cluster_admin">集群管理员</Select.Option>
+          <Select.Option value="normal_user">普通用户</Select.Option>
+        </Select>
+        <Select
+          placeholder="全部状态"
+          value={statusFilter || undefined}
+          onChange={(val) => setStatusFilter(val || '')}
+          style={{ width: 120 }}
+          allowClear
+        >
+          <Select.Option value="active">活跃</Select.Option>
+          <Select.Option value="disabled">禁用</Select.Option>
+        </Select>
+      </div>
 
+      {/* Table header */}
+      <div className="bento-table-header" style={{ gridTemplateColumns: gridCols }}>
+        <div>ID</div>
+        <div>Username</div>
+        <div>Email</div>
+        <div>Role</div>
+        <div>Status</div>
+        <div>Created</div>
+        <div style={{ textAlign: 'right' }}>Actions</div>
+      </div>
+
+      {/* Table body */}
+      <div className="bento-table-body">
+        {loading && <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-3)' }}>加载中...</div>}
+        {!loading && filteredUsers.map((user, idx) => {
+          const isDisabled = user.status === 'disabled'
+          return (
+            <div
+              key={user.user_id}
+              className={`bento-table-row${isDisabled ? ' bento-table-row--disabled' : ''}`}
+              style={{ gridTemplateColumns: gridCols }}
+            >
+              <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{user.user_id}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <AvatarInitials
+                  name={user.username}
+                  color={AVATAR_COLORS[idx % AVATAR_COLORS.length]}
+                />
+                <span className="bento-row-name" style={{ fontWeight: 700, fontSize: 14 }}>{user.username}</span>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-2)', fontFamily: 'var(--font-mono)' }}>{user.email}</div>
+              <div>
+                <LabelTag text={roleLabelMap[user.role] || user.role} color={roleColorMap[user.role] || 'neutral'} />
+              </div>
+              <div>
+                <LabelTag text={user.status === 'active' ? 'ACTIVE' : 'DISABLED'} color={user.status === 'active' ? 'green' : 'red'} />
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.created_at}</div>
+              <div style={{ textAlign: 'right', display: 'flex', gap: 4, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                <button className="bento-action-btn" style={{ padding: '3px 7px', fontSize: 12 }} onClick={() => handleEdit(user)}>
+                  <EditOutlined /> 编辑
+                </button>
+                {user.role === 'cluster_admin' && (
+                  <button className="bento-action-btn" style={{ padding: '3px 7px', fontSize: 12, borderColor: 'var(--info)', color: 'var(--info)' }} onClick={() => handleOpenClusterAuth(user)}>
+                    <ClusterOutlined /> 授权集群
+                  </button>
+                )}
+                {user.role === 'normal_user' && (
+                  <button className="bento-action-btn" style={{ padding: '3px 7px', fontSize: 12, borderColor: 'var(--color-success)', color: 'var(--color-success)' }} onClick={() => handleOpenPermModal(user)}>
+                    <SettingOutlined /> 分配权限
+                  </button>
+                )}
+                <button
+                  className="bento-action-btn"
+                  style={{ padding: '3px 7px', fontSize: 12, color: user.status === 'active' ? 'var(--color-warning)' : 'var(--color-success)' }}
+                  onClick={() => handleToggleStatus(user.user_id, user.status)}
+                >
+                  {user.status === 'active' ? <><StopOutlined /> 禁用</> : <><CheckOutlined /> 启用</>}
+                </button>
+                <button className="bento-action-btn bento-action-btn--danger" style={{ padding: '3px 7px', fontSize: 12 }} onClick={() => handleDelete(user.user_id)}>
+                  <DeleteOutlined /> 删除
+                </button>
+              </div>
+            </div>
+          )
+        })}
+        {!loading && filteredUsers.length === 0 && (
+          <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-3)' }}>暂无用户数据</div>
+        )}
+      </div>
+
+      {/* Pagination */}
+      {total > pageSize && (
+        <div className="bento-pagination">
+          <span className="bento-pagination-info">
+            Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}
+          </span>
+          <div className="bento-pagination-buttons">
+            <button className="bento-pagination-btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>&larr;</button>
+            {Array.from({ length: Math.ceil(total / pageSize) }, (_, i) => i + 1)
+              .filter(p => Math.abs(p - page) <= 2)
+              .map(p => (
+                <button
+                  key={p}
+                  className={`bento-pagination-btn${p === page ? ' bento-pagination-btn--active' : ''}`}
+                  onClick={() => setPage(p)}
+                >{p}</button>
+              ))}
+            <button className="bento-pagination-btn" disabled={page >= Math.ceil(total / pageSize)} onClick={() => setPage(page + 1)}>&rarr;</button>
+          </div>
+        </div>
+      )}
+
+      {/* Create User Modal */}
       <Modal
         title="创建用户"
         open={isModalVisible}
@@ -321,6 +387,7 @@ const UserManagement: React.FC = () => {
         </Form>
       </Modal>
 
+      {/* Edit User Modal */}
       <Modal
         title="编辑用户"
         open={isEditModal}
@@ -348,6 +415,7 @@ const UserManagement: React.FC = () => {
         </Form>
       </Modal>
 
+      {/* Cluster Auth Modal */}
       <Modal
         title={`集群授权 - ${clusterAuthUser?.username || ''}`}
         open={clusterAuthModalVisible}

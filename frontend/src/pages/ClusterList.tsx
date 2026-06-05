@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Space, Modal, Form, Input, Select, message, Tag, Upload, Row, Col, Statistic, Card } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClusterOutlined, CheckCircleOutlined, LockOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
+import { Button, Modal, Form, Input, Select, message, Upload } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchClusters, createCluster, updateCluster, deleteCluster, testConnectionForCreate } from '../store/slices/clusterSlice'
-import { Cluster } from '../services/cluster'
-import { clusterAPI } from '../services/cluster'
+import { Cluster, clusterAPI, ClusterWithStats } from '../services/cluster'
+import { StatCard, HealthDot, LabelTag, SearchBar } from '../components/bento'
+import './ClusterListV2.css'
 
 const ClusterList: React.FC = () => {
   const dispatch = useAppDispatch()
@@ -15,17 +16,46 @@ const ClusterList: React.FC = () => {
   const [isEditModal, setIsEditModal] = useState(false)
   const [editingCluster, setEditingCluster] = useState<Cluster | null>(null)
   const [form] = Form.useForm()
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(20)
+  const [page, _setPage] = useState(1)
+  const [pageSize] = useState(100)
   const [authType, setAuthType] = useState<string>('none')
   const [testingConnection, setTestingConnection] = useState(false)
   const [keytabFile, setKeytabFile] = useState<File | null>(null)
   const [keytabTempId, setKeytabTempId] = useState<string>('')
   const [uploadingKeytab, setUploadingKeytab] = useState(false)
+  const [searchText, setSearchText] = useState('')
+  const [statsClusters, setStatsClusters] = useState<ClusterWithStats[]>([])
 
   useEffect(() => {
     dispatch(fetchClusters({ page, pageSize }))
+    // Also fetch with stats for health dots
+    clusterAPI.listWithStats(1, 100).then(res => {
+      setStatsClusters(res.data || [])
+    }).catch(() => {})
   }, [dispatch, page, pageSize])
+
+  const getHealthStatus = (clusterId: number): string => {
+    const sc = statsClusters.find(c => c.cluster_id === clusterId)
+    return sc?.health_status || 'unknown'
+  }
+
+  const filteredClusters = clusters.filter(c =>
+    !searchText ||
+    c.cluster_name.toLowerCase().includes(searchText.toLowerCase()) ||
+    c.bootstrap_servers.toLowerCase().includes(searchText.toLowerCase())
+  )
+
+  const plaintextCount = clusters.filter(c => c.auth_type === 'none' || c.auth_type === 'plaintext').length
+  const scramCount = clusters.filter(c => c.auth_type === 'scram').length
+  const kerberosCount = clusters.filter(c => c.auth_type === 'kerberos').length
+  const jmxCount = clusters.filter(c => c.jmx_exporter_urls).length
+
+  const authTypeToColor = (type: string): 'green' | 'blue' | 'orange' | 'purple' => {
+    if (type === 'none' || type === 'plaintext') return 'green'
+    if (type === 'scram') return 'blue'
+    if (type === 'kerberos') return 'orange'
+    return 'purple'
+  }
 
   const buildAuthConfig = (values: any): Record<string, any> | undefined => {
     const authConfig: Record<string, any> = {}
@@ -62,18 +92,10 @@ const ClusterList: React.FC = () => {
   const handleCreate = async () => {
     try {
       const values = await form.validateFields()
-      
       if (values.auth_type === 'kerberos') {
-        if (!keytabTempId) {
-          message.error('请先上传 Keytab 文件')
-          return
-        }
-        if (!values.krb5_content) {
-          message.error('请填写 krb5.conf 配置内容')
-          return
-        }
+        if (!keytabTempId) { message.error('请先上传 Keytab 文件'); return }
+        if (!values.krb5_content) { message.error('请填写 krb5.conf 配置内容'); return }
       }
-      
       const authConfig = buildAuthConfig(values)
       const testData = {
         cluster_name: values.cluster_name,
@@ -81,11 +103,9 @@ const ClusterList: React.FC = () => {
         auth_type: values.auth_type,
         auth_config: authConfig,
       }
-      
       setTestingConnection(true)
       await dispatch(testConnectionForCreate(testData)).unwrap()
       setTestingConnection(false)
-      
       const clusterData = {
         cluster_name: values.cluster_name,
         bootstrap_servers: values.bootstrap_servers,
@@ -94,7 +114,6 @@ const ClusterList: React.FC = () => {
         jmx_exporter_urls: values.jmx_exporter_urls,
         description: values.description,
       }
-      
       await dispatch(createCluster(clusterData)).unwrap()
       message.success('创建成功')
       setIsModalVisible(false)
@@ -157,48 +176,6 @@ const ClusterList: React.FC = () => {
     })
   }
 
-  const columns = [
-    { title: '集群名称', dataIndex: 'cluster_name', key: 'cluster_name',
-      render: (name: string) => <strong style={{ color: 'var(--text-heading)' }}>{name}</strong>,
-    },
-    { title: 'Bootstrap Servers', dataIndex: 'bootstrap_servers', key: 'bootstrap_servers',
-      render: (text: string) => <span className="text-mono" style={{ fontSize: 12 }}>{text}</span>,
-    },
-    { title: '认证类型', dataIndex: 'auth_type', key: 'auth_type', 
-      render: (type: string) => (
-        <Tag color={type === 'none' ? 'success' : type === 'plaintext' ? 'success' : type === 'scram' ? 'processing' : 'warning'}>
-          {type ? type.toUpperCase() : 'NONE'}
-        </Tag>
-      )
-    },
-    { title: '状态', dataIndex: 'status', key: 'status',
-      render: (status: string) => (
-        <Tag color={status === 'active' ? 'success' : 'error'}>
-          {status === 'active' ? '活跃' : '禁用'}
-        </Tag>
-      )
-    },
-    { title: '创建时间', dataIndex: 'created_at', key: 'created_at',
-      render: (text: string) => <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{text}</span>,
-    },
-    { title: '操作', key: 'action', width: 150,
-      render: (_: any, record: Cluster) => (
-        <Space>
-          {isSuperAdmin && (
-            <>
-              <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
-                编辑
-              </Button>
-              <Button type="link" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.cluster_id)}>
-                删除
-              </Button>
-            </>
-          )}
-        </Space>
-      )
-    },
-  ]
-
   const renderForm = () => {
     if (isEditModal && editingCluster) {
       return (
@@ -212,11 +189,7 @@ const ClusterList: React.FC = () => {
           <Form.Item label="认证类型">
             <Input value={editingCluster.auth_type?.toUpperCase()} disabled />
           </Form.Item>
-          <Form.Item 
-            name="jmx_exporter_urls" 
-            label="JMX Exporter URLs"
-            extra="多个 Broker 的 JMX Exporter 地址，逗号分隔"
-          >
+          <Form.Item name="jmx_exporter_urls" label="JMX Exporter URLs" extra="多个 Broker 的 JMX Exporter 地址，逗号分隔">
             <Input placeholder="例如：http://broker1:7071,http://broker2:7071,http://broker3:7071" />
           </Form.Item>
           <Form.Item name="description" label="描述">
@@ -225,7 +198,6 @@ const ClusterList: React.FC = () => {
         </Form>
       )
     }
-    
     return (
       <Form form={form} layout="vertical">
         <Form.Item name="cluster_name" label="集群名称" rules={[{ required: true, message: '请输入集群名称' }]}>
@@ -235,107 +207,63 @@ const ClusterList: React.FC = () => {
           <Input placeholder="例如：kafka1:9092,kafka2:9092,kafka3:9092" />
         </Form.Item>
         <Form.Item name="auth_type" label="认证类型" rules={[{ required: true, message: '请选择认证类型' }]}>
-          <Select onChange={(value) => setAuthType(value)}>
+          <Select onChange={(value) => { setAuthType(value); form.setFieldsValue({ auth_type: value }) }}>
             <Select.Option value="plaintext">PLAINTEXT（无认证）</Select.Option>
             <Select.Option value="scram">SASL（用户名密码）</Select.Option>
             <Select.Option value="kerberos">Kerberos</Select.Option>
           </Select>
         </Form.Item>
-
-      {authType === 'scram' && (
-        <>
-          <Form.Item name="scram_username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input placeholder="Kafka 用户名" />
-          </Form.Item>
-          <Form.Item name="scram_password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
-            <Input.Password placeholder="Kafka 密码" />
-          </Form.Item>
-          <Form.Item 
-            name="scram_mechanism" 
-            label="SASL 机制" 
-            initialValue="PLAIN"
-            extra="PLAIN: 简单用户名密码；SCRAM-SHA-256/512: 带哈希的安全认证"
-          >
-            <Select>
-              <Select.Option value="PLAIN">PLAIN</Select.Option>
-              <Select.Option value="SCRAM-SHA-256">SCRAM-SHA-256</Select.Option>
-              <Select.Option value="SCRAM-SHA-512">SCRAM-SHA-512</Select.Option>
-            </Select>
-          </Form.Item>
-        </>
-      )}
-
-      {authType === 'kerberos' && (
-        <>
-          <Form.Item 
-            name="kerberos_principal" 
-            label="Principal" 
-            rules={[{ required: true, message: '请输入 Principal' }]}
-            extra="格式：user@REALM 或 user/hostname@REALM"
-          >
-            <Input placeholder="例如：kafka-client/node01@EXAMPLE.COM" />
-          </Form.Item>
-          <Form.Item 
-            name="kerberos_service_name" 
-            label="Service Name" 
-            initialValue="kafka"
-          >
-            <Input placeholder="默认：kafka" />
-          </Form.Item>
-          <Form.Item 
-            name="krb5_content" 
-            label="krb5.conf 配置" 
-            rules={[{ required: true, message: '请填写 krb5.conf 配置内容' }]}
-            extra="请粘贴 krb5.conf 文件的完整内容"
-          >
-            <Input.TextArea 
-              rows={10} 
-              placeholder={`[libdefaults]
-  default_realm = EXAMPLE.COM
-  dns_lookup_realm = false
-  dns_lookup_kdc = false
-
-[realms]
-  EXAMPLE.COM = {
-    kdc = kdc.example.com
-    admin_server = kdc.example.com
-  }`}
-            />
-          </Form.Item>
-          <Form.Item 
-            label="Keytab 文件" 
-            required
-          >
-            <Upload
-              beforeUpload={handleKeytabUpload}
-              accept=".keytab"
-              maxCount={1}
-              fileList={keytabFile ? [keytabFile as any] : []}
-              onRemove={() => {
-                setKeytabFile(null)
-                setKeytabTempId('')
-              }}
-            >
-              <Button icon={<UploadOutlined />} loading={uploadingKeytab}>
-                {uploadingKeytab ? '上传中...' : '选择 Keytab 文件'}
-              </Button>
-            </Upload>
-            {keytabTempId && <span style={{ marginLeft: 8, color: 'var(--color-success)', fontSize: 12 }}>已上传</span>}
-          </Form.Item>
-        </>
-      )}
-
-      <Form.Item 
-        name="jmx_exporter_urls" 
-        label="JMX Exporter URLs"
-        extra="多个 Broker 的 JMX Exporter 地址，逗号分隔"
-      >
-        <Input placeholder="例如：http://broker1:7071,http://broker2:7071,http://broker3:7071" />
-      </Form.Item>
-      <Form.Item name="description" label="描述">
-        <Input.TextArea rows={3} placeholder="集群用途说明" />
-      </Form.Item>
-    </Form>
+        {authType === 'scram' && (
+          <>
+            <Form.Item name="scram_username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
+              <Input placeholder="Kafka 用户名" />
+            </Form.Item>
+            <Form.Item name="scram_password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
+              <Input.Password placeholder="Kafka 密码" />
+            </Form.Item>
+            <Form.Item name="scram_mechanism" label="SASL 机制" initialValue="PLAIN" extra="PLAIN: 简单用户名密码；SCRAM-SHA-256/512: 带哈希的安全认证">
+              <Select>
+                <Select.Option value="PLAIN">PLAIN</Select.Option>
+                <Select.Option value="SCRAM-SHA-256">SCRAM-SHA-256</Select.Option>
+                <Select.Option value="SCRAM-SHA-512">SCRAM-SHA-512</Select.Option>
+              </Select>
+            </Form.Item>
+          </>
+        )}
+        {authType === 'kerberos' && (
+          <>
+            <Form.Item name="kerberos_principal" label="Principal" rules={[{ required: true, message: '请输入 Principal' }]} extra="格式：user@REALM 或 user/hostname@REALM">
+              <Input placeholder="例如：kafka-client/node01@EXAMPLE.COM" />
+            </Form.Item>
+            <Form.Item name="kerberos_service_name" label="Service Name" initialValue="kafka">
+              <Input placeholder="默认：kafka" />
+            </Form.Item>
+            <Form.Item name="krb5_content" label="krb5.conf 配置" rules={[{ required: true, message: '请填写 krb5.conf 配置内容' }]} extra="请粘贴 krb5.conf 文件的完整内容">
+              <Input.TextArea rows={10} placeholder={`[libdefaults]\n  default_realm = EXAMPLE.COM\n\n[realms]\n  EXAMPLE.COM = {\n    kdc = kdc.example.com\n  }`} />
+            </Form.Item>
+            <Form.Item label="Keytab 文件" required>
+              <Upload
+                beforeUpload={handleKeytabUpload}
+                accept=".keytab"
+                maxCount={1}
+                fileList={keytabFile ? [keytabFile as any] : []}
+                onRemove={() => { setKeytabFile(null); setKeytabTempId('') }}
+              >
+                <Button icon={<UploadOutlined />} loading={uploadingKeytab}>
+                  {uploadingKeytab ? '上传中...' : '选择 Keytab 文件'}
+                </Button>
+              </Upload>
+              {keytabTempId && <span style={{ marginLeft: 8, color: 'var(--color-success)', fontSize: 12 }}>已上传</span>}
+            </Form.Item>
+          </>
+        )}
+        <Form.Item name="jmx_exporter_urls" label="JMX Exporter URLs" extra="多个 Broker 的 JMX Exporter 地址，逗号分隔">
+          <Input placeholder="例如：http://broker1:7071,http://broker2:7071,http://broker3:7071" />
+        </Form.Item>
+        <Form.Item name="description" label="描述">
+          <Input.TextArea rows={3} placeholder="集群用途说明" />
+        </Form.Item>
+      </Form>
     )
   }
 
@@ -355,52 +283,92 @@ const ClusterList: React.FC = () => {
         </div>
       </div>
 
-      {/* 统计卡片 */}
-      <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
-        <Col xs={12} sm={6}>
-          <Card size="small" className="stat-card">
-            <Statistic title="集群总数" value={total} prefix={<ClusterOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--brand-primary)' }} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card size="small" className="stat-card">
-            <Statistic title="活跃集群" value={clusters.filter(c => c.status === 'active').length}
-              prefix={<CheckCircleOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-success)' }} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card size="small" className="stat-card">
-            <Statistic title="SCRAM 集群"
-              value={clusters.filter(c => c.sasl_mechanism === 'SCRAM-SHA-256' || c.sasl_mechanism === 'SCRAM-SHA-512').length}
-              prefix={<LockOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-info)' }} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card size="small" className="stat-card">
-            <Statistic title="JMX 已配置"
-              value={clusters.filter(c => c.jmx_exporter_urls).length}
-              prefix={<SafetyCertificateOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--brand-accent)' }} />
-          </Card>
-        </Col>
-      </Row>
-      
-      <Table
-        columns={columns}
-        dataSource={clusters}
-        rowKey="cluster_id"
-        loading={loading}
-        pagination={{
-          current: page,
-          pageSize,
-          total,
-          onChange: (p, ps) => { setPage(p); setPageSize(ps) },
-        }}
-      />
+      {/* Stat cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, marginBottom: 20 }}>
+        <StatCard label="CLUSTER TOTAL" value={total} />
+        <StatCard label="PLAINTEXT" value={plaintextCount} />
+        <StatCard label="SCRAM" value={scramCount} subtitle="SHA-256 / SHA-512" />
+        <StatCard label="KERBEROS" value={kerberosCount} subtitle="GSSAPI auth" />
+        <StatCard label="JMX CONFIGURED" value={`${jmxCount}/${total}`} valueColor={jmxCount === total ? '#10b981' : undefined} />
+      </div>
 
+      {/* Search */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+        <SearchBar value={searchText} onChange={setSearchText} placeholder="搜索集群名称或服务器地址..." />
+      </div>
+
+      {/* Card Grid */}
+      <div className="cluster-card-grid">
+        {filteredClusters.map(cluster => {
+          const health = getHealthStatus(cluster.cluster_id) as 'healthy' | 'warning' | 'error' | 'unknown'
+          const stats = statsClusters.find(c => c.cluster_id === cluster.cluster_id)
+          const hasJMX = !!cluster.jmx_exporter_urls
+          const isError = health === 'error'
+          return (
+            <div key={cluster.cluster_id} className={`cluster-bento-card${isError ? ' cluster-bento-card--error' : ''}`}>
+              <div className="cluster-bento-card-inner">
+                {/* Header: health dot + name + tags */}
+                <div className="cluster-card-header">
+                  <HealthDot status={health} />
+                  <span className="cluster-card-name">{cluster.cluster_name}</span>
+                </div>
+                <div className="cluster-card-tags">
+                  <LabelTag
+                    text={cluster.status === 'active' ? 'ACTIVE' : 'DISABLED'}
+                    color={cluster.status === 'active' ? 'green' : 'orange'}
+                  />
+                  <LabelTag
+                    text={cluster.auth_type?.toUpperCase() || 'NONE'}
+                    color={authTypeToColor(cluster.auth_type)}
+                  />
+                </div>
+                {/* Bootstrap servers */}
+                <div className="cluster-card-servers text-mono">
+                  {cluster.bootstrap_servers}
+                </div>
+                {/* Stats footer: Brokers / Topics / JMX */}
+                <div className="cluster-card-stats">
+                  <div className="cluster-card-stat">
+                    <div className="cluster-card-stat-value">{stats?.broker_count ?? '—'}</div>
+                    <div className="cluster-card-stat-label">Brokers</div>
+                  </div>
+                  <div className="cluster-card-stat">
+                    <div className="cluster-card-stat-value">{stats?.topic_count ?? '—'}</div>
+                    <div className="cluster-card-stat-label">Topics</div>
+                  </div>
+                  <div className="cluster-card-stat">
+                    <div className={`cluster-card-stat-value${hasJMX ? ' cluster-card-stat-value--success' : ''}`}>{hasJMX ? 'JMX' : '—'}</div>
+                    <div className="cluster-card-stat-label">{hasJMX ? 'Ready' : 'N/A'}</div>
+                  </div>
+                </div>
+                {/* Action buttons */}
+                <div className="cluster-card-footer">
+                  {isSuperAdmin && (
+                    <div className="cluster-card-actions">
+                      <button className="bento-action-btn" onClick={() => handleEdit(cluster)}>
+                        <EditOutlined /> 编辑
+                      </button>
+                      <button className="bento-action-btn bento-action-btn--danger" onClick={() => handleDelete(cluster.cluster_id)}>
+                        <DeleteOutlined /> 删除
+                      </button>
+                    </div>
+                  )}
+                  <button className="bento-action-btn bento-action-btn--brand" onClick={() => window.location.hash = `/monitor?clusterId=${cluster.cluster_id}`}>
+                    监控
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+        {filteredClusters.length === 0 && !loading && (
+          <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 48, color: 'var(--text-3)' }}>
+            暂无集群数据
+          </div>
+        )}
+      </div>
+
+      {/* Create Modal */}
       <Modal
         title="创建集群"
         open={isModalVisible}
@@ -426,11 +394,12 @@ const ClusterList: React.FC = () => {
         </div>
       </Modal>
 
+      {/* Edit Modal */}
       <Modal
         title="编辑集群"
         open={isEditModal}
         onOk={handleUpdate}
-        onCancel={() => { 
+        onCancel={() => {
           setIsEditModal(false)
           setEditingCluster(null)
           form.resetFields()

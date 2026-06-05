@@ -89,7 +89,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	var req auth.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{
-			"error": "invalid request: " + err.Error(),
+			"error": "invalid request",
 		})
 		return
 	}
@@ -196,6 +196,10 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		if err := h.blacklistCache.AddToBlacklist(c.Request.Context(), token); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke token"})
 			return
+		}
+		// 同时将 refresh_token 加入黑名单，防止登出后旧 refresh_token 被复用
+		if refreshToken, err := c.Cookie("refresh_token"); err == nil && refreshToken != "" {
+			_ = h.blacklistCache.AddToBlacklist(c.Request.Context(), refreshToken)
 		}
 	}
 

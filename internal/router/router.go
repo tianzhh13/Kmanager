@@ -12,6 +12,7 @@ import (
 	"kafka-management-platform/internal/service/audit"
 	"kafka-management-platform/internal/service/auth"
 	"kafka-management-platform/internal/service/cluster"
+	"kafka-management-platform/internal/service/dashboard"
 	"kafka-management-platform/internal/service/monitor"
 	"kafka-management-platform/internal/service/scram"
 	"kafka-management-platform/internal/service/topic"
@@ -35,6 +36,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	// 全局中间件
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
+	r.Use(middleware.ErrorHandlerMiddleware())
 	r.Use(middleware.CORSMiddleware())
 	r.Use(middleware.SecurityHeadersMiddleware())
 	r.Use(middleware.HSTSMiddleware())
@@ -81,27 +83,32 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	// 初始化 Service
 	authSvc := auth.NewService(userRepo, jwtSvc)
 	permissionSvc := auth.NewPermissionService(userRepo, clusterUserRepo, topicPermRepo)
-	clusterSvc := cluster.NewService(clusterRepo, clusterUserRepo, encryptionSvc, kerberosMgr)
+	clusterSvc := cluster.NewService(clusterRepo, clusterUserRepo, topicRepo, encryptionSvc, kerberosMgr)
 	topicSvc := topic.NewService(topicRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
 	aclSvc := acl.NewService(aclRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
 	auditSvc := audit.NewService(auditLogRepo)
 	monitorSvc := monitor.NewService(clusterRepo, encryptionSvc, vmClient, kerberosBaseDir)
 	userSvc := user.NewService(userRepo)
 	scramSvc := scram.NewService(scramUserRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
+	dashboardSvc := dashboard.NewService(clusterRepo, topicRepo, userRepo, monitorSvc)
 
 	// 初始化 Token 黑名单缓存
 	memoryCache := cache.NewMemoryCache(24 * time.Hour)
 	tokenBlacklistCache := cache.NewTokenBlacklistCache(memoryCache)
 
+	// 初始化用户状态缓存（30 秒 TTL，减少认证中间件数据库查询）
+	userStatusCache := cache.NewMemoryCache(30 * time.Second)
+
 	// 初始化 Handler
 	authHandler := handler.NewAuthHandler(authSvc, tokenBlacklistCache, auditSvc, &cfg.Cookie)
-	clusterHandler := handler.NewClusterHandler(clusterSvc, permissionSvc)
+	clusterHandler := handler.NewClusterHandler(clusterSvc, permissionSvc, monitorSvc)
 	topicHandler := handler.NewTopicHandler(topicSvc, permissionSvc)
 	aclHandler := handler.NewACLHandler(aclSvc)
 	userHandler := handler.NewUserHandler(userSvc)
 	auditLogHandler := audit.NewHandler(auditSvc)
 	monitorHandler := monitor.NewHandler(monitorSvc)
 	scramUserHandler := handler.NewScramUserHandler(scramSvc)
+	dashboardHandler := handler.NewDashboardHandler(dashboardSvc)
 
 	// 初始化中间件
 	permissionMiddleware := middleware.NewPermissionMiddleware(permissionSvc)
@@ -134,9 +141,17 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			authGroup.POST("/refresh", authHandler.RefreshToken)
 		}
 
+		// SSO 路由预留（501 Not Implemented）
+		v1.GET("/auth/sso/:provider", func(c *gin.Context) {
+			c.JSON(501, gin.H{"error": "SSO not implemented"})
+		})
+		v1.GET("/auth/sso/:provider/callback", func(c *gin.Context) {
+			c.JSON(501, gin.H{"error": "SSO not implemented"})
+		})
+
 		// 需要认证的路由
 		authenticated := v1.Group("")
-		authenticated.Use(middleware.AuthMiddleware(jwtSvc, tokenBlacklistCache, userRepo))
+		authenticated.Use(middleware.AuthMiddleware(jwtSvc, tokenBlacklistCache, userRepo, userStatusCache))
 		authenticated.Use(auditMiddleware.Audit()) // 启用审计中间件
 		{
 			// 当前用户信息
@@ -144,12 +159,16 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			// 退出登录
 			authenticated.POST("/auth/logout", authHandler.Logout)
 
+			// Dashboard 路由
+			authenticated.GET("/dashboard/overview", dashboardHandler.GetOverview)
+
 			// 用户路由 - 需要超级管理员权限
 			users := authenticated.Group("/users")
 			users.Use(permissionMiddleware.RequireSuperAdmin())
 			{
 				users.GET("", userHandler.ListUsers)
 				users.POST("", userHandler.CreateUser)
+				users.GET("/stats", userHandler.GetStats)
 				users.GET("/:id", userHandler.GetUser)
 				users.PUT("/:id", userHandler.UpdateUser)
 				users.DELETE("/:id", userHandler.DeleteUser)

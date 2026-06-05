@@ -7,31 +7,32 @@ import zhCN from 'antd/locale/zh_CN'
 import App from './App'
 import { store } from './store'
 import './index.css'
+import './components/bento/styles.css'
 
-// Brand theme tokens — Sky Blue + Coral Accent
+// Brand theme tokens — Coral Accent + Stone Neutral
 const theme = {
   token: {
-    // Primary color — Sky Blue
-    colorPrimary: '#0ea5e9',
-    colorPrimaryHover: '#0284c7',
-    colorPrimaryActive: '#0369a1',
-    colorPrimaryBg: 'rgba(14, 165, 233, 0.06)',
-    colorPrimaryBorder: 'rgba(14, 165, 233, 0.20)',
+    // Primary color — Coral
+    colorPrimary: '#f97316',
+    colorPrimaryHover: '#ea580c',
+    colorPrimaryActive: '#c2410c',
+    colorPrimaryBg: 'rgba(249, 115, 22, 0.06)',
+    colorPrimaryBorder: 'rgba(249, 115, 22, 0.20)',
 
-    // Text
-    colorText: '#1e293b',
-    colorTextSecondary: '#64748b',
-    colorTextTertiary: '#94a3b8',
-    colorTextHeading: '#0f172a',
+    // Text — Stone (warm gray)
+    colorText: '#1c1917',
+    colorTextSecondary: '#57534e',
+    colorTextTertiary: '#a8a29e',
+    colorTextHeading: '#0c0a09',
 
     // Background
     colorBgContainer: '#ffffff',
-    colorBgLayout: '#fafbfc',
+    colorBgLayout: '#faf9f7',
     colorBgElevated: '#ffffff',
 
-    // Border
-    colorBorder: '#e5eaf0',
-    colorBorderSecondary: '#f1f5f9',
+    // Border — warm gray
+    colorBorder: '#ebe8e3',
+    colorBorderSecondary: '#f3f1ee',
 
     // Radius
     borderRadius: 8,
@@ -44,32 +45,32 @@ const theme = {
     fontSizeSM: 12,
     fontSizeLG: 16,
 
-    // Shadow
-    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.03), 0 1px 2px rgba(0, 0, 0, 0.02)',
-    boxShadowSecondary: '0 8px 24px rgba(14, 165, 233, 0.07), 0 2px 8px rgba(0, 0, 0, 0.03)',
+    // Shadow — warm tinted
+    boxShadow: '0 1px 3px rgba(120, 80, 40, 0.04), 0 1px 2px rgba(120, 80, 40, 0.03)',
+    boxShadowSecondary: '0 8px 24px rgba(249, 115, 22, 0.07), 0 2px 8px rgba(120, 80, 40, 0.04)',
 
-    // Motion
-    motionDurationFast: '0.15s',
-    motionDurationMid: '0.25s',
+    // Motion — spring physics
+    motionDurationFast: '0.18s',
+    motionDurationMid: '0.32s',
 
     // Link
-    colorLink: '#0ea5e9',
-    colorLinkHover: '#0284c7',
-    colorLinkActive: '#0369a1',
+    colorLink: '#f97316',
+    colorLinkHover: '#ea580c',
+    colorLinkActive: '#c2410c',
   },
   components: {
     Table: {
-      headerBg: '#fafbfc',
-      headerColor: '#64748b',
-      headerSortActiveBg: '#f1f5f9',
-      rowHoverBg: 'rgba(14, 165, 233, 0.04)',
-      borderColor: '#f1f5f9',
+      headerBg: '#faf9f7',
+      headerColor: '#57534e',
+      headerSortActiveBg: '#f3f1ee',
+      rowHoverBg: 'rgba(249, 115, 22, 0.04)',
+      borderColor: '#f3f1ee',
     },
     Card: {
       paddingLG: 20,
     },
     Button: {
-      primaryShadow: '0 1px 3px rgba(14, 165, 233, 0.25)',
+      primaryShadow: '0 1px 3px rgba(249, 115, 22, 0.25)',
     },
     Menu: {
       itemBorderRadius: 8,
@@ -80,7 +81,7 @@ const theme = {
       borderRadiusLG: 16,
     },
     Select: {
-      optionSelectedBg: 'rgba(14, 165, 233, 0.06)',
+      optionSelectedBg: 'rgba(249, 115, 22, 0.06)',
     },
     Tag: {
       borderRadiusSM: 6,

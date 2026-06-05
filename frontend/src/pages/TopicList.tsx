@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Space, Modal, Form, Input, Select, InputNumber, message, Tag, Spin, Row, Col, Statistic, Card } from 'antd'
-import { PlusOutlined, DeleteOutlined, SyncOutlined, LineChartOutlined, SettingOutlined, TeamOutlined, FileTextOutlined, PartitionOutlined } from '@ant-design/icons'
+import { Button, Modal, Form, Input, Select, InputNumber, message, Spin } from 'antd'
+import { PlusOutlined, DeleteOutlined, SyncOutlined, SettingOutlined, TeamOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchTopics, createTopic, deleteTopic } from '../store/slices/topicSlice'
 import { clusterAPI } from '../services/cluster'
 import { topicService } from '../services/topic'
+import { StatCard, LabelTag, SearchBar } from '../components/bento'
 
 interface Cluster {
   cluster_id: number
@@ -21,7 +22,7 @@ const TopicList: React.FC = () => {
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [form] = Form.useForm()
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(20)
+  const [pageSize] = useState(20)
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [clustersLoading, setClustersLoading] = useState(false)
   const [selectedClusterId, setSelectedClusterId] = useState<number | null>(null)
@@ -33,6 +34,7 @@ const TopicList: React.FC = () => {
   const [configLoading, setConfigLoading] = useState(false)
   const [cgData, setCgData] = useState<any[]>([])
   const [cgLoading, setCgLoading] = useState(false)
+  const [searchText, setSearchText] = useState('')
 
   useEffect(() => {
     const loadClusters = async () => {
@@ -99,8 +101,8 @@ const TopicList: React.FC = () => {
         dispatch(fetchTopics({ page, pageSize, clusterId: selectedClusterId }))
       }
     } catch (error: any) {
-      const errorMsg = typeof error === 'string' 
-        ? error 
+      const errorMsg = typeof error === 'string'
+        ? error
         : (error?.message || error?.error || '创建失败')
       message.error(errorMsg)
     }
@@ -119,8 +121,8 @@ const TopicList: React.FC = () => {
           await dispatch(deleteTopic({ topicName, clusterId: selectedClusterId })).unwrap()
           message.success('删除成功')
         } catch (error: any) {
-          const errorMsg = typeof error === 'string' 
-            ? error 
+          const errorMsg = typeof error === 'string'
+            ? error
             : (error?.message || error?.error || '删除失败')
           message.error(errorMsg)
         }
@@ -182,62 +184,25 @@ const TopicList: React.FC = () => {
     }
   }
 
-  const columns = [
-    {
-      title: 'Topic 名称',
-      dataIndex: 'topic_name',
-      key: 'topic_name',
-      render: (text: string) => (
-        <Space>
-          <a onClick={() => handleGoToMonitor(text)} style={{ fontWeight: 500 }}>{text}</a>
-          <Button
-            type="link"
-            size="small"
-            icon={<LineChartOutlined />}
-            onClick={() => handleGoToMonitor(text)}
-            title="查看监控"
-            style={{ padding: 0 }}
-          />
-        </Space>
-      )
-    },
-    { title: '分区数', dataIndex: 'partitions', key: 'partitions', width: 100,
-      render: (v: number) => <Tag>{v}</Tag>,
-    },
-    { title: '副本数', dataIndex: 'replication_factor', key: 'replication_factor', width: 100,
-      render: (v: number) => <Tag>{v}</Tag>,
-    },
-    { title: '创建时间', dataIndex: 'created_at', key: 'created_at',
-      render: (text: string) => <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{text}</span>,
-    },
-    { title: '操作', key: 'action', width: 280,
-      render: (_: any, record: any) => (
-        <Space>
-          <Button type="link" icon={<SettingOutlined />} onClick={() => handleViewConfig(record.topic_name)}>
-            配置
-          </Button>
-          <Button type="link" icon={<TeamOutlined />} onClick={() => handleViewConsumerGroups(record.topic_name)}>
-            消费组
-          </Button>
-          {!isNormalUser && (
-            <Button type="link" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.topic_name)}>
-              删除
-            </Button>
-          )}
-        </Space>
-      )
-    },
-  ]
+  const totalPartitions = topics.reduce((sum: number, t: any) => sum + (t.partitions || 0), 0)
+  const totalReplicas = topics.reduce((sum: number, t: any) => sum + ((t.partitions || 0) * (t.replication_factor || 0)), 0)
+
+  const filteredTopics = topics.filter((t: any) =>
+    !searchText || t.topic_name.toLowerCase().includes(searchText.toLowerCase())
+  )
+
+  const [gridCols] = useState('2fr 1fr 1fr 1fr 220px')
 
   return (
     <div>
+      {/* Header */}
       <div className="page-header">
         <div className="page-header-row">
           <div>
             <h1>Topic 管理</h1>
             <div className="page-accent-line" />
           </div>
-          <Space>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <Select
               placeholder="选择集群"
               value={selectedClusterId}
@@ -251,17 +216,17 @@ const TopicList: React.FC = () => {
             </Select>
             {!isNormalUser && (
               <>
-                <Button 
-                  icon={<SyncOutlined spin={syncing} />} 
+                <Button
+                  icon={<SyncOutlined spin={syncing} />}
                   onClick={handleSync}
                   loading={syncing}
                   disabled={!selectedClusterId}
                 >
                   同步
                 </Button>
-                <Button 
-                  type="primary" 
-                  icon={<PlusOutlined />} 
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
                   onClick={handleOpenModal}
                   disabled={!selectedClusterId}
                 >
@@ -269,50 +234,115 @@ const TopicList: React.FC = () => {
                 </Button>
               </>
             )}
-          </Space>
+          </div>
         </div>
       </div>
 
-      {/* 统计卡片 */}
-      <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
-        <Col xs={12} sm={8}>
-          <Card size="small" className="stat-card">
-            <Statistic title="Topic 总数" value={total} prefix={<FileTextOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-success)' }} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8}>
-          <Card size="small" className="stat-card">
-            <Statistic title="总分区数"
-              value={topics.reduce((sum, t: any) => sum + (t.partitions || 0), 0)}
-              prefix={<PartitionOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--color-info)' }} />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8}>
-          <Card size="small" className="stat-card">
-            <Statistic title="总副本数"
-              value={topics.reduce((sum, t: any) => sum + ((t.partitions || 0) * (t.replication_factor || 0)), 0)}
-              prefix={<TeamOutlined />}
-              valueStyle={{ fontWeight: 700, fontSize: 22, color: 'var(--brand-accent)' }} />
-          </Card>
-        </Col>
-      </Row>
-      
-      <Table
-        columns={columns}
-        dataSource={topics}
-        rowKey="id"
-        loading={loading}
-        pagination={{
-          current: page,
-          pageSize,
-          total,
-          onChange: (p, ps) => { setPage(p); setPageSize(ps) },
-        }}
-        locale={{ emptyText: selectedClusterId ? '暂无 Topic 数据' : '请先选择集群' }}
-      />
+      {/* Stat cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
+        <StatCard label="TOPIC TOTAL" value={total} />
+        <StatCard label="PARTITIONS" value={totalPartitions} />
+        <StatCard label="REPLICAS" value={totalReplicas} />
+      </div>
 
+      {/* Search */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+        <SearchBar value={searchText} onChange={setSearchText} placeholder="搜索 Topic 名称..." />
+      </div>
+
+      {/* Table header */}
+      <div className="bento-table-header" style={{ gridTemplateColumns: gridCols }}>
+        <div>Topic Name</div>
+        <div style={{ textAlign: 'center' }}>Partitions</div>
+        <div style={{ textAlign: 'center' }}>Replicas</div>
+        <div style={{ textAlign: 'center' }}>Created</div>
+        <div style={{ textAlign: 'right' }}>Actions</div>
+      </div>
+
+      {/* Table body */}
+      <div className="bento-table-body">
+        {!selectedClusterId && (
+          <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-3)' }}>
+            请先选择集群
+          </div>
+        )}
+        {selectedClusterId && loading && (
+          <div style={{ textAlign: 'center', padding: 48 }}>
+            <Spin />
+          </div>
+        )}
+        {selectedClusterId && !loading && filteredTopics.map((topic: any) => (
+          <div key={topic.id || topic.topic_name} className="bento-table-row" style={{ gridTemplateColumns: gridCols, cursor: 'pointer' }} onClick={() => handleGoToMonitor(topic.topic_name)}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ color: 'var(--brand)', fontSize: 14, fontWeight: 700 }}>&#9830;</span>
+              <a
+                onClick={(e) => { e.stopPropagation(); handleGoToMonitor(topic.topic_name) }}
+                style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-1)', fontFamily: 'var(--font-mono)' }}
+              >
+                {topic.topic_name}
+              </a>
+              {topic.topic_name.startsWith('__') && (
+                <LabelTag text="SYSTEM" color="warning" />
+              )}
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <LabelTag text={String(topic.partitions)} color={topic.topic_name.startsWith('__') ? 'warning' : 'orange'} />
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <LabelTag text={String(topic.replication_factor)} color={topic.topic_name.startsWith('__') ? 'warning' : 'green'} />
+            </div>
+            <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-3)' }}>{topic.created_at}</div>
+            <div style={{ textAlign: 'right', display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+              <button className="bento-action-btn" onClick={(e) => { e.stopPropagation(); handleViewConfig(topic.topic_name) }}>
+                <SettingOutlined /> 配置
+              </button>
+              <button className="bento-action-btn" onClick={(e) => { e.stopPropagation(); handleViewConsumerGroups(topic.topic_name) }}>
+                <TeamOutlined /> 消费组
+              </button>
+              {!isNormalUser && !topic.topic_name.startsWith('__') && (
+                <button className="bento-action-btn bento-action-btn--danger" onClick={(e) => { e.stopPropagation(); handleDelete(topic.topic_name) }}>
+                  <DeleteOutlined /> 删除
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+        {selectedClusterId && !loading && filteredTopics.length === 0 && (
+          <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-3)' }}>暂无 Topic 数据</div>
+        )}
+      </div>
+
+      {/* Pagination */}
+      {total > pageSize && (
+        <div className="bento-pagination">
+          <span className="bento-pagination-info">
+            Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}
+          </span>
+          <div className="bento-pagination-buttons">
+            <button
+              className="bento-pagination-btn"
+              disabled={page <= 1}
+              onClick={() => setPage(page - 1)}
+            >&larr;</button>
+            {Array.from({ length: Math.ceil(total / pageSize) }, (_, i) => i + 1)
+              .filter(p => Math.abs(p - page) <= 2)
+              .map(p => (
+                <button
+                  key={p}
+                  className={`bento-pagination-btn${p === page ? ' bento-pagination-btn--active' : ''}`}
+                  onClick={() => setPage(p)}
+                >{p}</button>
+              ))}
+            <button
+              className="bento-pagination-btn"
+              disabled={page >= Math.ceil(total / pageSize)}
+              onClick={() => setPage(page + 1)}
+            >&rarr;</button>
+          </div>
+        </div>
+      )}
+
+      {/* Create Topic Modal */}
       <Modal
         title="创建 Topic"
         open={isModalVisible}
@@ -341,6 +371,7 @@ const TopicList: React.FC = () => {
         </Form>
       </Modal>
 
+      {/* Config Modal */}
       <Modal
         title={`Topic 配置 - ${configTopicName}`}
         open={configModalVisible}
@@ -349,23 +380,28 @@ const TopicList: React.FC = () => {
         width={720}
       >
         <Spin spinning={configLoading}>
-          <Table
-            dataSource={configData}
-            rowKey="name"
-            size="small"
-            pagination={false}
-            scroll={{ y: 500 }}
-            columns={[
-              { title: '配置项', dataIndex: 'name', width: 220, render: (v: string) => <span className="text-mono" style={{ fontSize: 12 }}>{v}</span> },
-              { title: '值', dataIndex: 'value', width: 200, render: (v: string) => <span className="text-mono" style={{ fontSize: 12 }}>{v}</span> },
-              { title: '来源', dataIndex: 'source', width: 140 },
-              { title: '只读', dataIndex: 'read_only', width: 70, render: (v: boolean) => <Tag color={v ? 'default' : 'success'}>{v ? '是' : '否'}</Tag> },
-              { title: '默认值', dataIndex: 'is_default', width: 70, render: (v: boolean) => <Tag color={v ? 'default' : 'processing'}>{v ? '是' : '否'}</Tag> },
-            ]}
-          />
+          <div className="bento-table-header" style={{ gridTemplateColumns: '2fr 2fr 1.2fr 80px 80px' }}>
+            <div>配置项</div>
+            <div>值</div>
+            <div>来源</div>
+            <div style={{ textAlign: 'center' }}>只读</div>
+            <div style={{ textAlign: 'center' }}>默认</div>
+          </div>
+          <div className="bento-table-body">
+            {configData.map((item: any) => (
+              <div key={item.name} className="bento-table-row" style={{ gridTemplateColumns: '2fr 2fr 1.2fr 80px 80px' }}>
+                <span className="text-mono" style={{ fontSize: 12 }}>{item.name}</span>
+                <span className="text-mono" style={{ fontSize: 12 }}>{item.value}</span>
+                <span style={{ fontSize: 12 }}>{item.source}</span>
+                <LabelTag text={item.read_only ? '是' : '否'} color={item.read_only ? 'neutral' : 'green'} />
+                <LabelTag text={item.is_default ? '是' : '否'} color={item.is_default ? 'neutral' : 'blue'} />
+              </div>
+            ))}
+          </div>
         </Spin>
       </Modal>
 
+      {/* Consumer Groups Modal */}
       <Modal
         title={`消费组 - ${configTopicName}`}
         open={cgModalVisible}
@@ -375,22 +411,22 @@ const TopicList: React.FC = () => {
       >
         <Spin spinning={cgLoading}>
           {cgData.length === 0 && !cgLoading && (
-            <div style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 40, fontSize: 13 }}>该 Topic 暂无消费组</div>
+            <div style={{ textAlign: 'center', color: 'var(--text-3)', padding: 40, fontSize: 13 }}>该 Topic 暂无消费组</div>
           )}
-          <Table
-            dataSource={cgData}
-            rowKey="group_id"
-            size="small"
-            pagination={false}
-            columns={[
-              { title: '消费组', dataIndex: 'group_id', render: (v: string) => <span className="text-mono" style={{ fontSize: 12 }}>{v}</span> },
-              { title: '状态', dataIndex: 'state', width: 140, render: (state: string) => {
-                const colorMap: Record<string, string> = { Stable: 'success', Empty: 'warning', Dead: 'error' }
-                return <Tag color={colorMap[state] || 'default'}>{state}</Tag>
-              }},
-              { title: '成员数', dataIndex: 'member_count', width: 80 },
-            ]}
-          />
+          <div className="bento-table-header" style={{ gridTemplateColumns: '2fr 1fr 100px' }}>
+            <div>消费组</div>
+            <div>状态</div>
+            <div style={{ textAlign: 'center' }}>成员数</div>
+          </div>
+          <div className="bento-table-body">
+            {cgData.map((item: any) => (
+              <div key={item.group_id} className="bento-table-row" style={{ gridTemplateColumns: '2fr 1fr 100px' }}>
+                <span className="text-mono" style={{ fontSize: 12, fontWeight: 600 }}>{item.group_id}</span>
+                <LabelTag text={item.state} color={item.state === 'Stable' ? 'green' : item.state === 'Empty' ? 'orange' : 'red'} />
+                <span style={{ textAlign: 'center', fontSize: 13 }}>{item.member_count}</span>
+              </div>
+            ))}
+          </div>
         </Spin>
       </Modal>
     </div>
