@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Card, Statistic, Alert } from 'antd'
+import { Alert } from 'antd'
 import ReactECharts from 'echarts-for-react'
 import dayjs, { Dayjs } from 'dayjs'
 import DashboardGrid from '../../components/DashboardGrid'
 import { usePromqlOverrides, useDefaultPromqls, PromqlDebugger, PromqlDebugButton } from '../../components/PromqlDebugger'
 import { ClusterMetricsResponse, metricsAPI, BatchQueryItem, extractInstantValue } from '../../services/metrics'
 import { buildLineChartOption, formatBytesForChart } from '../../utils/chartOptions'
+import { StatCard } from '../../components/bento'
 
 interface ClusterOption {
   cluster_id: number
@@ -264,44 +265,44 @@ const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, q
         rowHeight={50}
         items={[
           // ===== 第一行：集群基础信息（始终显示） =====
-          { i: 'broker-count', x: 0, y: 0, w: 3, h: 2, component: <Card size="small"><Statistic title="Broker 数量" value={metrics?.broker_count || 0} valueStyle={{ color: '#1890ff', fontSize: 20 }} /></Card> },
-          { i: 'topic-count', x: 3, y: 0, w: 3, h: 2, component: <Card size="small"><Statistic title="Topic 数量" value={metrics?.topic_count || 0} valueStyle={{ color: '#52c41a', fontSize: 20 }} /></Card> },
-          { i: 'partition-total', x: 6, y: 0, w: 3, h: 2, component: <Card size="small"><Statistic title="分区总数" value={overviewStats.topicPartitionTotal} valueStyle={{ fontSize: 20 }} /></Card> },
-          { i: 'cg-count', x: 9, y: 0, w: 3, h: 2, component: <Card size="small"><Statistic title="消费组数量" value={metrics?.consumer_groups?.length || 0} valueStyle={{ color: '#faad14', fontSize: 20 }} /></Card> },
+          { i: 'broker-count', x: 0, y: 0, w: 3, h: 2, component: <StatCard label="BROKER COUNT" value={metrics?.broker_count || 0} color="#3b82f6" /> },
+          { i: 'topic-count', x: 3, y: 0, w: 3, h: 2, component: <StatCard label="TOPIC COUNT" value={metrics?.topic_count || 0} color="#10b981" /> },
+          { i: 'partition-total', x: 6, y: 0, w: 3, h: 2, component: <StatCard label="PARTITION TOTAL" value={overviewStats.topicPartitionTotal} /> },
+          { i: 'cg-count', x: 9, y: 0, w: 3, h: 2, component: <StatCard label="CONSUMER GROUPS" value={metrics?.consumer_groups?.length || 0} color="#f59e0b" /> },
 
           // ===== 第二行：消费组 + ISR 信息（AdminClient 指标，始终显示） =====
-          { i: 'cg-member', x: 0, y: 2, w: 3, h: 2, component: <Card size="small"><Statistic title="消费组成员" value={overviewStats.consumerGroupMemberTotal} valueStyle={{ fontSize: 20 }} /></Card> },
-          { i: 'isr-total', x: 3, y: 2, w: 3, h: 2, component: <Card size="small"><Statistic title="ISR 总数" value={overviewStats.isrTotal} valueStyle={{ color: '#52c41a', fontSize: 20 }} /></Card> },
-          { i: 'non-preferred', x: 6, y: 2, w: 3, h: 2, component: <Card size="small"><Statistic title="非首选 Leader" value={overviewStats.nonPreferredLeaderCount} valueStyle={{ color: overviewStats.nonPreferredLeaderCount > 0 ? '#f5222d' : '#52c41a', fontSize: 20 }} /></Card> },
-          { i: 'total-lag', x: 9, y: 2, w: 3, h: 2, component: <Card size="small"><Statistic title="总消费延迟" value={metrics?.consumer_groups?.reduce((sum, g) => sum + g.total_lag, 0) || 0} valueStyle={{ color: '#f5222d', fontSize: 20 }} /></Card> },
+          { i: 'cg-member', x: 0, y: 2, w: 3, h: 2, component: <StatCard label="CG MEMBERS" value={overviewStats.consumerGroupMemberTotal} /> },
+          { i: 'isr-total', x: 3, y: 2, w: 3, h: 2, component: <StatCard label="ISR TOTAL" value={overviewStats.isrTotal} color="#10b981" /> },
+          { i: 'non-preferred', x: 6, y: 2, w: 3, h: 2, component: <StatCard label="NON-PREFERRED LEADER" value={overviewStats.nonPreferredLeaderCount} color={overviewStats.nonPreferredLeaderCount > 0 ? '#ef4444' : '#10b981'} /> },
+          { i: 'total-lag', x: 9, y: 2, w: 3, h: 2, component: <StatCard label="TOTAL LAG" value={metrics?.consumer_groups?.reduce((sum, g) => sum + g.total_lag, 0) || 0} color="#ef4444" /> },
 
           // ===== JMX Stat 卡片（仅 JMX Exporter 可用时显示） =====
           ...(jmxAvailable ? [
-          { i: 'active-broker', x: 0, y: 4, w: 3, h: 2, component: <Card size="small"><Statistic title="活跃 Broker" value={overviewStats.activeBrokerCount} valueStyle={{ fontSize: 20 }} /></Card> },
-          { i: 'fenced-broker', x: 3, y: 4, w: 3, h: 2, component: <Card size="small"><Statistic title="不健康 Broker" value={overviewStats.fencedBrokerCount} valueStyle={{ color: overviewStats.fencedBrokerCount === 0 ? '#52c41a' : '#f5222d', fontSize: 20 }} /></Card> },
-          { i: 'replica-imbalance', x: 6, y: 4, w: 3, h: 2, component: <Card size="small"><Statistic title="副本不均衡" value={overviewStats.preferredReplicaImbalance} valueStyle={{ color: overviewStats.preferredReplicaImbalance === 0 ? '#52c41a' : '#f5222d', fontSize: 20 }} /></Card> },
-          { i: 'offline-partitions', x: 9, y: 4, w: 3, h: 2, component: <Card size="small"><Statistic title="离线分区数" value={overviewStats.offlinePartitionsCount} valueStyle={{ color: overviewStats.offlinePartitionsCount === 0 ? '#52c41a' : '#f5222d', fontSize: 20 }} /></Card> },
-          { i: 'active-controller', x: 0, y: 6, w: 3, h: 2, component: <Card size="small"><Statistic title="活跃 Controller" value={overviewStats.activeControllerCount} valueStyle={{ color: overviewStats.activeControllerCount === 1 ? '#52c41a' : '#f5222d', fontSize: 20 }} /></Card> },
-          { i: 'offline-log-dir', x: 3, y: 6, w: 3, h: 2, component: <Card size="small"><Statistic title="离线日志目录" value={overviewStats.offlineLogDirectoryCount} valueStyle={{ color: overviewStats.offlineLogDirectoryCount === 0 ? '#52c41a' : '#f5222d', fontSize: 20 }} /></Card> },
-          { i: 'log-dir-status', x: 6, y: 6, w: 3, h: 2, component: <Card size="small"><Statistic title="日志目录状态" value={overviewStats.logDirectoryOffline === 0 ? '正常' : '异常'} valueStyle={{ color: overviewStats.logDirectoryOffline === 0 ? '#52c41a' : '#f5222d', fontSize: 16 }} /></Card> },
-          { i: 'invalid-magic', x: 9, y: 6, w: 3, h: 2, component: <Card size="small"><Statistic title="无效 Magic" value={dataCorruptionStats.invalidMagicNumber} valueStyle={{ color: dataCorruptionStats.invalidMagicNumber === 0 ? '#52c41a' : '#f5222d', fontSize: 20 }} /></Card> },
-          { i: 'invalid-crc', x: 0, y: 8, w: 3, h: 2, component: <Card size="small"><Statistic title="无效 CRC" value={dataCorruptionStats.invalidCrc} valueStyle={{ color: dataCorruptionStats.invalidCrc === 0 ? '#52c41a' : '#f5222d', fontSize: 20 }} /></Card> },
-          { i: 'invalid-offset', x: 3, y: 8, w: 3, h: 2, component: <Card size="small"><Statistic title="无效 Offset" value={dataCorruptionStats.invalidOffset} valueStyle={{ color: dataCorruptionStats.invalidOffset === 0 ? '#52c41a' : '#f5222d', fontSize: 20 }} /></Card> },
+          { i: 'active-broker', x: 0, y: 4, w: 3, h: 2, component: <StatCard label="ACTIVE BROKER" value={overviewStats.activeBrokerCount} /> },
+          { i: 'fenced-broker', x: 3, y: 4, w: 3, h: 2, component: <StatCard label="UNHEALTHY BROKER" value={overviewStats.fencedBrokerCount} color={overviewStats.fencedBrokerCount === 0 ? '#10b981' : '#ef4444'} /> },
+          { i: 'replica-imbalance', x: 6, y: 4, w: 3, h: 2, component: <StatCard label="REPLICA IMBALANCE" value={overviewStats.preferredReplicaImbalance} color={overviewStats.preferredReplicaImbalance === 0 ? '#10b981' : '#ef4444'} /> },
+          { i: 'offline-partitions', x: 9, y: 4, w: 3, h: 2, component: <StatCard label="OFFLINE PARTITIONS" value={overviewStats.offlinePartitionsCount} color={overviewStats.offlinePartitionsCount === 0 ? '#10b981' : '#ef4444'} /> },
+          { i: 'active-controller', x: 0, y: 6, w: 3, h: 2, component: <StatCard label="ACTIVE CONTROLLER" value={overviewStats.activeControllerCount} color={overviewStats.activeControllerCount === 1 ? '#10b981' : '#ef4444'} /> },
+          { i: 'offline-log-dir', x: 3, y: 6, w: 3, h: 2, component: <StatCard label="OFFLINE LOG DIR" value={overviewStats.offlineLogDirectoryCount} color={overviewStats.offlineLogDirectoryCount === 0 ? '#10b981' : '#ef4444'} /> },
+          { i: 'log-dir-status', x: 6, y: 6, w: 3, h: 2, component: <StatCard label="LOG DIR STATUS" value={overviewStats.logDirectoryOffline === 0 ? '正常' : '异常'} color={overviewStats.logDirectoryOffline === 0 ? '#10b981' : '#ef4444'} /> },
+          { i: 'invalid-magic', x: 9, y: 6, w: 3, h: 2, component: <StatCard label="INVALID MAGIC" value={dataCorruptionStats.invalidMagicNumber} color={dataCorruptionStats.invalidMagicNumber === 0 ? '#10b981' : '#ef4444'} /> },
+          { i: 'invalid-crc', x: 0, y: 8, w: 3, h: 2, component: <StatCard label="INVALID CRC" value={dataCorruptionStats.invalidCrc} color={dataCorruptionStats.invalidCrc === 0 ? '#10b981' : '#ef4444'} /> },
+          { i: 'invalid-offset', x: 3, y: 8, w: 3, h: 2, component: <StatCard label="INVALID OFFSET" value={dataCorruptionStats.invalidOffset} color={dataCorruptionStats.invalidOffset === 0 ? '#10b981' : '#ef4444'} /> },
           ] : []),
 
           // ===== 趋势图 =====
           // AdminClient 趋势图（始终显示）
-          { i: 'lag-chart', x: 0, y: 10, w: 12, h: 6, component: <Card size="small"><ReactECharts key={`lag-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('消费者组总 Lag', lagTrendData, '#f5222d')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'produce-rate', x: 0, y: 16, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`pr-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('集群生产速率', produceRateData, '#1890ff', 'msg/s')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'consume-rate', x: 6, y: 16, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`cr-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('集群消费速率', consumeRateData, '#52c41a', 'msg/s')} style={{ height: 250 }} notMerge={true} /></Card> },
+          { i: 'lag-chart', x: 0, y: 10, w: 12, h: 6, component: <div className="bento-card"><div className="bento-card-inner" style={{ padding: 16 }}><ReactECharts key={`lag-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('消费者组总 Lag', lagTrendData, '#ef4444')} style={{ height: 250 }} notMerge={true} /></div></div> },
+          { i: 'produce-rate', x: 0, y: 16, w: 6, h: 6, component: <div className="bento-card"><div className="bento-card-inner" style={{ padding: 16 }}><ReactECharts key={`pr-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('集群生产速率', produceRateData, '#3b82f6', 'msg/s')} style={{ height: 250 }} notMerge={true} /></div></div> },
+          { i: 'consume-rate', x: 6, y: 16, w: 6, h: 6, component: <div className="bento-card"><div className="bento-card-inner" style={{ padding: 16 }}><ReactECharts key={`cr-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('集群消费速率', consumeRateData, '#10b981', 'msg/s')} style={{ height: 250 }} notMerge={true} /></div></div> },
           // JMX 趋势图（仅 JMX Exporter 可用时显示）
           ...(jmxAvailable ? [
-          { i: 'bytes-in', x: 0, y: 22, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`bi-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('字节流入速率', bytesInData, '#52c41a', 'bytes/s', formatBytesForChart)} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'bytes-out', x: 6, y: 22, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`bo-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('字节流出速率', bytesOutData, '#faad14', 'bytes/s', formatBytesForChart)} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'messages-in', x: 0, y: 28, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`mi-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('消息流入速率', messagesInRateData, '#722ed1', 'msg/s')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'bytes-rejected', x: 6, y: 28, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`br-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('拒绝字节速率', bytesRejectedData, '#f5222d', 'bytes/s', formatBytesForChart)} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'failed-produce', x: 0, y: 34, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`fp-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('生产请求失败率', failedProduceRateData, '#f5222d', '次/秒')} style={{ height: 250 }} notMerge={true} /></Card> },
-          { i: 'failed-fetch', x: 6, y: 34, w: 6, h: 6, component: <Card size="small"><ReactECharts key={`ff-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('拉取请求失败率', failedFetchRateData, '#faad14', '次/秒')} style={{ height: 250 }} notMerge={true} /></Card> },
+          { i: 'bytes-in', x: 0, y: 22, w: 6, h: 6, component: <div className="bento-card"><div className="bento-card-inner" style={{ padding: 16 }}><ReactECharts key={`bi-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('字节流入速率', bytesInData, '#10b981', 'bytes/s', formatBytesForChart)} style={{ height: 250 }} notMerge={true} /></div></div> },
+          { i: 'bytes-out', x: 6, y: 22, w: 6, h: 6, component: <div className="bento-card"><div className="bento-card-inner" style={{ padding: 16 }}><ReactECharts key={`bo-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('字节流出速率', bytesOutData, '#f59e0b', 'bytes/s', formatBytesForChart)} style={{ height: 250 }} notMerge={true} /></div></div> },
+          { i: 'messages-in', x: 0, y: 28, w: 6, h: 6, component: <div className="bento-card"><div className="bento-card-inner" style={{ padding: 16 }}><ReactECharts key={`mi-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('消息流入速率', messagesInRateData, '#8b5cf6', 'msg/s')} style={{ height: 250 }} notMerge={true} /></div></div> },
+          { i: 'bytes-rejected', x: 6, y: 28, w: 6, h: 6, component: <div className="bento-card"><div className="bento-card-inner" style={{ padding: 16 }}><ReactECharts key={`br-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('拒绝字节速率', bytesRejectedData, '#ef4444', 'bytes/s', formatBytesForChart)} style={{ height: 250 }} notMerge={true} /></div></div> },
+          { i: 'failed-produce', x: 0, y: 34, w: 6, h: 6, component: <div className="bento-card"><div className="bento-card-inner" style={{ padding: 16 }}><ReactECharts key={`fp-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('生产请求失败率', failedProduceRateData, '#ef4444', '次/秒')} style={{ height: 250 }} notMerge={true} /></div></div> },
+          { i: 'failed-fetch', x: 6, y: 34, w: 6, h: 6, component: <div className="bento-card"><div className="bento-card-inner" style={{ padding: 16 }}><ReactECharts key={`ff-${cluster?.cluster_id}-${quickRange}`} option={buildLineChartOption('拉取请求失败率', failedFetchRateData, '#f59e0b', '次/秒')} style={{ height: 250 }} notMerge={true} /></div></div> },
           ] : []),
         ]}
       />

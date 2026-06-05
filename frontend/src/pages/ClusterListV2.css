@@ -1,0 +1,154 @@
+/* ============================================
+   ClusterList V2 — Card Grid Layout
+   Double-Bezel cluster cards with health dots
+   ============================================ */
+
+/* --- Card Grid --- */
+.cluster-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 16px;
+}
+
+/* --- Cluster Card (Double-Bezel wrapper) --- */
+.cluster-bento-card {
+  background: linear-gradient(145deg, rgba(249, 115, 22, 0.06), transparent 60%);
+  border-radius: var(--bezel-outer-radius, 20px);
+  padding: var(--bezel-outer-padding, 3px);
+  transition: transform 320ms var(--smooth, 0.3s ease),
+              box-shadow 320ms var(--smooth, 0.3s ease);
+}
+
+.cluster-bento-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(249, 115, 22, 0.10),
+              0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+/* --- Card Inner --- */
+.cluster-bento-card-inner {
+  background: var(--card, #fff);
+  border-radius: var(--bezel-inner-radius, 17px);
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6),
+              0 1px 3px rgba(0, 0, 0, 0.04);
+  min-height: 160px;
+}
+
+/* --- Card Header (health dot + name + tag) --- */
+.cluster-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cluster-card-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-1, #1c1917);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Servers --- */
+.cluster-card-servers {
+  font-size: 13px;
+  color: var(--text-2, #57534e);
+  letter-spacing: -0.2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Description --- */
+.cluster-card-desc {
+  font-size: 13px;
+  color: var(--text-3, #a8a29e);
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* --- Footer (status + actions) --- */
+.cluster-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 10px;
+  padding-bottom: 4px;
+}
+
+.cluster-card-status {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-success, #10b981);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* --- Tags row --- */
+.cluster-card-tags {
+  display: flex;
+  gap: 6px;
+  margin-top: -4px;
+}
+
+/* --- Stats footer (Brokers / Topics / JMX) --- */
+.cluster-card-stats {
+  display: flex;
+  border-top: 1px solid var(--border, rgba(0, 0, 0, 0.06));
+  margin-top: 4px;
+}
+
+.cluster-card-stat {
+  flex: 1;
+  padding: 14px 12px;
+  text-align: center;
+}
+
+.cluster-card-stat + .cluster-card-stat {
+  border-left: 1px solid var(--border, rgba(0, 0, 0, 0.06));
+}
+
+.cluster-card-stat-value {
+  font-size: 20px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-1, #0c0a09);
+}
+
+.cluster-card-stat-value--success {
+  color: var(--success, #10b981);
+}
+
+.cluster-card-stat-label {
+  font-size: 11px;
+  color: var(--text-3, #a8a29e);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* --- Error variant --- */
+.cluster-bento-card--error {
+  background: linear-gradient(145deg, rgba(239, 68, 68, 0.08), transparent 60%);
+}
+
+.cluster-bento-card--error .cluster-bento-card-inner {
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+/* --- Card Actions --- */
+.cluster-card-actions {
+  display: flex;
+  gap: 6px;
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -680,4 +681,401 @@ func (h *Handler) BatchQueryMetrics(c *gin.Context) {
 	wg.Wait()
 
 	c.JSON(200, gin.H{"results": results})
+}
+
+// ============================================================
+// Dashboard VM Data（Dashboard / Cluster 扩展复用）
+// ============================================================
+
+// DashboardVMData Dashboard 所需的 VM 聚合数据
+// 注意：此类型与 dashboard 包中的同名类型字段一致，但分属不同包，
+// dashboard 包通过 VMAggregator 接口引用此类型
+type DashboardVMData struct {
+	TotalBrokers          int
+	TotalPartitions       int
+	CGTotal               int
+	CGLag                 int64
+	BrokerCountByCluster  map[int64]int     // cluster_id -> current broker_count
+	BrokerMaxByCluster    map[int64]int     // cluster_id -> max broker_count in 7d
+	HealthStatusByCluster map[int64]string  // cluster_id -> health_status
+}
+
+// dashboardVMCache Dashboard VM 聚合数据缓存（30s TTL）
+var dashboardVMCache = cache.NewMemoryCache(30 * time.Second)
+
+const dashboardVMCacheKey = "monitor:dashboard_vm_data"
+
+// GetDashboardVMData 获取 Dashboard 所需的 VM 聚合数据
+// 一次调用内并发查 6 组 PromQL，30s 内存缓存
+func (s *Service) GetDashboardVMData(ctx context.Context, clusterIDs []int64) *DashboardVMData {
+	if s.vmClient == nil || !s.vmClient.IsEnabled() {
+		return nil
+	}
+
+	// 检查缓存
+	if cached, err := dashboardVMCache.Get(ctx, dashboardVMCacheKey); err == nil && cached != nil {
+		if data, ok := cached.([]byte); ok {
+			var d DashboardVMData
+			if err := json.Unmarshal(data, &d); err == nil {
+				return &d
+			}
+		}
+	}
+
+	// 构建 cluster_id 正则选择器
+	idStrs := make([]string, len(clusterIDs))
+	for i, id := range clusterIDs {
+		idStrs[i] = strconv.FormatInt(id, 10)
+	}
+	clusterSelector := strings.Join(idStrs, "|")
+
+	// 6 组并发 PromQL 查询
+	type queryResult struct {
+		name string
+		data []byte
+		err  error
+	}
+
+	queries := map[string]string{
+		"brokers_total":    fmt.Sprintf(`sum(kafka_broker_info{app="kmanager",cluster_id=~"%s"}) by (cluster_id)`, clusterSelector),
+		"broker_max_7d":    fmt.Sprintf(`max by (cluster_id) (max_over_time(kafka_broker_count{app="kmanager",cluster_id=~"%s"}[7d]))`, clusterSelector),
+		"broker_current":   fmt.Sprintf(`max by (cluster_id) (kafka_broker_count{app="kmanager",cluster_id=~"%s"})`, clusterSelector),
+		"partitions_total": fmt.Sprintf(`sum(kafka_topic_partition_replicas{app="kmanager",cluster_id=~"%s"})`, clusterSelector),
+		"cg_total":         `count(count(kafka_consumergroup_lag{app="kmanager"}) by (group,cluster_id))`,
+		"cg_lag":           fmt.Sprintf(`sum(kafka_consumergroup_lag{app="kmanager",cluster_id=~"%s"})`, clusterSelector),
+	}
+
+	resultCh := make(chan queryResult, len(queries))
+	for name, query := range queries {
+		go func(n, q string) {
+			data, err := s.vmClient.QueryInstant(ctx, q)
+			resultCh <- queryResult{name: n, data: data, err: err}
+		}(name, query)
+	}
+
+	results := make(map[string][]byte)
+	for i := 0; i < len(queries); i++ {
+		r := <-resultCh
+		if r.err != nil {
+			log.Printf("[Monitor] VM query '%s' failed: %v", r.name, r.err)
+			continue
+		}
+		results[r.name] = r.data
+	}
+
+	// 解析结果
+	brokersByCluster := parseVMValuesByClusterInt64(results["brokers_total"])
+	brokerMaxByCluster := parseVMValuesByClusterInt64(results["broker_max_7d"])
+	brokerCurrentByCluster := parseVMValuesByClusterInt64(results["broker_current"])
+
+	totalBrokers := 0
+	for _, bc := range brokersByCluster {
+		totalBrokers += bc
+	}
+	totalPartitions := 0
+	if data, ok := results["partitions_total"]; ok {
+		totalPartitions = sumVMInstantValues(data)
+	}
+	cgTotal := 0
+	if data, ok := results["cg_total"]; ok {
+		cgTotal = sumVMInstantValues(data)
+	}
+	var cgLag int64
+	if data, ok := results["cg_lag"]; ok {
+		cgLag = int64(sumVMInstantValues(data))
+	}
+
+	// 逐集群判定健康状态
+	// 逻辑：7天内 broker 数最大值 vs 当前值，差值为0→healthy，差值>0→error（有 broker 掉线）
+	// 不依赖 JMX 指标（URP/offline），因为不是所有集群都配 JMX
+	healthByCluster := make(map[int64]string, len(clusterIDs))
+	for _, id := range clusterIDs {
+		maxBroker, hasMax := brokerMaxByCluster[id]
+		currentBroker, hasCurrent := brokerCurrentByCluster[id]
+		if hasMax && hasCurrent {
+			if currentBroker < maxBroker {
+				healthByCluster[id] = "error" // 有 broker 掉线
+			} else {
+				healthByCluster[id] = "healthy"
+			}
+		} else if hasCurrent {
+			// 有当前值但无7d历史（新集群），无法比较，用当前值有数据即认为可达
+			healthByCluster[id] = "healthy"
+		} else if _, hasBrokerInfo := brokersByCluster[id]; hasBrokerInfo {
+			// kafka_broker_info 有数据但 kafka_broker_count 无，说明有旧指标残留
+			healthByCluster[id] = "healthy"
+		} else {
+			healthByCluster[id] = "unknown"
+		}
+	}
+
+	vmData := &DashboardVMData{
+		TotalBrokers:           totalBrokers,
+		TotalPartitions:        totalPartitions,
+		CGTotal:                cgTotal,
+		CGLag:                  cgLag,
+		BrokerCountByCluster:   brokersByCluster,
+		BrokerMaxByCluster:     brokerMaxByCluster,
+		HealthStatusByCluster:  healthByCluster,
+	}
+
+	// 写入缓存
+	if data, err := json.Marshal(vmData); err == nil {
+		_ = dashboardVMCache.Set(ctx, dashboardVMCacheKey, data, 0)
+	}
+
+	return vmData
+}
+
+// GetClustersHealthStatus 批量获取集群健康状态（供 Cluster Handler 复用）
+func (s *Service) GetClustersHealthStatus(ctx context.Context, clusterIDs []int64) map[int64]string {
+	result := make(map[int64]string, len(clusterIDs))
+
+	if s.vmClient != nil && s.vmClient.IsEnabled() {
+		vmData := s.GetDashboardVMData(ctx, clusterIDs)
+		if vmData != nil {
+			for _, id := range clusterIDs {
+				if status, ok := vmData.HealthStatusByCluster[id]; ok {
+					result[id] = status
+				} else {
+					result[id] = "unknown"
+				}
+			}
+		}
+	}
+
+	// VM 未覆盖或返回 unknown 的集群，用 AdminClient 补充
+	// 如果 AdminClient 能连上说明集群可达 → healthy
+	needFallback := false
+	for _, id := range clusterIDs {
+		if result[id] == "" || result[id] == "unknown" {
+			needFallback = true
+			break
+		}
+	}
+	if needFallback {
+		adminCounts := s.GetAdminClientBrokerCounts(ctx, clusterIDs)
+		for _, id := range clusterIDs {
+			if result[id] == "" || result[id] == "unknown" {
+				if _, ok := adminCounts[id]; ok {
+					result[id] = "healthy"
+				} else {
+					result[id] = "unknown"
+				}
+			}
+		}
+	}
+
+	// 填充默认值
+	for _, id := range clusterIDs {
+		if result[id] == "" {
+			result[id] = "unknown"
+		}
+	}
+
+	return result
+}
+
+// GetAdminClientBrokerCounts 通过 AdminClient 直接查询各集群的 broker 数量
+// 不依赖 VM，当 VM 不可达时作为兜底数据源
+func (s *Service) GetAdminClientBrokerCounts(ctx context.Context, clusterIDs []int64) map[int64]int {
+	result := make(map[int64]int, len(clusterIDs))
+
+	type brokerResult struct {
+		clusterID int64
+		count     int
+	}
+	ch := make(chan brokerResult, len(clusterIDs))
+
+	for _, id := range clusterIDs {
+		go func(clusterID int64) {
+			meta, err := s.kafkaExporter.GetClusterMetadata(ctx, clusterID)
+			if err == nil && meta != nil {
+				ch <- brokerResult{clusterID: clusterID, count: len(meta.Brokers)}
+			} else {
+				ch <- brokerResult{clusterID: clusterID, count: 0}
+			}
+		}(id)
+	}
+
+	for i := 0; i < len(clusterIDs); i++ {
+		r := <-ch
+		if r.count > 0 {
+			result[r.clusterID] = r.count
+		}
+	}
+	return result
+}
+
+// GetAdminClientPartitionCounts 通过 AdminClient 直接查询各集群的分区总数
+// 不依赖 VM，当 VM 不可达时作为兜底数据源
+func (s *Service) GetAdminClientPartitionCounts(ctx context.Context, clusterIDs []int64) int {
+	total := 0
+	ch := make(chan int, len(clusterIDs))
+
+	for _, id := range clusterIDs {
+		go func(clusterID int64) {
+			partitionCount, err := s.GetTopicPartitionCount(ctx, clusterID)
+			if err != nil {
+				ch <- 0
+				return
+			}
+			count := 0
+			for _, pc := range partitionCount {
+				count += int(pc)
+			}
+			ch <- count
+		}(id)
+	}
+
+	for i := 0; i < len(clusterIDs); i++ {
+		total += <-ch
+	}
+	return total
+}
+
+// GetAdminClientConsumerGroupStats 通过 AdminClient 直接查询消费者组统计
+// 不依赖 VM，当 VM 不可达时作为兜底数据源
+func (s *Service) GetAdminClientConsumerGroupStats(ctx context.Context, clusterIDs []int64) (totalGroups int, totalLag int64) {
+	type cgResult struct {
+		groups int
+		lag    int64
+	}
+	ch := make(chan cgResult, len(clusterIDs))
+
+	for _, id := range clusterIDs {
+		go func(clusterID int64) {
+			groups, err := s.GetConsumerGroupLags(ctx, clusterID)
+			if err != nil {
+				ch <- cgResult{}
+				return
+			}
+			var lag int64
+			for _, g := range groups {
+				lag += g.TotalLag
+			}
+			ch <- cgResult{groups: len(groups), lag: lag}
+		}(id)
+	}
+
+	for i := 0; i < len(clusterIDs); i++ {
+		r := <-ch
+		totalGroups += r.groups
+		totalLag += r.lag
+	}
+	return
+}
+
+// GetBrokerCountByCluster 批量获取集群 broker 数量
+func (s *Service) GetBrokerCountByCluster(ctx context.Context, clusterIDs []int64) map[int64]int {
+	result := make(map[int64]int, len(clusterIDs))
+
+	if s.vmClient != nil && s.vmClient.IsEnabled() {
+		vmData := s.GetDashboardVMData(ctx, clusterIDs)
+		if vmData != nil {
+			for _, id := range clusterIDs {
+				if bc, ok := vmData.BrokerCountByCluster[id]; ok {
+					result[id] = bc
+				}
+			}
+		}
+	}
+
+	// VM 没覆盖到的集群，用 AdminClient 直连补充
+	if len(result) < len(clusterIDs) {
+		adminCounts := s.GetAdminClientBrokerCounts(ctx, clusterIDs)
+		for _, id := range clusterIDs {
+			if _, ok := result[id]; !ok {
+				if ac, ok2 := adminCounts[id]; ok2 {
+					result[id] = ac
+				}
+			}
+		}
+	}
+
+	return result
+}
+
+// sumVMInstantValues 解析 VM instant query返回值并求和
+func sumVMInstantValues(data []byte) int {
+	if data == nil {
+		return 0
+	}
+	var result vmQueryResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return 0
+	}
+	total := 0
+	for _, r := range result.Data.Result {
+		if len(r.Value) >= 2 {
+			if v, err := parseFloatValue(r.Value[1]); err == nil {
+				total += int(v)
+			}
+		}
+	}
+	return total
+}
+
+// parseVMValuesByClusterStr 解析 VM instant query，按 cluster_id(string) 返回 map
+func parseVMValuesByClusterStr(data []byte) map[string]float64 {
+	result := make(map[string]float64)
+	if data == nil {
+		return result
+	}
+	var vmResult vmQueryResult
+	if err := json.Unmarshal(data, &vmResult); err != nil {
+		return result
+	}
+	for _, r := range vmResult.Data.Result {
+		cid := r.Metric["cluster_id"]
+		if cid == "" {
+			continue
+		}
+		if len(r.Value) >= 2 {
+			if v, err := parseFloatValue(r.Value[1]); err == nil {
+				result[cid] = v
+			}
+		}
+	}
+	return result
+}
+
+// parseVMValuesByClusterInt64 解析 VM instant query，按 cluster_id(int64) 返回 map
+func parseVMValuesByClusterInt64(data []byte) map[int64]int {
+	result := make(map[int64]int)
+	if data == nil {
+		return result
+	}
+	var vmResult vmQueryResult
+	if err := json.Unmarshal(data, &vmResult); err != nil {
+		return result
+	}
+	for _, r := range vmResult.Data.Result {
+		cidStr := r.Metric["cluster_id"]
+		if cidStr == "" {
+			continue
+		}
+		cid, err := strconv.ParseInt(cidStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		if len(r.Value) >= 2 {
+			if v, err := parseFloatValue(r.Value[1]); err == nil {
+				result[cid] = int(v)
+			}
+		}
+	}
+	return result
+}
+
+// parseFloatValue 解析 VM value 字段为 float64
+func parseFloatValue(v interface{}) (float64, error) {
+	switch val := v.(type) {
+	case string:
+		return strconv.ParseFloat(val, 64)
+	case float64:
+		return val, nil
+	default:
+		return 0, fmt.Errorf("cannot parse %v", v)
+	}
 }

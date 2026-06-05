@@ -1,0 +1,1 @@
+import{j as t}from"./index-DIMuLxcK.js";const e=({status:e,pulse:s=!0,className:o="",style:a})=>{const l=["bento-health-dot",`bento-health-dot--${e}`,!s&&"bento-health-dot--no-pulse",o].filter(Boolean).join(" ");return t.jsx("span",{className:l,style:a})};export{e as H};

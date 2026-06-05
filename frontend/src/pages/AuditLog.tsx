@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Card, Table, Select, Input, DatePicker, Button, Space, Tag, message, Modal } from 'antd'
+import { Modal, Select, Button, message, DatePicker } from 'antd'
 import { DownloadOutlined, EyeOutlined } from '@ant-design/icons'
 import { auditLogAPI } from '../services/auditLog'
-import type { ColumnsType } from 'antd/es/table'
+import { SearchBar, LabelTag } from '../components/bento'
 
 const { RangePicker } = DatePicker
-const { Search } = Input
 
 interface AuditLog {
   log_id: number
@@ -27,14 +26,14 @@ const AuditLogPage: React.FC = () => {
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(20)
-  
+  const [pageSize] = useState(20)
+
   const [username, setUsername] = useState<string>('')
   const [action, setAction] = useState<string>('')
   const [resourceType, setResourceType] = useState<string>('')
   const [status, setStatus] = useState<string>('')
   const [dateRange, setDateRange] = useState<[string, string] | null>(null)
-  
+
   const [detailVisible, setDetailVisible] = useState(false)
   const [currentLog, setCurrentLog] = useState<AuditLog | null>(null)
 
@@ -78,8 +77,8 @@ const AuditLogPage: React.FC = () => {
     setPage(1)
   }
 
-  const handleDateChange = (dates: any, dateStrings: [string, string]) => {
-    setDateRange(dates ? dateStrings : null)
+  const handleDateChange = (_dates: any, dateStrings: [string, string]) => {
+    setDateRange(dateStrings[0] ? dateStrings : null)
     setPage(1)
   }
 
@@ -115,74 +114,19 @@ const AuditLogPage: React.FC = () => {
     setDetailVisible(true)
   }
 
-  const getStatusColor = (status: string) => {
-    return status === 'success' ? 'success' : 'error'
+  const getActionColor = (act: string): 'green' | 'orange' | 'red' | 'purple' | 'pink' | 'blue' | 'neutral' => {
+    if (act.includes('login')) return 'green'
+    if (act.includes('logout')) return 'neutral'
+    if (act.includes('create')) return 'green'
+    if (act.includes('update')) return 'orange'
+    if (act.includes('delete')) return 'red'
+    if (act.includes('grant')) return 'purple'
+    if (act.includes('revoke')) return 'pink'
+    if (act.includes('sync')) return 'blue'
+    return 'neutral'
   }
 
-  const getActionColor = (action: string) => {
-    const colorMap: Record<string, string> = {
-      login: 'processing', logout: 'default', create: 'success', update: 'warning',
-      delete: 'error', grant: 'purple', revoke: 'magenta'
-    }
-    for (const key of Object.keys(colorMap)) {
-      if (action.includes(key)) return colorMap[key]
-    }
-    return 'default'
-  }
-
-  const columns: ColumnsType<AuditLog> = [
-    {
-      title: '时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      width: 180,
-      render: (text: string) => <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{new Date(text).toLocaleString('zh-CN')}</span>,
-    },
-    {
-      title: '用户',
-      dataIndex: 'username',
-      key: 'username',
-      width: 120,
-      render: (text: string) => <strong style={{ color: 'var(--text-heading)' }}>{text}</strong>,
-    },
-    {
-      title: '操作',
-      dataIndex: 'action',
-      key: 'action',
-      width: 150,
-      render: (text: string) => <Tag color={getActionColor(text)}>{text}</Tag>
-    },
-    { title: '资源类型', dataIndex: 'resource', key: 'resource', width: 100 },
-    { title: '资源ID', dataIndex: 'resource_id', key: 'resource_id', width: 100,
-      render: (text: string) => <span className="text-mono" style={{ fontSize: 12 }}>{text}</span>,
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      width: 80,
-      render: (text: string) => (
-        <Tag color={getStatusColor(text)}>{text === 'success' ? '成功' : '失败'}</Tag>
-      )
-    },
-    {
-      title: 'IP地址',
-      dataIndex: 'ip_address',
-      key: 'ip_address',
-      width: 140,
-      render: (text: string) => <span className="text-mono" style={{ fontSize: 12 }}>{text}</span>,
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 80,
-      render: (_, record) => (
-        <Button type="link" icon={<EyeOutlined />} onClick={() => showDetail(record)}>
-          详情
-        </Button>
-      )
-    }
-  ]
+  const gridCols = '150px 80px 280px 70px 60px 65px 1fr 70px'
 
   const actionOptions = [
     { label: '登录', value: 'login' },
@@ -236,75 +180,118 @@ const AuditLogPage: React.FC = () => {
 
   return (
     <div>
+      {/* Header */}
       <div className="page-header">
-        <h1>审计日志</h1>
-        <div className="page-accent-line" />
+        <div className="page-header-row">
+          <div>
+            <h1>审计日志</h1>
+            <div className="page-accent-line" />
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="bento-action-btn" style={{ padding: '8px 16px', fontSize: 13 }} onClick={() => handleExport('csv')}>
+              <DownloadOutlined /> CSV
+            </button>
+            <button className="bento-action-btn" style={{ padding: '8px 16px', fontSize: 13 }} onClick={() => handleExport('json')}>
+              <DownloadOutlined /> JSON
+            </button>
+          </div>
+        </div>
       </div>
 
-      <Card>
-        {/* 筛选条件 */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
-          <Space wrap>
-            <Search
-              placeholder="搜索用户名"
-              onSearch={handleSearch}
-              style={{ width: 200 }}
-              allowClear
-            />
-            <Select
-              placeholder="操作类型"
-              value={action || undefined}
-              onChange={(val) => { setAction(val || ''); setPage(1) }}
-              style={{ width: 150 }}
-              options={actionOptions}
-              allowClear
-            />
-            <Select
-              placeholder="资源类型"
-              value={resourceType || undefined}
-              onChange={(val) => { setResourceType(val || ''); setPage(1) }}
-              style={{ width: 120 }}
-              options={resourceOptions}
-              allowClear
-            />
-            <Select
-              placeholder="状态"
-              value={status || undefined}
-              onChange={(val) => { setStatus(val || ''); setPage(1) }}
-              style={{ width: 100 }}
-              options={statusOptions}
-              allowClear
-            />
-            <RangePicker showTime onChange={handleDateChange} />
-            <Button onClick={handleReset}>重置</Button>
-          </Space>
-          <Space>
-            <Button icon={<DownloadOutlined />} onClick={() => handleExport('csv')}>
-              导出 CSV
-            </Button>
-            <Button icon={<DownloadOutlined />} onClick={() => handleExport('json')}>
-              导出 JSON
-            </Button>
-          </Space>
-        </div>
-
-        <Table
-          columns={columns}
-          dataSource={logs}
-          rowKey="log_id"
-          loading={loading}
-          pagination={{
-            current: page,
-            pageSize: pageSize,
-            total: total,
-            showSizeChanger: true,
-            showQuickJumper: true,
-            showTotal: (total) => `共 ${total} 条`,
-            onChange: (p, ps) => { setPage(p); setPageSize(ps) }
-          }}
+      {/* Filters */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+        <SearchBar value={username} onChange={handleSearch} placeholder="搜索用户名..." style={{ flex: '0 0 220px' }} />
+        <Select
+          placeholder="操作类型"
+          value={action || undefined}
+          onChange={(val) => { setAction(val || ''); setPage(1) }}
+          style={{ width: 150 }}
+          options={actionOptions}
+          allowClear
         />
-      </Card>
+        <Select
+          placeholder="资源类型"
+          value={resourceType || undefined}
+          onChange={(val) => { setResourceType(val || ''); setPage(1) }}
+          style={{ width: 120 }}
+          options={resourceOptions}
+          allowClear
+        />
+        <Select
+          placeholder="状态"
+          value={status || undefined}
+          onChange={(val) => { setStatus(val || ''); setPage(1) }}
+          style={{ width: 100 }}
+          options={statusOptions}
+          allowClear
+        />
+        <RangePicker showTime onChange={handleDateChange} />
+        <Button onClick={handleReset}>重置</Button>
+      </div>
 
+      {/* Table header */}
+      <div className="bento-table-header" style={{ gridTemplateColumns: gridCols }}>
+        <div>Time</div>
+        <div>User</div>
+        <div>Action</div>
+        <div>Resource</div>
+        <div>Res. ID</div>
+        <div>Status</div>
+        <div>IP Address</div>
+        <div style={{ textAlign: 'right' }}>Detail</div>
+      </div>
+
+      {/* Table body */}
+      <div className="bento-table-body">
+        {loading && <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-3)' }}>加载中...</div>}
+        {!loading && logs.map(log => (
+          <div key={log.log_id} className={`bento-table-row${log.status === 'failed' ? ' bento-table-row--failed' : ''}`} style={{ gridTemplateColumns: gridCols }}>
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{new Date(log.created_at).toLocaleString('zh-CN')}</div>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>{log.username}</div>
+            <div style={{ overflow: 'hidden', maxWidth: '100%' }}>
+              <LabelTag text={log.action} color={getActionColor(log.action)} />
+            </div>
+            <div style={{ fontSize: 12 }}>{log.resource}</div>
+            <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }}>{log.resource_id}</div>
+            <div>
+              <LabelTag text={log.status === 'success' ? '成功' : '失败'} color={log.status === 'success' ? 'green' : 'red'} />
+            </div>
+            <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }}>{log.ip_address}</div>
+            <div style={{ textAlign: 'right' }}>
+              <button className="bento-action-btn" onClick={() => showDetail(log)}>
+                <EyeOutlined /> 详情
+              </button>
+            </div>
+          </div>
+        ))}
+        {!loading && logs.length === 0 && (
+          <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-3)' }}>暂无审计日志数据</div>
+        )}
+      </div>
+
+      {/* Pagination */}
+      {total > pageSize && (
+        <div className="bento-pagination">
+          <span className="bento-pagination-info">
+            Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}
+          </span>
+          <div className="bento-pagination-buttons">
+            <button className="bento-pagination-btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>&larr;</button>
+            {Array.from({ length: Math.ceil(total / pageSize) }, (_, i) => i + 1)
+              .filter(p => Math.abs(p - page) <= 2)
+              .map(p => (
+                <button
+                  key={p}
+                  className={`bento-pagination-btn${p === page ? ' bento-pagination-btn--active' : ''}`}
+                  onClick={() => setPage(p)}
+                >{p}</button>
+              ))}
+            <button className="bento-pagination-btn" disabled={page >= Math.ceil(total / pageSize)} onClick={() => setPage(page + 1)}>&rarr;</button>
+          </div>
+        </div>
+      )}
+
+      {/* Detail Modal */}
       <Modal
         title="审计日志详情"
         open={detailVisible}
@@ -315,28 +302,28 @@ const AuditLogPage: React.FC = () => {
         {currentLog && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: '8px 16px', fontSize: 13 }}>
-              <span style={{ color: 'var(--text-tertiary)' }}>时间</span>
+              <span style={{ color: 'var(--text-3)' }}>时间</span>
               <span>{new Date(currentLog.created_at).toLocaleString('zh-CN')}</span>
-              <span style={{ color: 'var(--text-tertiary)' }}>用户</span>
+              <span style={{ color: 'var(--text-3)' }}>用户</span>
               <span><strong>{currentLog.username}</strong></span>
-              <span style={{ color: 'var(--text-tertiary)' }}>操作</span>
-              <span><Tag color={getActionColor(currentLog.action)}>{currentLog.action}</Tag></span>
-              <span style={{ color: 'var(--text-tertiary)' }}>资源类型</span>
+              <span style={{ color: 'var(--text-3)' }}>操作</span>
+              <span><LabelTag text={currentLog.action} color={getActionColor(currentLog.action)} /></span>
+              <span style={{ color: 'var(--text-3)' }}>资源类型</span>
               <span>{currentLog.resource}</span>
-              <span style={{ color: 'var(--text-tertiary)' }}>资源ID</span>
-              <span className="text-mono">{currentLog.resource_id}</span>
-              <span style={{ color: 'var(--text-tertiary)' }}>状态</span>
-              <span><Tag color={getStatusColor(currentLog.status)}>{currentLog.status === 'success' ? '成功' : '失败'}</Tag></span>
-              <span style={{ color: 'var(--text-tertiary)' }}>IP地址</span>
-              <span className="text-mono">{currentLog.ip_address}</span>
-              <span style={{ color: 'var(--text-tertiary)' }}>用户代理</span>
+              <span style={{ color: 'var(--text-3)' }}>资源ID</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{currentLog.resource_id}</span>
+              <span style={{ color: 'var(--text-3)' }}>状态</span>
+              <span><LabelTag text={currentLog.status === 'success' ? '成功' : '失败'} color={currentLog.status === 'success' ? 'green' : 'red'} /></span>
+              <span style={{ color: 'var(--text-3)' }}>IP地址</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{currentLog.ip_address}</span>
+              <span style={{ color: 'var(--text-3)' }}>用户代理</span>
               <span style={{ wordBreak: 'break-all' }}>{currentLog.user_agent}</span>
-              <span style={{ color: 'var(--text-tertiary)' }}>详情</span>
+              <span style={{ color: 'var(--text-3)' }}>详情</span>
               <span>{currentLog.details || '-'}</span>
             </div>
             {currentLog.error_msg && (
-              <div style={{ padding: '10px 12px', background: 'var(--color-error-bg)', borderRadius: 'var(--radius-md)', fontSize: 13 }}>
-                <span style={{ color: 'var(--text-tertiary)', marginRight: 8 }}>错误信息：</span>
+              <div style={{ padding: '10px 12px', background: 'rgba(239,68,68,0.06)', borderRadius: 'var(--radius-md)', fontSize: 13, border: '1px solid rgba(239,68,68,0.15)' }}>
+                <span style={{ color: 'var(--text-3)', marginRight: 8 }}>错误信息：</span>
                 <span style={{ color: 'var(--color-error)' }}>{currentLog.error_msg}</span>
               </div>
             )}

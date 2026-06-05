@@ -23,6 +23,7 @@ type TopicRepository interface {
 	ListByCluster(ctx context.Context, clusterID int64) ([]*models.Topic, error)
 	DeleteByCluster(ctx context.Context, clusterID int64) error
 	Count(ctx context.Context) (int64, error)
+	CountByCluster(ctx context.Context) (map[int64]int64, error)
 }
 
 type topicRepository struct {
@@ -187,4 +188,26 @@ func (r *topicRepository) Count(ctx context.Context) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&models.Topic{}).Count(&count).Error
 	return count, err
+}
+
+// CountByCluster 按集群统计 Topic 数量
+func (r *topicRepository) CountByCluster(ctx context.Context) (map[int64]int64, error) {
+	type result struct {
+		ClusterID int64 `json:"cluster_id"`
+		Count     int64 `json:"count"`
+	}
+	var results []result
+	err := r.db.WithContext(ctx).
+		Model(&models.Topic{}).
+		Select("cluster_id, COUNT(*) as count").
+		Group("cluster_id").
+		Find(&results).Error
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[int64]int64, len(results))
+	for _, r := range results {
+		m[r.ClusterID] = r.Count
+	}
+	return m, nil
 }
