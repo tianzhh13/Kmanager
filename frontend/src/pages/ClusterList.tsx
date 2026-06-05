@@ -221,8 +221,8 @@ const ClusterList: React.FC = () => {
             <Form.Item name="scram_password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
               <Input.Password placeholder="Kafka 密码" />
             </Form.Item>
-            <Form.Item name="scram_mechanism" label="SASL 机制" initialValue="PLAIN" extra="PLAIN: 简单用户名密码；SCRAM-SHA-256/512: 带哈希的安全认证">
-              <Select>
+            <Form.Item name="scram_mechanism" label="SASL 机制" extra="PLAIN: 简单用户名密码；SCRAM-SHA-256/512: 带哈希的安全认证">
+              <Select defaultValue="PLAIN">
                 <Select.Option value="PLAIN">PLAIN</Select.Option>
                 <Select.Option value="SCRAM-SHA-256">SCRAM-SHA-256</Select.Option>
                 <Select.Option value="SCRAM-SHA-512">SCRAM-SHA-512</Select.Option>
@@ -235,8 +235,8 @@ const ClusterList: React.FC = () => {
             <Form.Item name="kerberos_principal" label="Principal" rules={[{ required: true, message: '请输入 Principal' }]} extra="格式：user@REALM 或 user/hostname@REALM">
               <Input placeholder="例如：kafka-client/node01@EXAMPLE.COM" />
             </Form.Item>
-            <Form.Item name="kerberos_service_name" label="Service Name" initialValue="kafka">
-              <Input placeholder="默认：kafka" />
+            <Form.Item name="kerberos_service_name" label="Service Name">
+              <Input placeholder="默认：kafka" defaultValue="kafka" />
             </Form.Item>
             <Form.Item name="krb5_content" label="krb5.conf 配置" rules={[{ required: true, message: '请填写 krb5.conf 配置内容' }]} extra="请粘贴 krb5.conf 文件的完整内容">
               <Input.TextArea rows={10} placeholder={`[libdefaults]\n  default_realm = EXAMPLE.COM\n\n[realms]\n  EXAMPLE.COM = {\n    kdc = kdc.example.com\n  }`} />
