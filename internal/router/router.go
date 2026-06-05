@@ -22,6 +22,7 @@ import (
 	"kafka-management-platform/pkg/kerberos"
 	"kafka-management-platform/pkg/victoriametrics"
 
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -45,6 +46,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	r.Use(middleware.RequestBodySizeLimitMiddleware(10 * 1024 * 1024)) // 10MB
 	r.Use(middleware.RequestIDMiddleware())
 	r.Use(middleware.RateLimitMiddleware())
+	r.Use(gzip.Gzip(gzip.DefaultCompression))
 
 	// 初始化服务
 	jwtSvc := jwt.NewService(
