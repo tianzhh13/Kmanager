@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/models"
 
 	"github.com/IBM/sarama"
@@ -46,15 +47,22 @@ func NewAdminClient(cluster *models.Cluster, authConfigJSON string) (*AdminClien
 	brokers := strings.Split(cluster.BootstrapServers, ",")
 	for i, broker := range brokers {
 		broker = strings.TrimSpace(broker)
+		original := broker
 		// 分离 host:port
 		if idx := strings.LastIndex(broker, ":"); idx > 0 {
 			host := broker[:idx]
 			port := broker[idx:]
-			brokers[i] = HostResolver(host) + port
+			resolved := HostResolver(host)
+			brokers[i] = resolved + port
+			if resolved != host {
+				logger.Info("Host mapping resolved", "original", original, "resolved", brokers[i])
+			}
 		} else {
 			brokers[i] = HostResolver(broker)
 		}
 	}
+
+	logger.Info("Connecting to Kafka brokers", "brokers", brokers)
 
 	// 创建 Client（会自动处理 SASL 认证）
 	client, err := sarama.NewClient(brokers, config)
