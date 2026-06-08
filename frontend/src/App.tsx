@@ -15,6 +15,7 @@ const ACLList = lazy(() => import('./pages/ACLList'))
 const Monitor = lazy(() => import('./pages/Monitor'))
 const AuditLog = lazy(() => import('./pages/AuditLog'))
 const UserManagement = lazy(() => import('./pages/UserManagement'))
+const HostMapping = lazy(() => import('./pages/HostMapping'))
 
 // 懒加载 fallback
 const LazyFallback = () => (
@@ -77,6 +78,11 @@ function App() {
                     <Route path="/users" element={
                       <RequireRole allowedRoles={['super_admin']}>
                         <UserManagement />
+                      </RequireRole>
+                    } />
+                    <Route path="/host-mappings" element={
+                      <RequireRole allowedRoles={['super_admin']}>
+                        <HostMapping />
                       </RequireRole>
                     } />
                   </Routes>

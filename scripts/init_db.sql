@@ -142,6 +142,17 @@ CREATE TABLE IF NOT EXISTS `user_topic_permission` (
     FOREIGN KEY (`cluster_id`) REFERENCES `cluster`(`cluster_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 主机名映射表（hostname → IP，避免依赖 /etc/hosts）
+CREATE TABLE IF NOT EXISTS `host_mappings` (
+    `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+    `hostname` VARCHAR(255) NOT NULL,
+    `ip_address` VARCHAR(45) NOT NULL,
+    `description` VARCHAR(500),
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_hostname` (`hostname`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 插入默认超级管理员用户
 -- 密码: admin123 (使用 bcrypt 加密，cost=12)
 INSERT INTO `user` (`username`, `password_hash`, `email`, `role`, `status`, `created_at`, `updated_at`)

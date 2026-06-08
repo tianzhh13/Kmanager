@@ -14,7 +14,9 @@ import (
 	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/internal/router"
+	"kafka-management-platform/internal/service/hostmapping"
 	"kafka-management-platform/internal/worker"
+	"kafka-management-platform/pkg/kafka"
 )
 
 func main() {
@@ -65,6 +67,12 @@ func main() {
 	topicRepo := repository.NewTopicRepository(db)
 	aclRepo := repository.NewACLRepository(db)
 	auditLogRepo := repository.NewAuditLogRepository(db)
+
+	// 初始化主机映射服务（带缓存）
+	hostMappingRepo := repository.NewHostMappingRepository(db)
+	hostMappingSvc := hostmapping.NewService(hostMappingRepo)
+	// 设置 kafka 包的主机名解析器
+	kafka.HostResolver = hostMappingSvc.Resolve
 
 	// 初始化并启动 Sync Worker
 	syncWorker := worker.NewSyncWorker(cfg, clusterRepo, topicRepo, aclRepo, auditLogRepo)

@@ -15,6 +15,7 @@ database:
   username: root
   password: your_password_here
   database: kafka_management
+  ssl_mode: disable  # MySQL: false/true/custom, PostgreSQL: disable/require/verify-ca/verify-full
   max_open_conns: 50
   max_idle_conns: 10
   conn_max_lifetime: 3600  # 秒
@@ -48,11 +49,22 @@ cors:
     - "http://192.168.1.100:8080"        # 示例：IP:Port 方式访问
     # - "https://kmanager.yourcompany.com" # 示例：域名方式访问
 
+victoriametrics:
+  enabled: true
+  write_url: "http://localhost:8428/insert/0/prometheus"  # 指标写入地址
+  query_url: "http://localhost:8428/select/0/prometheus"  # 指标查询地址
+
 # 数据同步 Worker（Topic/ACL 元数据同步 + 审计日志清理）
 syncworker:
   interval: 30  # 同步间隔，单位秒
 session:
   idle_timeout: 15  # 单位：分钟
+
+cookie:
+  domain: ""         # Cookie 域名，空则自动使用请求域名
+  secure: false      # 是否仅 HTTPS 发送，生产环境应为 true
+  same_site: "Lax"   # Strict, Lax, None（生产 HTTPS + 跨域需设为 None）
+  path: "/"          # Cookie 路径
 
 # 独立数据采集器（指标采集，独立进程运行）
 # 启动方式: go run ./cmd/collector/main.go
@@ -67,3 +79,5 @@ collector:
 # 4. 生产环境请将 server.mode 设置为 release
 # 5. 生产环境请配置 cors.allowed_origins 白名单
 # 6. 指标采集已拆分为独立进程，请单独启动 collector
+# 7. 生产 HTTPS 部署: cookie.secure 需设为 true, cookie.same_site 需设为 None
+# 8. VictoriaMetrics: 采集器写入和后端查询指标均依赖此配置
