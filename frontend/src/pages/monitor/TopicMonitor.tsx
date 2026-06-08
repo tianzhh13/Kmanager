@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Select, Spin, Alert } from 'antd'
-import ReactECharts from 'echarts-for-react'
+import EChartsReact from 'echarts-for-react/lib/core'
+import echarts from '../../utils/echarts'
 import dayjs, { Dayjs } from 'dayjs'
 import DashboardGrid from '../../components/DashboardGrid'
 import { usePromqlOverrides, useDefaultPromqls, PromqlDebugger, PromqlDebugButton } from '../../components/PromqlDebugger'
@@ -465,19 +466,19 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
               { i: 'total-produce', x: 0, y: 0, w: 4, h: 6, component:
                 <div className="bento-card"><div className="bento-card-inner">
                   <SectionTitle title="Topic 生产速率" />
-                  <ReactECharts key={`tp-${chartKey}`} option={getTotalRateOption(partitionMetrics.produceRate, 'msg/s', '#f97316')} style={{ height: 240 }} notMerge={true} />
+                  <EChartsReact echarts={echarts} key={`tp-${chartKey}`} option={getTotalRateOption(partitionMetrics.produceRate, 'msg/s', '#f97316')} style={{ height: 240 }} notMerge={true} />
                 </div></div>,
               },
               { i: 'total-consume', x: 4, y: 0, w: 4, h: 6, component:
                 <div className="bento-card"><div className="bento-card-inner">
                   <SectionTitle title="消费组消费速率" />
-                  <ReactECharts key={`tc-${chartKey}`} option={getTotalRateOption(partitionMetrics.consumeRate, 'msg/s', '#10b981', 'cg')} style={{ height: 240 }} notMerge={true} />
+                  <EChartsReact echarts={echarts} key={`tc-${chartKey}`} option={getTotalRateOption(partitionMetrics.consumeRate, 'msg/s', '#10b981', 'cg')} style={{ height: 240 }} notMerge={true} />
                 </div></div>,
               },
               { i: 'total-lag', x: 8, y: 0, w: 4, h: 6, component:
                 <div className="bento-card"><div className="bento-card-inner">
                   <SectionTitle title="消费组 Lag" />
-                  <ReactECharts key={`tl-${chartKey}`} option={getTotalRateOption(partitionMetrics.lag, 'Lag', '#ef4444', 'cg')} style={{ height: 240 }} notMerge={true} />
+                  <EChartsReact echarts={echarts} key={`tl-${chartKey}`} option={getTotalRateOption(partitionMetrics.lag, 'Lag', '#ef4444', 'cg')} style={{ height: 240 }} notMerge={true} />
                 </div></div>,
               },
               // Partition-level charts
@@ -485,19 +486,19 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
                 { i: 'partition-produce', x: 0, y: 6, w: 12, h: 7, component:
                   <div className="bento-card"><div className="bento-card-inner">
                     <SectionTitle title="分区生产速率" />
-                    <ReactECharts key={`pp-${chartKey}`} option={buildPartitionChartOption('', partitionMetrics.produceRate, selectedPartitions, 'msg/s')} style={{ height: 260 }} notMerge={true} />
+                    <EChartsReact echarts={echarts} key={`pp-${chartKey}`} option={buildPartitionChartOption('', partitionMetrics.produceRate, selectedPartitions, 'msg/s')} style={{ height: 260 }} notMerge={true} />
                   </div></div>,
                 },
                 { i: 'partition-consume', x: 0, y: 13, w: 6, h: 7, component:
                   <div className="bento-card"><div className="bento-card-inner">
                     <SectionTitle title="分区消费速率" />
-                    <ReactECharts key={`pc-${chartKey}`} option={buildPartitionChartOption('', partitionMetrics.consumeRate, selectedPartitions, 'msg/s', undefined, selectedConsumerGroup ? undefined : '请选择消费组')} style={{ height: 260 }} notMerge={true} />
+                    <EChartsReact echarts={echarts} key={`pc-${chartKey}`} option={buildPartitionChartOption('', partitionMetrics.consumeRate, selectedPartitions, 'msg/s', undefined, selectedConsumerGroup ? undefined : '请选择消费组')} style={{ height: 260 }} notMerge={true} />
                   </div></div>,
                 },
                 { i: 'partition-lag', x: 6, y: 13, w: 6, h: 7, component:
                   <div className="bento-card"><div className="bento-card-inner">
                     <SectionTitle title="分区 Lag" />
-                    <ReactECharts key={`pl-${chartKey}`} option={buildPartitionChartOption('', partitionMetrics.lag, selectedPartitions, 'Lag', (v: number) => v.toLocaleString(), selectedConsumerGroup ? undefined : '请选择消费组')} style={{ height: 260 }} notMerge={true} />
+                    <EChartsReact echarts={echarts} key={`pl-${chartKey}`} option={buildPartitionChartOption('', partitionMetrics.lag, selectedPartitions, 'Lag', (v: number) => v.toLocaleString(), selectedConsumerGroup ? undefined : '请选择消费组')} style={{ height: 260 }} notMerge={true} />
                   </div></div>,
                 },
                 // JMX charts
@@ -505,19 +506,19 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
                   { i: 'log-size', x: 0, y: 20, w: 12, h: 7, component:
                     <div className="bento-card"><div className="bento-card-inner">
                       <SectionTitle title="日志大小" />
-                      <ReactECharts key={`ls-${chartKey}`} option={buildPartitionChartOption('', topicLogSizeData, selectedPartitions, 'bytes', formatBytesForChart)} style={{ height: 260 }} notMerge={true} />
+                      <EChartsReact echarts={echarts} key={`ls-${chartKey}`} option={buildPartitionChartOption('', topicLogSizeData, selectedPartitions, 'bytes', formatBytesForChart)} style={{ height: 260 }} notMerge={true} />
                     </div></div>,
                   },
                   { i: 'log-end-offset', x: 0, y: 27, w: 12, h: 7, component:
                     <div className="bento-card"><div className="bento-card-inner">
                       <SectionTitle title="LogEndOffset" />
-                      <ReactECharts key={`leo-${chartKey}`} option={buildPartitionChartOption('', topicLogEndOffsetData, selectedPartitions, 'Offset')} style={{ height: 260 }} notMerge={true} />
+                      <EChartsReact echarts={echarts} key={`leo-${chartKey}`} option={buildPartitionChartOption('', topicLogEndOffsetData, selectedPartitions, 'Offset')} style={{ height: 260 }} notMerge={true} />
                     </div></div>,
                   },
                   { i: 'isr-vs-replica', x: 0, y: 34, w: 12, h: 7, component:
                     <div className="bento-card"><div className="bento-card-inner">
                       <SectionTitle title="ISR vs Replica" />
-                      <ReactECharts key={`ivr-${selectedTopic}`} option={getIsrVsReplicaChartOption()} style={{ height: 240 }} notMerge={true} />
+                      <EChartsReact echarts={echarts} key={`ivr-${selectedTopic}`} option={getIsrVsReplicaChartOption()} style={{ height: 240 }} notMerge={true} />
                     </div></div>,
                   },
                   { i: 'under-replicated', x: 0, y: 41, w: 12, h: 2, component:

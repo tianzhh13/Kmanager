@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Select, Spin, Alert } from 'antd'
-import ReactECharts from 'echarts-for-react'
+import EChartsReact from 'echarts-for-react/lib/core'
+import echarts from '../../utils/echarts'
 import dayjs, { Dayjs } from 'dayjs'
 import axios from '../../services/api'
 import DashboardGrid from '../../components/DashboardGrid'
@@ -514,13 +515,13 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-replica-lag', x: 0, y: 0, w: 6, h: 6, group: '延迟', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="副本同步 Lag" />
-        <ReactECharts key={`rl-${chartKey}`} option={mkArea(brokerReplicaLagData, '#ef4444', 'Lag')} style={{ height: 220 }} notMerge={true} />
+        <EChartsReact echarts={echarts} key={`rl-${chartKey}`} option={mkArea(brokerReplicaLagData, '#ef4444', 'Lag')} style={{ height: 220 }} notMerge={true} />
       </div></div>,
     },
     { i: 'bk-req-latency', x: 6, y: 0, w: 6, h: 6, group: '延迟', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="请求延迟 P99" />
-        <ReactECharts key={`rlat-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`rlat-${chartKey}`} option={mkMulti([
           ms(brokerRequestLatencyData.produce, 'Produce'),
           ms(brokerRequestLatencyData.fetchConsumer, 'Fetch'),
           ms(brokerRequestLatencyData.fetchFollower, 'Follower'),
@@ -530,7 +531,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-proc-latency', x: 0, y: 6, w: 12, h: 6, group: '延迟', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="处理延迟 P99" />
-        <ReactECharts key={`plat-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`plat-${chartKey}`} option={mkMulti([
           ms(brokerQueueTimeData, 'Queue'),
           ms(brokerLocalTimeData, 'Local'),
           ms(brokerRemoteTimeData, 'Remote'),
@@ -542,7 +543,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-bytes-io', x: 0, y: 12, w: 6, h: 6, group: '吞吐', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="字节流入 / 流出" />
-        <ReactECharts key={`bio-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`bio-${chartKey}`} option={mkMulti([
           ms(brokerBytesInData, 'In'),
           ms(brokerBytesOutData, 'Out'),
         ], 'B/s', (v) => formatBytesForChart(v))} style={{ height: 220 }} notMerge={true} />
@@ -551,7 +552,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-repl-io', x: 6, y: 12, w: 6, h: 6, group: '吞吐', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="副本同步流入 / 流出" />
-        <ReactECharts key={`rio-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`rio-${chartKey}`} option={mkMulti([
           ms(brokerReplicationInData, 'In'),
           ms(brokerReplicationOutData, 'Out'),
         ], 'B/s', (v) => formatBytesForChart(v))} style={{ height: 220 }} notMerge={true} />
@@ -560,7 +561,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-reassign-io', x: 0, y: 18, w: 6, h: 6, group: '吞吐', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="分区迁移流入 / 流出" />
-        <ReactECharts key={`raio-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`raio-${chartKey}`} option={mkMulti([
           ms(brokerReassignmentInData, 'In'),
           ms(brokerReassignmentOutData, 'Out'),
         ], 'B/s', (v) => formatBytesForChart(v))} style={{ height: 220 }} notMerge={true} />
@@ -570,13 +571,13 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-errors', x: 6, y: 18, w: 6, h: 6, group: '错误与ISR', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="请求错误速率" />
-        <ReactECharts key={`err-${chartKey}`} option={buildChart('请求错误速率', brokerErrorsData, '#ef4444', 'errors/s')} style={{ height: 220 }} notMerge={true} />
+        <EChartsReact echarts={echarts} key={`err-${chartKey}`} option={buildChart('请求错误速率', brokerErrorsData, '#ef4444', 'errors/s')} style={{ height: 220 }} notMerge={true} />
       </div></div>,
     },
     { i: 'bk-isr', x: 0, y: 24, w: 6, h: 6, group: '错误与ISR', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="ISR 收缩 / 扩展" />
-        <ReactECharts key={`isr-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`isr-${chartKey}`} option={mkMulti([
           ms(brokerIsrShrinksData, 'Shrink'),
           ms(brokerIsrExpandsData, 'Expand'),
         ], '次/秒')} style={{ height: 220 }} notMerge={true} />
@@ -586,13 +587,13 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-resp-queue', x: 6, y: 24, w: 6, h: 6, group: '队列与处理', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="响应队列大小" />
-        <ReactECharts key={`rq-${chartKey}`} option={mkBrokerChart(brokerResponseQueueData, '个')} style={{ height: 220 }} notMerge={true} />
+        <EChartsReact echarts={echarts} key={`rq-${chartKey}`} option={mkBrokerChart(brokerResponseQueueData, '个')} style={{ height: 220 }} notMerge={true} />
       </div></div>,
     },
     { i: 'bk-idle', x: 0, y: 30, w: 6, h: 6, group: '队列与处理', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="Handler / 网络 Processor 空闲率" />
-        <ReactECharts key={`idle-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`idle-${chartKey}`} option={mkMulti([
           ms(brokerHandlerIdleData, 'Handler'),
           ms(brokerNetworkIdleData, 'Network'),
         ], '%', (v) => (v * 100).toFixed(1) + '%')} style={{ height: 220 }} notMerge={true} />
@@ -602,7 +603,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-disk-io', x: 6, y: 30, w: 6, h: 6, group: '磁盘', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="磁盘读 / 写速率" />
-        <ReactECharts key={`disk-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`disk-${chartKey}`} option={mkMulti([
           ms(brokerDiskReadData, 'Read'),
           ms(brokerDiskWriteData, 'Write'),
         ], 'B/s', (v) => formatBytesForChart(v))} style={{ height: 220 }} notMerge={true} />
@@ -612,13 +613,13 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-ctrl-event', x: 0, y: 36, w: 6, h: 6, group: 'Controller与延迟', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="Controller 事件排队耗时" />
-        <ReactECharts key={`ctrl-${chartKey}`} option={mkBrokerChart(brokerControllerEventQueueData, 'ms')} style={{ height: 220 }} notMerge={true} />
+        <EChartsReact echarts={echarts} key={`ctrl-${chartKey}`} option={mkBrokerChart(brokerControllerEventQueueData, 'ms')} style={{ height: 220 }} notMerge={true} />
       </div></div>,
     },
     { i: 'bk-delay-purg', x: 6, y: 36, w: 6, h: 6, group: 'Controller与延迟', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="延迟操作 / Purgatory" />
-        <ReactECharts key={`dpurg-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`dpurg-${chartKey}`} option={mkMulti([
           ms(brokerDelayedOperationsData, 'Delayed Ops'),
           ms(brokerPurgatorySizeData, 'Purgatory'),
         ], '个')} style={{ height: 220 }} notMerge={true} />
@@ -627,7 +628,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-follower-io', x: 0, y: 42, w: 6, h: 6, group: 'Controller与延迟', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="Follower 最小拉取 / Flush P99" />
-        <ReactECharts key={`fio-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`fio-${chartKey}`} option={mkMulti([
           ms(brokerMinFetchRateData, 'Min Fetch'),
           ms(brokerLogFlushTimeData, 'Flush'),
         ], '')} style={{ height: 220 }} notMerge={true} />
@@ -637,13 +638,13 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-cpu', x: 6, y: 42, w: 6, h: 6, group: '资源', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="进程 CPU 使用率" />
-        <ReactECharts key={`cpu-${chartKey}`} option={mkBrokerChart(brokerProcessCpuData, '%', (v) => (v * 100).toFixed(2) + '%')} style={{ height: 220 }} notMerge={true} />
+        <EChartsReact echarts={echarts} key={`cpu-${chartKey}`} option={mkBrokerChart(brokerProcessCpuData, '%', (v) => (v * 100).toFixed(2) + '%')} style={{ height: 220 }} notMerge={true} />
       </div></div>,
     },
     { i: 'bk-mem', x: 0, y: 48, w: 6, h: 6, group: '资源', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="进程驻留 / 虚拟内存" />
-        <ReactECharts key={`mem-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`mem-${chartKey}`} option={mkMulti([
           ms(brokerProcessResidentMemoryData, 'Resident'),
           ms(brokerProcessVirtualMemoryData, 'Virtual'),
         ], 'B', (v) => formatBytesForChart(v))} style={{ height: 220 }} notMerge={true} />
@@ -652,13 +653,13 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-fds', x: 6, y: 48, w: 6, h: 6, group: '资源', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="已用文件描述符" />
-        <ReactECharts key={`fds-${chartKey}`} option={mkBrokerChart(brokerProcessOpenFdsData, '个')} style={{ height: 220 }} notMerge={true} />
+        <EChartsReact echarts={echarts} key={`fds-${chartKey}`} option={mkBrokerChart(brokerProcessOpenFdsData, '个')} style={{ height: 220 }} notMerge={true} />
       </div></div>,
     },
     { i: 'bk-dirty', x: 0, y: 54, w: 6, h: 6, group: '资源', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="最大脏比例 / 不可清理字节" />
-        <ReactECharts key={`dirty-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`dirty-${chartKey}`} option={mkMulti([
           ms(brokerLogCleanerMaxDirtyData, 'Dirty %'),
           ms(brokerLogCleanerUncleanableBytesData, 'Uncleanable'),
         ], '')} style={{ height: 220 }} notMerge={true} />
@@ -668,7 +669,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-cleaner-status', x: 6, y: 54, w: 6, h: 6, group: 'LogCleaner', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="Cleaner 运行状态" />
-        <ReactECharts key={`cstat-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`cstat-${chartKey}`} option={mkMulti([
           ms(brokerLogCleanerTimeSinceLastRunData, '上次清理间隔'),
           ms(brokerLogCleanerRecopyData, '重复制比例'),
           ms(brokerLogCleanerMaxBufferData, '缓冲利用率'),
@@ -678,7 +679,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-cleaner-latency', x: 0, y: 60, w: 6, h: 6, group: 'LogCleaner', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="Cleaner 延迟" />
-        <ReactECharts key={`clat-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`clat-${chartKey}`} option={mkMulti([
           ms(brokerLogCleanerMaxCleanTimeData, '清理时间'),
           ms(brokerLogCleanerMaxCompactionDelayData, '压缩延迟'),
         ], '秒')} style={{ height: 220 }} notMerge={true} />
@@ -688,7 +689,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-gc', x: 6, y: 60, w: 6, h: 6, group: 'GC与JVM', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="GC 耗时 / 次数" />
-        <ReactECharts key={`gc-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`gc-${chartKey}`} option={mkMulti([
           ms(brokerJvmGcData, 'Time'),
           ms(brokerJvmGcCountData, 'Count'),
         ], '')} style={{ height: 220 }} notMerge={true} />
@@ -697,7 +698,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-jvm-mem', x: 0, y: 66, w: 6, h: 6, group: 'GC与JVM', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="JVM 内存池 / Buffer" />
-        <ReactECharts key={`jvmem-${chartKey}`} option={mkMulti([
+        <EChartsReact echarts={echarts} key={`jvmem-${chartKey}`} option={mkMulti([
           ms(brokerJvmMemoryPoolData, 'Mem Pool'),
           ms(brokerJvmBufferPoolData, 'Buffer Pool'),
         ], 'B', (v) => formatBytesForChart(v))} style={{ height: 220 }} notMerge={true} />
@@ -706,7 +707,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
     { i: 'bk-jvm-threads', x: 6, y: 66, w: 6, h: 6, group: 'GC与JVM', component:
       <div className="bento-card"><div className="bento-card-inner">
         <SectionTitle title="JVM 线程数" />
-        <ReactECharts key={`jt-${chartKey}`} option={mkBrokerChart(brokerJvmThreadsData, '个')} style={{ height: 220 }} notMerge={true} />
+        <EChartsReact echarts={echarts} key={`jt-${chartKey}`} option={mkBrokerChart(brokerJvmThreadsData, '个')} style={{ height: 220 }} notMerge={true} />
       </div></div>,
     },
   ] : []
