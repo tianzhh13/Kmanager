@@ -47,6 +47,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	r.Use(middleware.RequestBodySizeLimitMiddleware(10 * 1024 * 1024)) // 10MB
 	r.Use(middleware.RequestIDMiddleware())
 	r.Use(middleware.RateLimitMiddleware())
+	r.Use(middleware.ResponseLoggerMiddleware())
 	r.Use(gzip.Gzip(gzip.DefaultCompression))
 
 	// 初始化服务
