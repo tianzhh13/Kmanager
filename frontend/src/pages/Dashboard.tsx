@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import ReactECharts from 'echarts-for-react'
+import EChartsReact from 'echarts-for-react/lib/core'
+import echarts from '../utils/echarts'
 import { useNavigate } from 'react-router-dom'
 import { Spin } from 'antd'
 import { SectionTitle, HealthDot } from '../components/bento'
@@ -182,7 +183,7 @@ const Dashboard: React.FC = () => {
               <div className="stat-label" style={{ color: 'rgba(255,255,255,0.45)', letterSpacing: '1.5px' }}>CLUSTERS</div>
             </div>
             {healthDonutData.length > 0 && (
-              <ReactECharts
+              <EChartsReact echarts={echarts}
                 option={{
                   ...createDonutChartOption(healthDonutData, ['50%', '75%']),
                   graphic: [
@@ -313,7 +314,7 @@ const Dashboard: React.FC = () => {
           <div className="bento-card-inner">
             <SectionTitle title="认证类型" />
             {authDonutData.length > 0 && (
-              <ReactECharts
+              <EChartsReact echarts={echarts}
                 option={createDonutChartOption(authDonutData)}
                 style={{ width: '100%', height: 180 }}
                 notMerge={true}
@@ -334,7 +335,7 @@ const Dashboard: React.FC = () => {
         <div className="bento-card" style={{ gridColumn: 'span 12' }}>
           <div className="bento-card-inner">
             <SectionTitle title="集群规模概览" />
-            <ReactECharts
+            <EChartsReact echarts={echarts}
               option={createHorizontalStackedBarChartOption(barCategories, [barBrokers, barTopics], '数量')}
               style={{ width: '100%', height: 220 }}
               notMerge={true}
