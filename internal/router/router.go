@@ -13,6 +13,7 @@ import (
 	"kafka-management-platform/internal/service/auth"
 	"kafka-management-platform/internal/service/cluster"
 	"kafka-management-platform/internal/service/dashboard"
+	"kafka-management-platform/internal/service/hostmapping"
 	"kafka-management-platform/internal/service/monitor"
 	"kafka-management-platform/internal/service/scram"
 	"kafka-management-platform/internal/service/topic"
@@ -272,6 +273,19 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				topicPerms.DELETE("", middleware.RequireSuperAdminOrClusterAdmin(), topicPermHandler.RevokeTopicPermission)
 				topicPerms.GET("/user/:userId", topicPermHandler.GetUserTopicPermissions)
 				topicPerms.GET("/user/:userId/cluster/:clusterId", topicPermHandler.GetUserClusterTopicPermissions)
+			}
+
+			// 主机映射管理路由
+			hostMappingRepo := repository.NewHostMappingRepository(db)
+			hostMappingSvc := hostmapping.NewService(hostMappingRepo)
+			hostMappingHandler := handler.NewHostMappingHandler(hostMappingSvc)
+			hostMappings := authenticated.Group("/host-mappings")
+			{
+				hostMappings.GET("", hostMappingHandler.List)
+				hostMappings.GET("/:id", hostMappingHandler.GetByID)
+				hostMappings.POST("", permissionMiddleware.RequireSuperAdmin(), hostMappingHandler.Create)
+				hostMappings.PUT("/:id", permissionMiddleware.RequireSuperAdmin(), hostMappingHandler.Update)
+				hostMappings.DELETE("/:id", permissionMiddleware.RequireSuperAdmin(), hostMappingHandler.Delete)
 			}
 		}
 	}

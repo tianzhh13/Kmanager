@@ -18,6 +18,10 @@ var (
 	ErrInvalidAuthConfig = errors.New("invalid auth config")
 	// ErrUnsupportedAuthType 不支持的认证类型
 	ErrUnsupportedAuthType = errors.New("unsupported auth type")
+
+	// HostResolver 主机名解析函数（可选，用于 host_mappings 功能）
+	// 默认返回原始主机名（走系统 DNS）
+	HostResolver func(hostname string) string = func(hostname string) string { return hostname }
 )
 
 // AdminClient Kafka Admin 客户端封装
@@ -38,10 +42,18 @@ func NewAdminClient(cluster *models.Cluster, authConfigJSON string) (*AdminClien
 		return nil, fmt.Errorf("failed to configure auth: %w", err)
 	}
 
-	// 解析 Bootstrap Servers
+	// 解析 Bootstrap Servers（通过 host mapping 解析主机名）
 	brokers := strings.Split(cluster.BootstrapServers, ",")
 	for i, broker := range brokers {
-		brokers[i] = strings.TrimSpace(broker)
+		broker = strings.TrimSpace(broker)
+		// 分离 host:port
+		if idx := strings.LastIndex(broker, ":"); idx > 0 {
+			host := broker[:idx]
+			port := broker[idx:]
+			brokers[i] = HostResolver(host) + port
+		} else {
+			brokers[i] = HostResolver(broker)
+		}
 	}
 
 	// 创建 Client（会自动处理 SASL 认证）

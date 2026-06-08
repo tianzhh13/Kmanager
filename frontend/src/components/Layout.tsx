@@ -13,6 +13,7 @@ import {
   UserOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  SwapOutlined,
 } from '@ant-design/icons'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { logoutAsync } from '../store/slices/authSlice'
@@ -32,6 +33,7 @@ const routeBreadcrumb: Record<string, string> = {
   '/monitor': '监控中心',
   '/audit-logs': '审计日志',
   '/users': '用户管理',
+  '/host-mappings': '主机映射',
 }
 
 interface LayoutProps {
@@ -60,6 +62,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { key: '/monitor', icon: <LineChartOutlined />, label: '监控中心' },
     ...((isSuperAdmin || isClusterAdmin) ? [{ key: '/audit-logs', icon: <AuditOutlined />, label: '审计日志' }] : []),
     ...(isSuperAdmin ? [{ key: '/users', icon: <TeamOutlined />, label: '用户管理' }] : []),
+    ...(isSuperAdmin ? [{ key: '/host-mappings', icon: <SwapOutlined />, label: '主机映射' }] : []),
   ]
 
   const handleMenuClick = (key: string) => {
