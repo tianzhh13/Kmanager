@@ -34,7 +34,7 @@ func (h *HostMappingHandler) List(c *gin.Context) {
 
 	mappings, total, err := h.svc.ListWithPagination(c.Request.Context(), page, pageSize, keyword)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to list host mappings"})
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -83,7 +83,7 @@ func (h *HostMappingHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.svc.Create(c.Request.Context(), mapping); err != nil {
-		c.JSON(400, gin.H{"error": "failed to create host mapping, hostname may already exist"})
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -126,7 +126,7 @@ func (h *HostMappingHandler) Update(c *gin.Context) {
 	}
 
 	if err := h.svc.Update(c.Request.Context(), existing); err != nil {
-		c.JSON(400, gin.H{"error": "failed to update host mapping"})
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -142,7 +142,7 @@ func (h *HostMappingHandler) Delete(c *gin.Context) {
 	}
 
 	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
-		c.JSON(500, gin.H{"error": "failed to delete host mapping"})
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 

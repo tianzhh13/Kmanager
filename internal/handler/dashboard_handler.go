@@ -26,7 +26,7 @@ func NewDashboardHandler(dashboardSvc *dashboard.Service) *DashboardHandler {
 func (h *DashboardHandler) GetOverview(c *gin.Context) {
 	result, err := h.dashboardSvc.GetOverview(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
