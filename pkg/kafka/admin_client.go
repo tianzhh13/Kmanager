@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -25,6 +26,24 @@ var (
 	HostResolver func(hostname string) string = func(hostname string) string { return hostname }
 )
 
+// resolvingDialer 自定义 Dialer，所有 TCP 连接都通过 HostResolver 解析主机名
+// 解决 Kafka metadata 返回主机名导致后续连接失败的问题
+type resolvingDialer struct {
+	resolver func(string) string
+}
+
+func (d *resolvingDialer) Dial(network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	resolved := d.resolver(host)
+	if resolved != host {
+		logger.Info("Dialer resolved host", "original", host, "resolved", resolved)
+	}
+	return net.Dial(network, net.JoinHostPort(resolved, port))
+}
+
 // AdminClient Kafka Admin 客户端封装
 type AdminClient struct {
 	admin  sarama.ClusterAdmin
@@ -37,6 +56,10 @@ type AdminClient struct {
 func NewAdminClient(cluster *models.Cluster, authConfigJSON string) (*AdminClient, error) {
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_8_0_0
+
+	// 设置自定义 Proxy Dialer，让所有连接（包括 metadata 返回的 broker）都走 host mapping
+	config.Net.Proxy.Enable = true
+	config.Net.Proxy.Dialer = &resolvingDialer{resolver: HostResolver}
 
 	// 配置认证方式
 	if err := configureAuth(config, cluster.AuthType, authConfigJSON); err != nil {
