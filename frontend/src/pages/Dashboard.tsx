@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import EChartsReact from 'echarts-for-react/lib/core'
 import echarts from '../utils/echarts'
 import { useNavigate } from 'react-router-dom'
-import { Spin } from 'antd'
+import { Spin, Modal } from 'antd'
 import { SectionTitle, HealthDot } from '../components/bento'
 import { dashboardService, DashboardOverview } from '../services/dashboardService'
 import { createDonutChartOption, createHorizontalStackedBarChartOption, DonutDataItem, StackedBarSeries } from '../utils/chartOptions'
@@ -10,6 +10,9 @@ import { createDonutChartOption, createHorizontalStackedBarChartOption, DonutDat
 const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [overview, setOverview] = useState<DashboardOverview | null>(null)
+  const [lagModalOpen, setLagModalOpen] = useState(false)
+  const [lagDetails, setLagDetails] = useState<Array<{ cluster_name: string; group_id: string; topic: string; total_lag: number; member_count: number }>>([])
+  const [lagLoading, setLagLoading] = useState(false)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -103,6 +106,35 @@ const Dashboard: React.FC = () => {
     } finally {
       setLoading(false)
     }
+  }
+
+  const loadLagDetails = async () => {
+    setLagLoading(true)
+    try {
+      const { clusterAPI } = await import('../services/cluster')
+      const { metricsAPI } = await import('../services/metrics')
+      const clusterRes = await clusterAPI.list(1, 100)
+      const clusters = clusterRes.data || []
+      const details: Array<{ cluster_name: string; group_id: string; topic: string; total_lag: number; member_count: number }> = []
+      await Promise.all(clusters.map(async (c: any) => {
+        try {
+          const res = await metricsAPI.getClusterMetrics(c.cluster_id)
+          const groups = res.data?.consumer_groups || []
+          groups.forEach((g: any) => {
+            details.push({
+              cluster_name: c.cluster_name,
+              group_id: g.group_id,
+              topic: g.topics?.map((t: any) => t.topic).join(', ') || '-',
+              total_lag: g.total_lag || 0,
+              member_count: g.member_count || 0,
+            })
+          })
+        } catch { /* skip */ }
+      }))
+      details.sort((a, b) => b.total_lag - a.total_lag)
+      setLagDetails(details)
+    } catch { /* ignore */ }
+    setLagLoading(false)
   }
 
   if (loading) {
@@ -297,7 +329,7 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
         </div>
-        <div className="bento-card" style={{ gridColumn: 'span 4' }}>
+        <div className="bento-card" style={{ gridColumn: 'span 4', cursor: 'pointer' }} onClick={() => { setLagModalOpen(true); loadLagDetails() }}>
           <div className="bento-card-inner">
             <div className="stat-label">CONSUMER GROUP LAG</div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 8 }}>
@@ -398,9 +430,41 @@ const Dashboard: React.FC = () => {
                 <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>{topics_total.toLocaleString()} 个 Topic</div>
               </div>
             </a>
-          </div>
+           </div>
         </div>
       </div>
+      <Modal
+        title="消费组 Lag 详情"
+        open={lagModalOpen}
+        onCancel={() => setLagModalOpen(false)}
+        footer={null}
+        width={700}
+      >
+        <div className="bento-table-header" style={{ gridTemplateColumns: '1fr 1fr 1fr 100px 80px' }}>
+          <div>集群</div>
+          <div>Consumer Group</div>
+          <div>Topic</div>
+          <div style={{ textAlign: 'right' }}>Lag</div>
+          <div style={{ textAlign: 'right' }}>Members</div>
+        </div>
+        <div className="bento-table-body">
+          {lagLoading ? (
+            <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>加载中...</div>
+          ) : lagDetails.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>暂无消费组数据</div>
+          ) : (
+            lagDetails.map((item, i) => (
+              <div key={i} className="bento-table-row" style={{ gridTemplateColumns: '1fr 1fr 1fr 100px 80px' }}>
+                <span style={{ fontSize: 12 }}>{item.cluster_name}</span>
+                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}>{item.group_id}</span>
+                <span style={{ fontSize: 12 }}>{item.topic}</span>
+                <span style={{ fontSize: 12, textAlign: 'right', color: item.total_lag > 0 ? '#ef4444' : 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{item.total_lag?.toLocaleString() ?? 0}</span>
+                <span style={{ fontSize: 12, textAlign: 'right' }}>{item.member_count ?? '-'}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </Modal>
     </div>
   )
 }
