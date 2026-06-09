@@ -212,7 +212,7 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
         replica: parsePartitionMetrics(r['replica_count']?.data?.result || []),
       })
 
-      setTopicUnderReplicatedCount(extractInstantValue(r['under_replicated']))
+      setTopicUnderReplicatedCount(extractInstantValue(r['under_replicated']) ?? 0)
 
       const allParts = new Set<number>()
       // Collect partitions from all available metric results

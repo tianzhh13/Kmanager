@@ -104,10 +104,10 @@ export interface BatchQueryResponse {
 // ============================================================
 
 /** 提取即时值（取最后一个数据点） */
-export function extractInstantValue(response: VMQueryResponse | undefined): number {
-  if (!response || response.status !== 'success' || response.data.result.length === 0) return 0
+export function extractInstantValue(response: VMQueryResponse | undefined): number | null {
+  if (!response || response.status !== 'success' || response.data.result.length === 0) return null
   const values = response.data.result[0].values
-  if (values.length === 0) return 0
+  if (values.length === 0) return null
   return parseFloat(values[values.length - 1][1]) || 0
 }
 

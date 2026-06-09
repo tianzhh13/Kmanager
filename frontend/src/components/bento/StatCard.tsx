@@ -2,7 +2,7 @@ import React from 'react'
 
 export interface StatCardProps {
   label: string
-  value: string | number
+  value: string | number | null | undefined
   delta?: { value: string; trend: 'up' | 'down' | 'neutral' }
   unit?: string
   icon?: React.ReactNode
@@ -27,6 +27,8 @@ const StatCard: React.FC<StatCardProps> = ({
   style,
   onClick,
 }) => {
+  const hasData = value !== null && value !== undefined && value !== ''
+
   return (
     <div
       className={`bento-card ${className}`}
@@ -37,8 +39,12 @@ const StatCard: React.FC<StatCardProps> = ({
         <div className="bento-stat-label">{label}</div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 8 }}>
           {icon && <span style={{ marginRight: 4, color: 'var(--text-3)', fontSize: 18 }}>{icon}</span>}
-          <span className="bento-stat-value" style={valueColor ? { color: valueColor } : color ? { color } : undefined}>{typeof value === 'number' ? value.toLocaleString() : value}</span>
-          {unit && <span className="bento-stat-delta--unit">{unit}</span>}
+          {hasData ? (
+            <span className="bento-stat-value" style={valueColor ? { color: valueColor } : color ? { color } : undefined}>{typeof value === 'number' ? value.toLocaleString() : value}</span>
+          ) : (
+            <span style={{ color: 'var(--text-3)', fontSize: 14, fontStyle: 'italic' }}>暂无数据</span>
+          )}
+          {unit && hasData && <span className="bento-stat-delta--unit">{unit}</span>}
         </div>
         {subtitle && (
           <span style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, display: 'block' }}>{subtitle}</span>
