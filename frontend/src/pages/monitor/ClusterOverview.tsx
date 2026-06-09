@@ -25,20 +25,20 @@ interface ClusterOverviewProps {
 
 const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, quickRange, customRange, metrics, jmxAvailable }) => {
   const [overviewStats, setOverviewStats] = useState({
-    topicPartitionTotal: 0,
-    consumerGroupMemberCount: 0,
-    consumerGroupMemberTotal: 0,
-    isrTotal: 0,
-    nonPreferredLeaderCount: 0,
-    activeBrokerCount: 0,
-    fencedBrokerCount: 0,
-    globalPartitionCount: 0,
-    globalTopicCount: 0,
-    preferredReplicaImbalance: 0,
-    offlinePartitionsCount: 0,
-    activeControllerCount: 0,
-    offlineLogDirectoryCount: 0,
-    logDirectoryOffline: 0,
+    topicPartitionTotal: null as number | null,
+    consumerGroupMemberCount: null as number | null,
+    consumerGroupMemberTotal: null as number | null,
+    isrTotal: null as number | null,
+    nonPreferredLeaderCount: null as number | null,
+    activeBrokerCount: null as number | null,
+    fencedBrokerCount: null as number | null,
+    globalPartitionCount: null as number | null,
+    globalTopicCount: null as number | null,
+    preferredReplicaImbalance: null as number | null,
+    offlinePartitionsCount: null as number | null,
+    activeControllerCount: null as number | null,
+    offlineLogDirectoryCount: null as number | null,
+    logDirectoryOffline: null as number | null,
   })
 
   type TimeSeries = { times: string[]; values: (number | null)[] }
@@ -52,9 +52,9 @@ const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, q
   const [failedProduceRateData, setFailedProduceRateData] = useState<TimeSeries>({ times: [], values: [] })
   const [failedFetchRateData, setFailedFetchRateData] = useState<TimeSeries>({ times: [], values: [] })
   const [dataCorruptionStats, setDataCorruptionStats] = useState({
-    invalidMagicNumber: 0,
-    invalidCrc: 0,
-    invalidOffset: 0,
+    invalidMagicNumber: null as number | null,
+    invalidCrc: null as number | null,
+    invalidOffset: null as number | null,
   })
   const [debugOpen, setDebugOpen] = useState(false)
   const { overrides, getQ, setOverride, resetOverride, resetAll } = usePromqlOverrides('cluster_overview')
@@ -266,29 +266,29 @@ const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, q
         rowHeight={50}
         items={[
           // ===== 第一行：集群基础信息（始终显示） =====
-          { i: 'broker-count', x: 0, y: 0, w: 3, h: 2, component: <StatCard label="BROKER COUNT" value={metrics?.broker_count || 0} color="#3b82f6" /> },
-          { i: 'topic-count', x: 3, y: 0, w: 3, h: 2, component: <StatCard label="TOPIC COUNT" value={metrics?.topic_count || 0} color="#10b981" /> },
+          { i: 'broker-count', x: 0, y: 0, w: 3, h: 2, component: <StatCard label="BROKER COUNT" value={metrics?.broker_count ?? null} color="#3b82f6" /> },
+          { i: 'topic-count', x: 3, y: 0, w: 3, h: 2, component: <StatCard label="TOPIC COUNT" value={metrics?.topic_count ?? null} color="#10b981" /> },
           { i: 'partition-total', x: 6, y: 0, w: 3, h: 2, component: <StatCard label="PARTITION TOTAL" value={overviewStats.topicPartitionTotal} /> },
-          { i: 'cg-count', x: 9, y: 0, w: 3, h: 2, component: <StatCard label="CONSUMER GROUPS" value={metrics?.consumer_groups?.length || 0} color="#f59e0b" /> },
+          { i: 'cg-count', x: 9, y: 0, w: 3, h: 2, component: <StatCard label="CONSUMER GROUPS" value={metrics?.consumer_groups?.length ?? null} color="#f59e0b" /> },
 
           // ===== 第二行：消费组 + ISR 信息（AdminClient 指标，始终显示） =====
           { i: 'cg-member', x: 0, y: 2, w: 3, h: 2, component: <StatCard label="CG MEMBERS" value={overviewStats.consumerGroupMemberTotal} /> },
           { i: 'isr-total', x: 3, y: 2, w: 3, h: 2, component: <StatCard label="ISR TOTAL" value={overviewStats.isrTotal} color="#10b981" /> },
-          { i: 'non-preferred', x: 6, y: 2, w: 3, h: 2, component: <StatCard label="NON-PREFERRED LEADER" value={overviewStats.nonPreferredLeaderCount} color={overviewStats.nonPreferredLeaderCount > 0 ? '#ef4444' : '#10b981'} /> },
-          { i: 'total-lag', x: 9, y: 2, w: 3, h: 2, component: <StatCard label="TOTAL LAG" value={metrics?.consumer_groups?.reduce((sum, g) => sum + g.total_lag, 0) || 0} color="#ef4444" /> },
+          { i: 'non-preferred', x: 6, y: 2, w: 3, h: 2, component: <StatCard label="NON-PREFERRED LEADER" value={overviewStats.nonPreferredLeaderCount} color={overviewStats.nonPreferredLeaderCount != null && overviewStats.nonPreferredLeaderCount > 0 ? '#ef4444' : '#10b981'} /> },
+          { i: 'total-lag', x: 9, y: 2, w: 3, h: 2, component: <StatCard label="TOTAL LAG" value={metrics?.consumer_groups?.reduce((sum, g) => sum + g.total_lag, 0) ?? null} color="#ef4444" /> },
 
           // ===== JMX Stat 卡片（仅 JMX Exporter 可用时显示） =====
           ...(jmxAvailable ? [
           { i: 'active-broker', x: 0, y: 4, w: 3, h: 2, component: <StatCard label="ACTIVE BROKER" value={overviewStats.activeBrokerCount} /> },
-          { i: 'fenced-broker', x: 3, y: 4, w: 3, h: 2, component: <StatCard label="UNHEALTHY BROKER" value={overviewStats.fencedBrokerCount} color={overviewStats.fencedBrokerCount === 0 ? '#10b981' : '#ef4444'} /> },
-          { i: 'replica-imbalance', x: 6, y: 4, w: 3, h: 2, component: <StatCard label="REPLICA IMBALANCE" value={overviewStats.preferredReplicaImbalance} color={overviewStats.preferredReplicaImbalance === 0 ? '#10b981' : '#ef4444'} /> },
-          { i: 'offline-partitions', x: 9, y: 4, w: 3, h: 2, component: <StatCard label="OFFLINE PARTITIONS" value={overviewStats.offlinePartitionsCount} color={overviewStats.offlinePartitionsCount === 0 ? '#10b981' : '#ef4444'} /> },
-          { i: 'active-controller', x: 0, y: 6, w: 3, h: 2, component: <StatCard label="ACTIVE CONTROLLER" value={overviewStats.activeControllerCount} color={overviewStats.activeControllerCount === 1 ? '#10b981' : '#ef4444'} /> },
-          { i: 'offline-log-dir', x: 3, y: 6, w: 3, h: 2, component: <StatCard label="OFFLINE LOG DIR" value={overviewStats.offlineLogDirectoryCount} color={overviewStats.offlineLogDirectoryCount === 0 ? '#10b981' : '#ef4444'} /> },
-          { i: 'log-dir-status', x: 6, y: 6, w: 3, h: 2, component: <StatCard label="LOG DIR STATUS" value={overviewStats.logDirectoryOffline === 0 ? '正常' : '异常'} color={overviewStats.logDirectoryOffline === 0 ? '#10b981' : '#ef4444'} /> },
-          { i: 'invalid-magic', x: 9, y: 6, w: 3, h: 2, component: <StatCard label="INVALID MAGIC" value={dataCorruptionStats.invalidMagicNumber} color={dataCorruptionStats.invalidMagicNumber === 0 ? '#10b981' : '#ef4444'} /> },
-          { i: 'invalid-crc', x: 0, y: 8, w: 3, h: 2, component: <StatCard label="INVALID CRC" value={dataCorruptionStats.invalidCrc} color={dataCorruptionStats.invalidCrc === 0 ? '#10b981' : '#ef4444'} /> },
-          { i: 'invalid-offset', x: 3, y: 8, w: 3, h: 2, component: <StatCard label="INVALID OFFSET" value={dataCorruptionStats.invalidOffset} color={dataCorruptionStats.invalidOffset === 0 ? '#10b981' : '#ef4444'} /> },
+          { i: 'fenced-broker', x: 3, y: 4, w: 3, h: 2, component: <StatCard label="UNHEALTHY BROKER" value={overviewStats.fencedBrokerCount} color={overviewStats.fencedBrokerCount === 0 ? '#10b981' : overviewStats.fencedBrokerCount == null ? undefined : '#ef4444'} /> },
+          { i: 'replica-imbalance', x: 6, y: 4, w: 3, h: 2, component: <StatCard label="REPLICA IMBALANCE" value={overviewStats.preferredReplicaImbalance} color={overviewStats.preferredReplicaImbalance === 0 ? '#10b981' : overviewStats.preferredReplicaImbalance == null ? undefined : '#ef4444'} /> },
+          { i: 'offline-partitions', x: 9, y: 4, w: 3, h: 2, component: <StatCard label="OFFLINE PARTITIONS" value={overviewStats.offlinePartitionsCount} color={overviewStats.offlinePartitionsCount === 0 ? '#10b981' : overviewStats.offlinePartitionsCount == null ? undefined : '#ef4444'} /> },
+          { i: 'active-controller', x: 0, y: 6, w: 3, h: 2, component: <StatCard label="ACTIVE CONTROLLER" value={overviewStats.activeControllerCount} color={overviewStats.activeControllerCount === 1 ? '#10b981' : overviewStats.activeControllerCount == null ? undefined : '#ef4444'} /> },
+          { i: 'offline-log-dir', x: 3, y: 6, w: 3, h: 2, component: <StatCard label="OFFLINE LOG DIR" value={overviewStats.offlineLogDirectoryCount} color={overviewStats.offlineLogDirectoryCount === 0 ? '#10b981' : overviewStats.offlineLogDirectoryCount == null ? undefined : '#ef4444'} /> },
+          { i: 'log-dir-status', x: 6, y: 6, w: 3, h: 2, component: <StatCard label="LOG DIR STATUS" value={overviewStats.logDirectoryOffline === 0 ? '正常' : overviewStats.logDirectoryOffline == null ? null : '异常'} color={overviewStats.logDirectoryOffline === 0 ? '#10b981' : overviewStats.logDirectoryOffline == null ? undefined : '#ef4444'} /> },
+          { i: 'invalid-magic', x: 9, y: 6, w: 3, h: 2, component: <StatCard label="INVALID MAGIC" value={dataCorruptionStats.invalidMagicNumber} color={dataCorruptionStats.invalidMagicNumber === 0 ? '#10b981' : dataCorruptionStats.invalidMagicNumber == null ? undefined : '#ef4444'} /> },
+          { i: 'invalid-crc', x: 0, y: 8, w: 3, h: 2, component: <StatCard label="INVALID CRC" value={dataCorruptionStats.invalidCrc} color={dataCorruptionStats.invalidCrc === 0 ? '#10b981' : dataCorruptionStats.invalidCrc == null ? undefined : '#ef4444'} /> },
+          { i: 'invalid-offset', x: 3, y: 8, w: 3, h: 2, component: <StatCard label="INVALID OFFSET" value={dataCorruptionStats.invalidOffset} color={dataCorruptionStats.invalidOffset === 0 ? '#10b981' : dataCorruptionStats.invalidOffset == null ? undefined : '#ef4444'} /> },
           ] : []),
 
           // ===== 趋势图 =====
