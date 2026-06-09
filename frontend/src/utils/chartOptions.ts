@@ -86,19 +86,9 @@ const ROUNDED_LINE_STYLE = {
 
 // ---- Empty state helper ----
 
-function emptyOption(title?: string, emptyText = '暂无数据'): Record<string, any> {
+function emptyOption(_title?: string, emptyText = '暂无数据'): Record<string, any> {
   return {
-    title: title ? {
-      text: title,
-      left: 16,
-      top: 8,
-      textStyle: {
-        fontFamily: "'DM Sans', sans-serif",
-        fontSize: 13,
-        fontWeight: 600,
-        color: '#44403c',
-      },
-    } : { show: false },
+    title: { show: false },
     graphic: {
       type: 'text',
       left: 'center',
@@ -143,17 +133,7 @@ export function createAreaChartOption(
   }
 
   return {
-    title: {
-      text: title,
-      left: 16,
-      top: 8,
-      textStyle: {
-        fontFamily: "'DM Sans', sans-serif",
-        fontSize: 13,
-        fontWeight: 600,
-        color: '#44403c',
-      },
-    },
+    title: { show: false },
     tooltip: {
       ...SHARED_TOOLTIP,
       formatter: tooltipFormatter,
@@ -217,17 +197,7 @@ export function createMultiLineChartOption(
   }
 
   return {
-    title: {
-      text: title,
-      left: 16,
-      top: 8,
-      textStyle: {
-        fontFamily: "'DM Sans', sans-serif",
-        fontSize: 13,
-        fontWeight: 600,
-        color: '#44403c',
-      },
-    },
+    title: { show: false },
     tooltip: {
       ...SHARED_TOOLTIP,
       formatter: buildTooltip,
