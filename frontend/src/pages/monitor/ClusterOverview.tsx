@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Alert } from 'antd'
+import { Alert, Modal } from 'antd'
 import EChartsReact from 'echarts-for-react/lib/core'
 import echarts from '../../utils/echarts'
 import dayjs, { Dayjs } from 'dayjs'
@@ -57,6 +57,7 @@ const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, q
     invalidOffset: null as number | null,
   })
   const [debugOpen, setDebugOpen] = useState(false)
+  const [lagModalOpen, setLagModalOpen] = useState(false)
   const { overrides, getQ, setOverride, resetOverride, resetAll } = usePromqlOverrides('cluster_overview')
   const { q, defaultPromqls } = useDefaultPromqls(getQ)
 
@@ -275,7 +276,7 @@ const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, q
           { i: 'cg-member', x: 0, y: 2, w: 3, h: 2, component: <StatCard label="CG MEMBERS" value={overviewStats.consumerGroupMemberTotal} /> },
           { i: 'isr-total', x: 3, y: 2, w: 3, h: 2, component: <StatCard label="ISR TOTAL" value={overviewStats.isrTotal} color="#10b981" /> },
           { i: 'non-preferred', x: 6, y: 2, w: 3, h: 2, component: <StatCard label="NON-PREFERRED LEADER" value={overviewStats.nonPreferredLeaderCount} color={overviewStats.nonPreferredLeaderCount != null && overviewStats.nonPreferredLeaderCount > 0 ? '#ef4444' : '#10b981'} /> },
-          { i: 'total-lag', x: 9, y: 2, w: 3, h: 2, component: <StatCard label="TOTAL LAG" value={metrics?.consumer_groups?.reduce((sum, g) => sum + g.total_lag, 0) ?? null} color="#ef4444" /> },
+          { i: 'total-lag', x: 9, y: 2, w: 3, h: 2, component: <StatCard label="TOTAL LAG" value={metrics?.consumer_groups?.reduce((sum, g) => sum + g.total_lag, 0) ?? null} color="#ef4444" onClick={() => setLagModalOpen(true)} /> },
 
           // ===== JMX Stat 卡片（仅 JMX Exporter 可用时显示） =====
           ...(jmxAvailable ? [
@@ -317,6 +318,34 @@ const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, q
         onResetAll={resetAll}
         labelMap={queryLabels}
       />
+      <Modal
+        title="消费组 Lag 详情"
+        open={lagModalOpen}
+        onCancel={() => setLagModalOpen(false)}
+        footer={null}
+        width={700}
+      >
+        <div className="bento-table-header" style={{ gridTemplateColumns: '1fr 1fr 100px 80px' }}>
+          <div>Consumer Group</div>
+          <div>Topic</div>
+          <div style={{ textAlign: 'right' }}>Lag</div>
+          <div style={{ textAlign: 'right' }}>Members</div>
+        </div>
+        <div className="bento-table-body">
+          {(!metrics?.consumer_groups || metrics.consumer_groups.length === 0) ? (
+            <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>暂无消费组数据</div>
+          ) : (
+            metrics.consumer_groups.map((g, i) => (
+              <div key={i} className="bento-table-row" style={{ gridTemplateColumns: '1fr 1fr 100px 80px' }}>
+                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}>{g.group_id}</span>
+                <span style={{ fontSize: 12 }}>{g.topics?.map(t => t.topic).join(', ') || '-'}</span>
+                <span style={{ fontSize: 12, textAlign: 'right', color: g.total_lag > 0 ? '#ef4444' : 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{g.total_lag?.toLocaleString() ?? 0}</span>
+                <span style={{ fontSize: 12, textAlign: 'right' }}>{g.member_count ?? '-'}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </Modal>
     </>
   )
 }
