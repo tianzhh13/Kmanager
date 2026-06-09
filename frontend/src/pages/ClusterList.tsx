@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Button, Modal, Form, Input, Select, message, Upload } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
@@ -8,6 +9,7 @@ import { StatCard, HealthDot, LabelTag, SearchBar } from '../components/bento'
 import './ClusterListV2.css'
 
 const ClusterList: React.FC = () => {
+  const navigate = useNavigate()
   const dispatch = useAppDispatch()
   const { clusters, total, loading } = useAppSelector((state) => state.clusters)
   const { user } = useAppSelector((state) => state.auth)
@@ -353,7 +355,7 @@ const ClusterList: React.FC = () => {
                       </button>
                     </div>
                   )}
-                  <button className="bento-action-btn bento-action-btn--brand" onClick={() => window.location.hash = `/monitor?clusterId=${cluster.cluster_id}`}>
+                  <button className="bento-action-btn bento-action-btn--brand" onClick={() => navigate(`/monitor?clusterId=${cluster.cluster_id}`)}>
                     监控
                   </button>
                 </div>
