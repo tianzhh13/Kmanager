@@ -104,6 +104,7 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
   display: inline-block;
+  width: fit-content;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -303,7 +304,7 @@
 /* --- Custom Row (replaces Ant Table) --- */
 .bento-table-header {
   display: grid;
-  gap: 0;
+  gap: 12px;
   padding: 12px 24px;
   background: var(--card);
   border: 1px solid var(--border);
@@ -324,7 +325,7 @@
 
 .bento-table-row {
   display: grid;
-  gap: 0;
+  gap: 12px;
   padding: 14px 24px;
   background: var(--card);
   align-items: center;
