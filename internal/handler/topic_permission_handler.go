@@ -33,7 +33,7 @@ func (h *TopicPermissionHandler) AssignTopicPermission(c *gin.Context) {
 	operatorID := middleware.GetUserID(c)
 
 	if err := h.topicPermSvc.AssignTopicPermission(c.Request.Context(), &req, operatorID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to assign permission"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -51,7 +51,7 @@ func (h *TopicPermissionHandler) BatchAssignTopicPermission(c *gin.Context) {
 	operatorID := middleware.GetUserID(c)
 
 	if err := h.topicPermSvc.BatchAssignTopicPermission(c.Request.Context(), &req, operatorID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to assign permissions"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -70,7 +70,7 @@ func (h *TopicPermissionHandler) RevokeTopicPermission(c *gin.Context) {
 	}
 
 	if err := h.topicPermSvc.RevokeTopicPermission(c.Request.Context(), &req); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -87,7 +87,7 @@ func (h *TopicPermissionHandler) GetUserTopicPermissions(c *gin.Context) {
 
 	permissions, err := h.topicPermSvc.GetUserTopicPermissions(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -110,7 +110,7 @@ func (h *TopicPermissionHandler) GetUserClusterTopicPermissions(c *gin.Context) 
 
 	topics, err := h.topicPermSvc.GetUserClusterTopicPermissions(c.Request.Context(), userID, clusterID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 

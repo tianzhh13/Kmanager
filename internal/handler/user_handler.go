@@ -32,7 +32,7 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 
 	result, err := h.userSvc.CreateUser(c.Request.Context(), &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -72,7 +72,7 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 
 	result, err := h.userSvc.UpdateUser(c.Request.Context(), userID, &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -90,7 +90,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 	currentUserID := middleware.GetUserID(c)
 
 	if err := h.userSvc.DeleteUser(c.Request.Context(), userID, currentUserID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *UserHandler) UpdatePassword(c *gin.Context) {
 	}
 
 	if err := h.userSvc.UpdatePassword(c.Request.Context(), userID, &req); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *UserHandler) DisableUser(c *gin.Context) {
 	currentUserID := middleware.GetUserID(c)
 
 	if err := h.userSvc.DisableUser(c.Request.Context(), userID, currentUserID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -149,7 +149,7 @@ func (h *UserHandler) EnableUser(c *gin.Context) {
 	}
 
 	if err := h.userSvc.EnableUser(c.Request.Context(), userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -179,7 +179,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 
 	users, total, err := h.userSvc.ListUsers(c.Request.Context(), offset, pageSize, keyword)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 func (h *UserHandler) GetStats(c *gin.Context) {
 	countByRole, err := h.userSvc.CountByRole(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 

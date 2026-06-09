@@ -71,7 +71,7 @@ func (h *ClusterHandler) UploadKeytab(c *gin.Context) {
 	// 保存到临时目录
 	tempID, err := h.clusterSvc.SaveTempKeytab(c.Request.Context(), data)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -89,7 +89,7 @@ func (h *ClusterHandler) DeleteTempKeytab(c *gin.Context) {
 		return
 	}
 	if err := h.clusterSvc.DeleteTempKeytab(c.Request.Context(), tempID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(200, gin.H{"message": "temp keytab deleted"})
@@ -108,7 +108,7 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 
 	result, err := h.clusterSvc.CreateCluster(c.Request.Context(), &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 	}
 
 	if err := h.clusterSvc.UpdateCluster(c.Request.Context(), clusterID, &req); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -146,7 +146,7 @@ func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 	}
 
 	if err := h.clusterSvc.DeleteCluster(c.Request.Context(), clusterID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -217,7 +217,7 @@ func (h *ClusterHandler) ListClusters(c *gin.Context) {
 
 	clusters, total, err := h.clusterSvc.ListClusters(c.Request.Context(), userID, models.UserRole(role), offset, pageSize)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -306,7 +306,7 @@ func (h *ClusterHandler) GrantAccess(c *gin.Context) {
 	}
 
 	if err := h.clusterSvc.GrantClusterAccess(c.Request.Context(), clusterID, req.UserID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -341,7 +341,7 @@ func (h *ClusterHandler) RevokeAccess(c *gin.Context) {
 	}
 
 	if err := h.clusterSvc.RevokeClusterAccess(c.Request.Context(), clusterID, req.UserID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -358,7 +358,7 @@ func (h *ClusterHandler) ListClusterUsers(c *gin.Context) {
 
 	users, err := h.clusterSvc.ListClusterUsers(c.Request.Context(), clusterID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -375,7 +375,7 @@ func (h *ClusterHandler) ListUserClusters(c *gin.Context) {
 
 	clusters, err := h.clusterSvc.ListUserClusters(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 

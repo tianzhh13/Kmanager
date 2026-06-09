@@ -35,7 +35,7 @@ func (h *TopicHandler) CreateTopic(c *gin.Context) {
 	}
 
 	if err := h.topicSvc.CreateTopic(c.Request.Context(), &req); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -54,7 +54,7 @@ func (h *TopicHandler) DeleteTopic(c *gin.Context) {
 	}
 
 	if err := h.topicSvc.DeleteTopic(c.Request.Context(), clusterID, topicName); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -70,7 +70,7 @@ func (h *TopicHandler) UpdateTopicConfig(c *gin.Context) {
 	}
 
 	if err := h.topicSvc.UpdateTopicConfig(c.Request.Context(), &req); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -90,7 +90,7 @@ func (h *TopicHandler) GetTopicConfig(c *gin.Context) {
 
 	config, err := h.topicSvc.GetTopicConfig(c.Request.Context(), clusterID, topicName)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -110,7 +110,7 @@ func (h *TopicHandler) GetTopicConsumerGroups(c *gin.Context) {
 
 	groups, err := h.topicSvc.GetTopicConsumerGroups(c.Request.Context(), clusterID, topicName)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *TopicHandler) GetTopic(c *gin.Context) {
 
 	topic, err := h.topicSvc.GetTopic(c.Request.Context(), clusterID, topicName)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -175,7 +175,7 @@ func (h *TopicHandler) ListTopics(c *gin.Context) {
 	if userRole == string(models.RoleNormalUser) && req.ClusterID > 0 {
 		allowedTopics, err := h.permissionSvc.GetAllowedTopics(c.Request.Context(), userID, req.ClusterID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 		// 如果用户没有任何 Topic 权限，返回空列表
@@ -188,7 +188,7 @@ func (h *TopicHandler) ListTopics(c *gin.Context) {
 
 	resp, err := h.topicSvc.ListTopics(c.Request.Context(), &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -205,7 +205,7 @@ func (h *TopicHandler) SyncTopics(c *gin.Context) {
 	}
 
 	if err := h.topicSvc.SyncTopics(c.Request.Context(), clusterID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 

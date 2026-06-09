@@ -30,7 +30,7 @@ func (h *ScramUserHandler) CreateUser(c *gin.Context) {
 	}
 
 	if err := h.scramSvc.CreateUser(c.Request.Context(), &req); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -58,7 +58,7 @@ func (h *ScramUserHandler) DeleteUser(c *gin.Context) {
 	}
 
 	if err := h.scramSvc.DeleteUser(c.Request.Context(), clusterID, username); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -101,7 +101,7 @@ func (h *ScramUserHandler) ListUsers(c *gin.Context) {
 
 	resp, err := h.scramSvc.ListUsers(c.Request.Context(), &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -118,7 +118,7 @@ func (h *ScramUserHandler) SyncUsers(c *gin.Context) {
 	}
 
 	if err := h.scramSvc.SyncUsers(c.Request.Context(), clusterID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
