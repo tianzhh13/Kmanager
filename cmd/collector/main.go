@@ -11,6 +11,8 @@ import (
 	"kafka-management-platform/internal/database"
 	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/repository"
+	"kafka-management-platform/internal/service/hostmapping"
+	"kafka-management-platform/pkg/kafka"
 
 	"gorm.io/gorm"
 )
@@ -56,6 +58,12 @@ func main() {
 
 	// 初始化 Repository
 	clusterRepo := repository.NewClusterRepository(db)
+
+	// 初始化主机映射服务（带缓存）
+	hostMappingRepo := repository.NewHostMappingRepository(db)
+	hostMappingSvc := hostmapping.NewService(hostMappingRepo)
+	// 设置 kafka 包的主机名解析器
+	kafka.HostResolver = hostMappingSvc.Resolve
 
 	// 创建并启动 Collector
 	c := collector.NewCollector(cfg, clusterRepo)
