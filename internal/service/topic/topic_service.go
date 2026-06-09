@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 
+	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/pkg/encryption"
@@ -396,14 +396,14 @@ func (s *Service) ListTopics(ctx context.Context, req *ListTopicsRequest) (*List
 
 // SyncTopics 同步集群的所有 Topic 数据
 func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
-	log.Printf("[SyncTopics] Starting sync for cluster %d", clusterID)
+	logger.Info("SyncTopics: starting sync", "cluster_id", clusterID)
 
 	// 获取集群配置
 	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster: %w", err)
 	}
-	log.Printf("[SyncTopics] Cluster found: %s, bootstrap: %s", cluster.ClusterName, cluster.BootstrapServers)
+	logger.Info("SyncTopics: cluster found", "name", cluster.ClusterName, "bootstrap", cluster.BootstrapServers)
 
 	// 解密认证配置
 	var authConfigJSON string
@@ -421,21 +421,21 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
 	defer adminClient.Close()
-	log.Printf("[SyncTopics] Kafka admin client created successfully")
+	logger.Info("SyncTopics: kafka admin client created")
 
 	// 从 Kafka 获取所有 Topic 列表
 	kafkaTopics, err := adminClient.ListTopics()
 	if err != nil {
 		return fmt.Errorf("failed to list topics from kafka: %w", err)
 	}
-	log.Printf("[SyncTopics] Found %d topics from Kafka: %v", len(kafkaTopics), getTopicNames(kafkaTopics))
+	logger.Info("SyncTopics: found topics from kafka", "count", len(kafkaTopics))
 
 	// 从数据库获取当前 Topic 列表
 	dbTopics, err := s.topicRepo.ListByCluster(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to list topics from database: %w", err)
 	}
-	log.Printf("[SyncTopics] Found %d topics in database", len(dbTopics))
+	logger.Info("SyncTopics: found topics in db", "count", len(dbTopics))
 
 	// 构建 Topic 名称映射
 	kafkaTopicMap := make(map[string]sarama.TopicDetail)
@@ -458,7 +458,7 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 			dbTopic.ReplicationFactor = kafkaTopic.ReplicationFactor
 			dbTopic.SyncStatus = "synced"
 			if err := s.topicRepo.Update(ctx, dbTopic); err != nil {
-				log.Printf("[SyncTopics] Failed to update topic %s: %v", topicName, err)
+				logger.Error("SyncTopics: failed to update topic", "topic", topicName, "error", err)
 				continue
 			}
 			updateCount++
@@ -472,7 +472,7 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 				SyncStatus:        "synced",
 			}
 			if err := s.topicRepo.Create(ctx, newTopic); err != nil {
-				log.Printf("[SyncTopics] Failed to create topic %s: %v", topicName, err)
+				logger.Error("SyncTopics: failed to create topic", "topic", topicName, "error", err)
 				continue
 			}
 			newCount++
@@ -485,14 +485,14 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 		if _, exists := kafkaTopicMap[topicName]; !exists {
 			// Topic 在 Kafka 中不存在，从数据库删除
 			if err := s.topicRepo.Delete(ctx, dbTopic.TopicID); err != nil {
-				log.Printf("[SyncTopics] Failed to delete topic %s: %v", topicName, err)
+				logger.Error("SyncTopics: failed to delete topic", "topic", topicName, "error", err)
 				continue
 			}
 			deleteCount++
 		}
 	}
 
-	log.Printf("[SyncTopics] Sync completed for cluster %d: new=%d, updated=%d, deleted=%d", clusterID, newCount, updateCount, deleteCount)
+	logger.Info("SyncTopics: completed", "cluster_id", clusterID, "new", newCount, "updated", updateCount, "deleted", deleteCount)
 	return nil
 }
 
