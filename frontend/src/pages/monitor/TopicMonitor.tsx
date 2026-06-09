@@ -106,7 +106,7 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
       const now = dayjs()
       const queries: BatchQueryItem[] = [{
         id: 'topic_list',
-        query: `kafka_topic_partitions{cluster_id="${cluster.cluster_id}"}`,
+        query: `kafka_topic_partitions{app="kmanager",cluster_id="${cluster.cluster_id}"}`,
         start: now.subtract(1, 'minute').unix(),
         end: now.unix(),
         step: '60s',
@@ -154,18 +154,18 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
       const queries: BatchQueryItem[] = [
         {
           id: 'produce_rate',
-          query: q('produce_rate', `rate(kafka_topic_partition_current_offset{cluster_id="${clusterId}",topic="${selectedTopic}"}[30s])`),
+          query: q('produce_rate', `rate(kafka_topic_partition_current_offset{app="kmanager",cluster_id="${clusterId}",topic="${selectedTopic}"}[30s])`),
           start: s, end: e, step,
         },
       ]
 
       if (jmxAvailable) {
         queries.push(
-          { id: 'log_size', query: q('log_size', `max by (partition) (kafka_log_log_size{cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
-          { id: 'log_end_offset', query: q('log_end_offset', `max by (partition) (kafka_log_log_logendoffset{cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
-          { id: 'isr_count', query: q('isr_count', `max by (partition) (kafka_cluster_partition_insyncreplicascount{cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
-          { id: 'replica_count', query: q('replica_count', `max by (partition) (kafka_cluster_partition_replicascount{cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
-          { id: 'under_replicated', query: q('under_replicated', `sum(kafka_cluster_partition_underreplicated{cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
+          { id: 'log_size', query: q('log_size', `max by (partition) (kafka_log_log_size{app="kmanager",cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
+          { id: 'log_end_offset', query: q('log_end_offset', `max by (partition) (kafka_log_log_logendoffset{app="kmanager",cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
+          { id: 'isr_count', query: q('isr_count', `max by (partition) (kafka_cluster_partition_insyncreplicascount{app="kmanager",cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
+          { id: 'replica_count', query: q('replica_count', `max by (partition) (kafka_cluster_partition_replicascount{app="kmanager",cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
+          { id: 'under_replicated', query: q('under_replicated', `sum(kafka_cluster_partition_underreplicated{app="kmanager",cluster_id="${clusterId}",topic="${selectedTopic}"})`), start: s, end: e, step },
         )
       }
 
@@ -173,12 +173,12 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
         queries.push(
           {
             id: 'consume_rate',
-            query: q('consume_rate', `rate(kafka_consumergroup_current_offset{cluster_id="${clusterId}",topic="${selectedTopic}",consumergroup="${selectedConsumerGroup}"}[30s])`),
+            query: q('consume_rate', `rate(kafka_consumergroup_current_offset{app="kmanager",cluster_id="${clusterId}",topic="${selectedTopic}",consumergroup="${selectedConsumerGroup}"}[30s])`),
             start: s, end: e, step,
           },
           {
             id: 'lag',
-            query: q('lag', `kafka_consumergroup_lag{cluster_id="${clusterId}",topic="${selectedTopic}",consumergroup="${selectedConsumerGroup}"}`),
+            query: q('lag', `kafka_consumergroup_lag{app="kmanager",cluster_id="${clusterId}",topic="${selectedTopic}",consumergroup="${selectedConsumerGroup}"}`),
             start: s, end: e, step,
           },
         )
