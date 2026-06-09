@@ -148,7 +148,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
         containerPadding={[0, 0]}
       >
         {items.map(item => (
-          <div key={item.i} style={{ overflow: 'auto' }}>
+          <div key={item.i} style={{ overflow: 'auto', pointerEvents: 'auto' }}>
             {item.component}
           </div>
         ))}
