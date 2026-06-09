@@ -11,7 +11,8 @@ import (
 )
 
 // collectJMXMetrics 采集 JMX Exporter 指标（per-broker 粒度）
-func (c *Collector) collectJMXMetrics(ctx context.Context, cluster *models.Cluster) []victoriametrics.Metric {
+// brokerHostMap: host → broker_id 映射，用于匹配实际 Kafka broker ID
+func (c *Collector) collectJMXMetrics(ctx context.Context, cluster *models.Cluster, brokerHostMap map[string]int) []victoriametrics.Metric {
 	if cluster.JMXExporterURLs == "" {
 		return nil
 	}
@@ -95,7 +96,12 @@ func (c *Collector) collectJMXMetrics(ctx context.Context, cluster *models.Clust
 			for k, v := range baseLabels {
 				brokerLabels[k] = v
 			}
-			brokerLabels["broker_id"] = strconv.Itoa(broker.BrokerID)
+			// 使用实际 Kafka broker ID（如果可用），否则用 JMX 序号
+			actualBrokerID := broker.BrokerID
+			if id, ok := brokerHostMap[broker.BrokerHost]; ok {
+				actualBrokerID = id
+			}
+			brokerLabels["broker_id"] = strconv.Itoa(actualBrokerID)
 			brokerLabels["broker_host"] = broker.BrokerHost
 
 			for _, m := range broker.Metrics {

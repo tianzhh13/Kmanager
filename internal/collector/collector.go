@@ -186,14 +186,29 @@ func (c *Collector) collectAll() {
 
 // collectCluster 采集单个集群的指标（AdminClient + JMX 并行，合并写入 VM）
 func (c *Collector) collectCluster(ctx context.Context, cluster *models.Cluster) (int, error) {
-	// 预获取共享数据：分区详情（Admin 和 JMX 都需要，只请求一次）
+	// 1. 先获取集群元数据（包含 broker 列表），用于 JMX broker_id 匹配
+	metrics, err := c.monitorSvc.GetClusterMetrics(ctx, cluster.ClusterID)
+	if err != nil {
+		logger.Warn("Failed to get cluster metrics for broker list", "cluster_id", cluster.ClusterID, "error", err)
+		metrics = nil
+	}
+
+	// 构建 host → broker_id 映射（用于 JMX 指标匹配实际 Kafka broker ID）
+	brokerHostMap := make(map[string]int)
+	if metrics != nil {
+		for _, b := range metrics.Brokers {
+			brokerHostMap[b.Host] = int(b.ID)
+		}
+	}
+
+	// 2. 预获取共享数据：分区详情（Admin 和 JMX 都需要，只请求一次）
 	partitionDetails, err := c.monitorSvc.GetTopicPartitionDetails(ctx, cluster.ClusterID)
 	if err != nil {
 		logger.Warn("Failed to get partition details", "cluster_id", cluster.ClusterID, "error", err)
 		partitionDetails = nil
 	}
 
-	// 并行采集 AdminClient 指标 + JMX 指标
+	// 3. 并行采集 AdminClient 指标 + JMX 指标
 	var (
 		adminMetrics []victoriametrics.Metric
 		jmxMetrics   []victoriametrics.Metric
@@ -208,7 +223,7 @@ func (c *Collector) collectCluster(ctx context.Context, cluster *models.Cluster)
 	}()
 	go func() {
 		defer wg.Done()
-		jmxMetrics = c.collectJMXMetrics(ctx, cluster)
+		jmxMetrics = c.collectJMXMetrics(ctx, cluster, brokerHostMap)
 	}()
 	wg.Wait()
 
