@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/pkg/encryption"
@@ -259,7 +260,7 @@ func (s *Service) CreateCluster(ctx context.Context, req *CreateClusterRequest) 
 	if req.AuthType == models.AuthTypeKerberos {
 		if err := s.saveKerberosFiles(authConfig, cluster.ClusterID, keytabDataToSave); err != nil {
 			// 文件保存失败，但集群已创建，记录错误但不回滚
-			fmt.Printf("[WARN] failed to save kerberos files: %v\n", err)
+			logger.Warn("failed to save kerberos files", "error", err)
 		}
 		// 删除临时 keytab 数据
 		if keytabTempID, ok := req.AuthConfig["keytab_temp_id"].(string); ok {

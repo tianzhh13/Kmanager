@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
+	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
 	"kafka-management-platform/pkg/encryption"
@@ -66,8 +66,7 @@ type ListUsersResponse struct {
 
 // CreateUser 创建 SCRAM 用户
 func (s *Service) CreateUser(ctx context.Context, req *CreateUserRequest) error {
-	log.Printf("[CreateUser] Creating SCRAM user: cluster=%d, username=%s, mechanism=%s",
-		req.ClusterID, req.Username, req.Mechanism)
+	logger.Info("CreateUser: creating SCRAM user", "cluster_id", req.ClusterID, "username", req.Username, "mechanism", req.Mechanism)
 
 	// 检查用户是否已存在
 	exists, err := s.userRepo.Exists(ctx, req.ClusterID, req.Username)
@@ -126,13 +125,13 @@ func (s *Service) CreateUser(ctx context.Context, req *CreateUserRequest) error 
 		return fmt.Errorf("failed to save user to database: %w", err)
 	}
 
-	log.Printf("[CreateUser] User created successfully: %s", req.Username)
+	logger.Info("CreateUser: user created successfully", "username", req.Username)
 	return nil
 }
 
 // DeleteUser 删除 SCRAM 用户
 func (s *Service) DeleteUser(ctx context.Context, clusterID int64, username string) error {
-	log.Printf("[DeleteUser] Deleting SCRAM user: cluster=%d, username=%s", clusterID, username)
+	logger.Info("DeleteUser: deleting SCRAM user", "cluster_id", clusterID, "username", username)
 
 	// 获取用户信息
 	user, err := s.userRepo.FindByUsername(ctx, clusterID, username)
@@ -173,13 +172,13 @@ func (s *Service) DeleteUser(ctx context.Context, clusterID int64, username stri
 		return fmt.Errorf("failed to delete user from database: %w", err)
 	}
 
-	log.Printf("[DeleteUser] User deleted successfully: %s", username)
+	logger.Info("DeleteUser: user deleted successfully", "username", username)
 	return nil
 }
 
 // ListUsers 列出 SCRAM 用户
 func (s *Service) ListUsers(ctx context.Context, req *ListUsersRequest) (*ListUsersResponse, error) {
-	log.Printf("[ListUsers] Listing users: cluster=%d, offset=%d, limit=%d", req.ClusterID, req.Offset, req.Limit)
+	logger.Info("ListUsers: listing users", "cluster_id", req.ClusterID, "offset", req.Offset, "limit", req.Limit)
 
 	if req.Limit == 0 {
 		req.Limit = 20
@@ -190,7 +189,7 @@ func (s *Service) ListUsers(ctx context.Context, req *ListUsersRequest) (*ListUs
 		return nil, fmt.Errorf("failed to list users: %w", err)
 	}
 
-	log.Printf("[ListUsers] Found %d users", len(users))
+	logger.Info("ListUsers: found users", "count", len(users))
 	return &ListUsersResponse{
 		Data:  users,
 		Total: total,
@@ -199,7 +198,7 @@ func (s *Service) ListUsers(ctx context.Context, req *ListUsersRequest) (*ListUs
 
 // SyncUsers 同步 Kafka 用户到数据库
 func (s *Service) SyncUsers(ctx context.Context, clusterID int64) error {
-	log.Printf("[SyncUsers] Syncing users for cluster %d", clusterID)
+	logger.Info("SyncUsers: syncing users", "cluster_id", clusterID)
 
 	// 获取集群配置
 	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
@@ -229,7 +228,7 @@ func (s *Service) SyncUsers(ctx context.Context, clusterID int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to list users from kafka: %w", err)
 	}
-	log.Printf("[SyncUsers] Found %d users from Kafka", len(kafkaUsers))
+	logger.Info("SyncUsers: found users from kafka", "count", len(kafkaUsers))
 
 	// 从数据库获取当前用户列表
 	dbUsers, err := s.userRepo.ListByCluster(ctx, clusterID)
@@ -263,13 +262,13 @@ func (s *Service) SyncUsers(ctx context.Context, clusterID int64) error {
 				LastSyncAt: &now,
 			}
 			if err := s.userRepo.Create(ctx, newUser); err != nil {
-				log.Printf("[SyncUsers] Failed to create user %s: %v", kafkaUser.User, err)
+				logger.Error("SyncUsers: failed to create user", "username", kafkaUser.User, "error", err)
 				continue
 			}
 			newCount++
 		}
 	}
 
-	log.Printf("[SyncUsers] Sync completed: new=%d", newCount)
+	logger.Info("SyncUsers: completed", "new", newCount)
 	return nil
 }
