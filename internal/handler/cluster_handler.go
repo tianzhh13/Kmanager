@@ -391,7 +391,7 @@ func (h *ClusterHandler) TestConnection(c *gin.Context) {
 	}
 
 	if err := h.clusterSvc.TestConnection(c.Request.Context(), clusterID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "connection test failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -407,7 +407,7 @@ func (h *ClusterHandler) TestConnectionForCreate(c *gin.Context) {
 	}
 
 	if err := h.clusterSvc.TestConnectionForCreate(c.Request.Context(), &req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "connection test failed"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
