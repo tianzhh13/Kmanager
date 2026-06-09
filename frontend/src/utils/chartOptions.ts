@@ -86,9 +86,19 @@ const ROUNDED_LINE_STYLE = {
 
 // ---- Empty state helper ----
 
-function emptyOption(_title?: string, emptyText = '暂无数据'): Record<string, any> {
+function emptyOption(title?: string, emptyText = '暂无数据'): Record<string, any> {
   return {
-    title: { show: false },
+    title: title ? {
+      text: title,
+      left: 16,
+      top: 8,
+      textStyle: {
+        fontFamily: "'DM Sans', sans-serif",
+        fontSize: 13,
+        fontWeight: 600,
+        color: '#44403c',
+      },
+    } : { show: false },
     graphic: {
       type: 'text',
       left: 'center',
@@ -114,14 +124,14 @@ export interface AreaChartData {
 }
 
 export function createAreaChartOption(
-  _title: string,
+  title: string,
   data: AreaChartData,
   color: string = BRAND_COLORS[0],
   unit: string = '',
   formatter?: (value: number) => string,
 ): Record<string, any> {
   const hasData = data.times.length > 0 && data.values.some(v => v !== null && v !== undefined)
-  if (!hasData) return emptyOption()
+  if (!hasData) return emptyOption(title)
 
   const tooltipFormatter = (params: any) => {
     if (!params || params.length === 0) return ''
@@ -133,7 +143,17 @@ export function createAreaChartOption(
   }
 
   return {
-    title: { show: false },
+    title: {
+      text: title,
+      left: 16,
+      top: 8,
+      textStyle: {
+        fontFamily: "'DM Sans', sans-serif",
+        fontSize: 13,
+        fontWeight: 600,
+        color: '#44403c',
+      },
+    },
     tooltip: {
       ...SHARED_TOOLTIP,
       formatter: tooltipFormatter,
@@ -197,7 +217,17 @@ export function createMultiLineChartOption(
   }
 
   return {
-    title: { show: false },
+    title: {
+      text: title,
+      left: 16,
+      top: 8,
+      textStyle: {
+        fontFamily: "'DM Sans', sans-serif",
+        fontSize: 13,
+        fontWeight: 600,
+        color: '#44403c',
+      },
+    },
     tooltip: {
       ...SHARED_TOOLTIP,
       formatter: buildTooltip,
