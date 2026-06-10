@@ -14,14 +14,15 @@ import (
 
 // OverviewResponse Dashboard 概览响应
 type OverviewResponse struct {
-	Clusters       ClusterStats        `json:"clusters"`
-	TopicsTotal    int64               `json:"topics_total"`
-	BrokersOnline  *int                `json:"brokers_online"`   // nil when VM unreachable
-	PartitionsTotal *int               `json:"partitions_total"` // nil when VM unreachable
-	UsersTotal     int64               `json:"users_total"`
-	ConsumerGroups *ConsumerGroupStats `json:"consumer_groups"` // nil when VM unreachable
-	AuthTypeDist   map[string]int      `json:"auth_type_distribution"`
-	ClusterSizes   []ClusterSizeItem   `json:"cluster_sizes"`
+	Clusters              ClusterStats           `json:"clusters"`
+	TopicsTotal           int64                  `json:"topics_total"`
+	BrokersOnline         *int                   `json:"brokers_online"`   // nil when VM unreachable
+	PartitionsTotal       *int                   `json:"partitions_total"` // nil when VM unreachable
+	UsersTotal            int64                  `json:"users_total"`
+	ConsumerGroups        *ConsumerGroupStats    `json:"consumer_groups"` // nil when VM unreachable
+	ConsumerGroupDetails  []ConsumerGroupDetail  `json:"consumer_group_details"`
+	AuthTypeDist          map[string]int         `json:"auth_type_distribution"`
+	ClusterSizes          []ClusterSizeItem      `json:"cluster_sizes"`
 }
 
 // ClusterStats 集群统计
@@ -37,6 +38,15 @@ type ClusterStats struct {
 type ConsumerGroupStats struct {
 	Total    int   `json:"total"`
 	TotalLag int64 `json:"total_lag"`
+}
+
+// ConsumerGroupDetail 消费者组详情（按集群分组）
+type ConsumerGroupDetail struct {
+	ClusterName string `json:"cluster_name"`
+	GroupID     string `json:"group_id"`
+	Topic       string `json:"topic"`
+	TotalLag    int64  `json:"total_lag"`
+	MemberCount int    `json:"member_count"`
 }
 
 // ClusterSizeItem 集群规模条目
@@ -135,6 +145,24 @@ func (s *Service) GetOverview(ctx context.Context) (*OverviewResponse, error) {
 				Total:    vmData.CGTotal,
 				TotalLag: vmData.CGLag,
 			}
+		}
+		// 转换 CGDetails（需要从 clusters 映射 cluster_name）
+		if len(vmData.CGDetails) > 0 {
+			clusterNameMap := make(map[int64]string, len(clusters))
+			for _, c := range clusters {
+				clusterNameMap[c.ClusterID] = c.ClusterName
+			}
+			details := make([]ConsumerGroupDetail, len(vmData.CGDetails))
+			for i, d := range vmData.CGDetails {
+				details[i] = ConsumerGroupDetail{
+					ClusterName: clusterNameMap[d.ClusterID],
+					GroupID:     d.GroupID,
+					Topic:       d.Topic,
+					TotalLag:    d.TotalLag,
+					MemberCount: d.MemberCount,
+				}
+			}
+			resp.ConsumerGroupDetails = details
 		}
 	}
 
