@@ -4,9 +4,6 @@
    Style:  Premium Ops Console × Soft Structuralism
    ============================================ */
 
-/* --- Google Fonts: Plus Jakarta Sans for brand & body --- */
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800&family=JetBrains+Mono:wght@400;500;700&display=swap');
-
 /* --- CSS Design Tokens --- */
 :root {
   /* Brand color — single Coral accent (unified from dual-color) */
