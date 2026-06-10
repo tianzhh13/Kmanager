@@ -334,6 +334,22 @@
   cursor: default;
 }
 
+/* 表格单元格溢出处理：防止长文本撑开列 */
+.bento-table-header > *,
+.bento-table-row > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 需要换行的单元格用这个 class */
+.bento-table-cell-wrap {
+  white-space: normal !important;
+  word-break: break-all;
+  overflow-wrap: break-word;
+}
+
 .bento-table-row:last-child {
   border-bottom: none;
 }

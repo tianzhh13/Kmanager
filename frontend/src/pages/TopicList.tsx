@@ -377,10 +377,10 @@ const TopicList: React.FC = () => {
         open={configModalVisible}
         footer={null}
         onCancel={() => setConfigModalVisible(false)}
-        width={720}
+        width={750}
       >
         <Spin spinning={configLoading}>
-          <div className="bento-table-header" style={{ gridTemplateColumns: '2fr 2fr 1.2fr 80px 80px' }}>
+          <div className="bento-table-header" style={{ gridTemplateColumns: 'minmax(150px, 1.5fr) minmax(150px, 1.5fr) 100px 60px 60px' }}>
             <div>配置项</div>
             <div>值</div>
             <div>来源</div>
@@ -389,9 +389,9 @@ const TopicList: React.FC = () => {
           </div>
           <div className="bento-table-body">
             {configData.map((item: any) => (
-              <div key={item.name} className="bento-table-row" style={{ gridTemplateColumns: '2fr 2fr 1.2fr 80px 80px' }}>
-                <span className="text-mono" style={{ fontSize: 12 }}>{item.name}</span>
-                <span className="text-mono" style={{ fontSize: 12 }}>{item.value}</span>
+              <div key={item.name} className="bento-table-row" style={{ gridTemplateColumns: 'minmax(150px, 1.5fr) minmax(150px, 1.5fr) 100px 60px 60px' }}>
+                <span className="text-mono bento-table-cell-wrap" style={{ fontSize: 12 }} title={item.name}>{item.name}</span>
+                <span className="text-mono bento-table-cell-wrap" style={{ fontSize: 12 }} title={item.value}>{item.value}</span>
                 <span style={{ fontSize: 12 }}>{item.source}</span>
                 <LabelTag text={item.read_only ? '是' : '否'} color={item.read_only ? 'neutral' : 'green'} />
                 <LabelTag text={item.is_default ? '是' : '否'} color={item.is_default ? 'neutral' : 'blue'} />
@@ -413,15 +413,15 @@ const TopicList: React.FC = () => {
           {cgData.length === 0 && !cgLoading && (
             <div style={{ textAlign: 'center', color: 'var(--text-3)', padding: 40, fontSize: 13 }}>该 Topic 暂无消费组</div>
           )}
-          <div className="bento-table-header" style={{ gridTemplateColumns: '2fr 1fr 100px' }}>
+          <div className="bento-table-header" style={{ gridTemplateColumns: 'minmax(200px, 2fr) 100px 80px' }}>
             <div>消费组</div>
             <div>状态</div>
             <div style={{ textAlign: 'center' }}>成员数</div>
           </div>
           <div className="bento-table-body">
             {cgData.map((item: any) => (
-              <div key={item.group_id} className="bento-table-row" style={{ gridTemplateColumns: '2fr 1fr 100px' }}>
-                <span className="text-mono" style={{ fontSize: 12, fontWeight: 600 }}>{item.group_id}</span>
+              <div key={item.group_id} className="bento-table-row" style={{ gridTemplateColumns: 'minmax(200px, 2fr) 100px 80px' }}>
+                <span className="text-mono bento-table-cell-wrap" style={{ fontSize: 12, fontWeight: 600, wordBreak: 'break-all' }} title={item.group_id}>{item.group_id}</span>
                 <LabelTag text={item.state} color={item.state === 'Stable' ? 'green' : item.state === 'Empty' ? 'orange' : 'red'} />
                 <span style={{ textAlign: 'center', fontSize: 13 }}>{item.member_count}</span>
               </div>

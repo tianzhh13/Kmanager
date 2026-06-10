@@ -482,9 +482,9 @@ const ACLList: React.FC = () => {
         footer={[
           <Button key="close" onClick={() => setViewAclVisible(false)}>关闭</Button>,
         ]}
-        width={800}
+        width={850}
       >
-        <div className="bento-table-header" style={{ gridTemplateColumns: '1fr 1.5fr 1fr 80px 80px 80px' }}>
+        <div className="bento-table-header" style={{ gridTemplateColumns: '90px minmax(150px, 1.5fr) 100px 70px 100px 70px' }}>
           <div>资源类型</div>
           <div>资源名称</div>
           <div>操作</div>
@@ -496,12 +496,12 @@ const ACLList: React.FC = () => {
           {viewAclLoading && <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>加载中...</div>}
           {!viewAclLoading && userAcls.length === 0 && <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>该用户暂无权限规则</div>}
           {!viewAclLoading && userAcls.map((acl, index) => (
-            <div key={`${acl.resource_type}-${acl.resource_name}-${acl.operation}-${index}`} className="bento-table-row" style={{ gridTemplateColumns: '1fr 1.5fr 1fr 80px 80px 80px' }}>
+            <div key={`${acl.resource_type}-${acl.resource_name}-${acl.operation}-${index}`} className="bento-table-row" style={{ gridTemplateColumns: '90px minmax(150px, 1.5fr) 100px 70px 100px 70px' }}>
               <LabelTag text={acl.resource_type} color={getResourceTypeColor(acl.resource_type)} />
-              <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}>{acl.resource_name}</span>
-              <span style={{ fontSize: 12 }}>{acl.operation}</span>
+              <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }} title={acl.resource_name}>{acl.resource_name}</span>
+              <span style={{ fontSize: 12 }} title={acl.operation}>{acl.operation}</span>
               <LabelTag text={acl.permission_type} color={acl.permission_type === 'Allow' ? 'green' : 'red'} />
-              <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }}>{acl.host}</span>
+              <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }} title={acl.host}>{acl.host}</span>
               <div style={{ textAlign: 'right' }}>
                 <button className="bento-action-btn bento-action-btn--danger" style={{ fontSize: 10 }} onClick={() => handleDeleteAcl(acl)}>删除</button>
               </div>
