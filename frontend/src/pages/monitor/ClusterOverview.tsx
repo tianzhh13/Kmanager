@@ -149,7 +149,7 @@ const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, q
         { id: 'cgMemberCount', query: q('cgMemberCount', `count(kafka_consumergroup_members{app="kmanager",cluster_id="${clusterId}",consumergroup!~"__.*"})`), start: instantStart, end: instantEnd, step: '60s' },
         { id: 'cgMemberTotal', query: q('cgMemberTotal', `sum(kafka_consumergroup_members{app="kmanager",cluster_id="${clusterId}",consumergroup!~"__.*"})`), start: instantStart, end: instantEnd, step: '60s' },
         { id: 'isrTotal', query: q('isrTotal', `sum(kafka_topic_partition_in_sync_replica{app="kmanager",cluster_id="${clusterId}"})`), start: instantStart, end: instantEnd, step: '60s' },
-        { id: 'nonPreferred', query: q('nonPreferred', `count(kafka_topic_partition_leader_is_preferred{app="kmanager",cluster_id="${clusterId}"}<1)`), start: instantStart, end: instantEnd, step: '60s' },
+        { id: 'nonPreferred', query: q('nonPreferred', `(count(kafka_topic_partition_leader_is_preferred{app="kmanager",cluster_id="${clusterId}"}<1)or vector(0))and(count(kafka_topic_partition_leader_is_preferred{app="kmanager",cluster_id="${clusterId}"})>0)or(absent(kafka_topic_partition_leader_is_preferred{app="kmanager",cluster_id="${clusterId}"})and vector(-1))`), start: instantStart, end: instantEnd, step: '60s' },
         // 即时查询：JMX 指标（仅 JMX Exporter 可用时才查）
         ...(jmxAvailable ? [
           { id: 'activeBroker', query: q('activeBroker', `max(kafka_controller_kafkacontroller_activebrokercount{app="kmanager",cluster_id="${clusterId}"})`), start: instantStart, end: instantEnd, step: '60s' },
@@ -275,7 +275,7 @@ const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, q
           // ===== 第二行：消费组 + ISR 信息（AdminClient 指标，始终显示） =====
           { i: 'cg-member', x: 0, y: 2, w: 3, h: 2, component: <StatCard label="CG MEMBERS" value={overviewStats.consumerGroupMemberTotal} /> },
           { i: 'isr-total', x: 3, y: 2, w: 3, h: 2, component: <StatCard label="ISR TOTAL" value={overviewStats.isrTotal} color="#10b981" /> },
-          { i: 'non-preferred', x: 6, y: 2, w: 3, h: 2, component: <StatCard label="NON-PREFERRED LEADER" value={overviewStats.nonPreferredLeaderCount} color={overviewStats.nonPreferredLeaderCount != null && overviewStats.nonPreferredLeaderCount > 0 ? '#ef4444' : '#10b981'} /> },
+          { i: 'non-preferred', x: 6, y: 2, w: 3, h: 2, component: <StatCard label="NON-PREFERRED LEADER" value={overviewStats.nonPreferredLeaderCount === -1 ? null : overviewStats.nonPreferredLeaderCount} color={overviewStats.nonPreferredLeaderCount != null && overviewStats.nonPreferredLeaderCount > 0 ? '#ef4444' : '#10b981'} /> },
           { i: 'total-lag', x: 9, y: 2, w: 3, h: 2, component: <StatCard label="TOTAL LAG" value={metrics?.consumer_groups?.reduce((sum, g) => sum + g.total_lag, 0) ?? null} color="#ef4444" onClick={() => setLagModalOpen(true)} /> },
 
           // ===== JMX Stat 卡片（仅 JMX Exporter 可用时显示） =====
