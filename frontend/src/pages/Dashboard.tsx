@@ -408,9 +408,9 @@ const Dashboard: React.FC = () => {
         open={lagModalOpen}
         onCancel={() => setLagModalOpen(false)}
         footer={null}
-        width={700}
+        width={800}
       >
-        <div className="bento-table-header" style={{ gridTemplateColumns: '1fr 1fr 1fr 100px 80px' }}>
+        <div className="bento-table-header" style={{ gridTemplateColumns: '120px minmax(180px, 1.5fr) minmax(120px, 1fr) 90px 70px' }}>
           <div>集群</div>
           <div>Consumer Group</div>
           <div>Topic</div>
@@ -424,10 +424,10 @@ const Dashboard: React.FC = () => {
             overview.consumer_group_details
               .sort((a, b) => b.total_lag - a.total_lag)
               .map((item, i) => (
-                <div key={i} className="bento-table-row" style={{ gridTemplateColumns: '1fr 1fr 1fr 100px 80px' }}>
-                  <span style={{ fontSize: 12 }}>{item.cluster_name}</span>
-                  <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}>{item.group_id}</span>
-                  <span style={{ fontSize: 12 }}>{item.topic || '-'}</span>
+                <div key={i} className="bento-table-row" style={{ gridTemplateColumns: '120px minmax(180px, 1.5fr) minmax(120px, 1fr) 90px 70px' }}>
+                  <span style={{ fontSize: 12 }} title={item.cluster_name}>{item.cluster_name}</span>
+                  <span className="bento-table-cell-wrap" style={{ fontSize: 12, fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }} title={item.group_id}>{item.group_id}</span>
+                  <span className="bento-table-cell-wrap" style={{ fontSize: 12 }} title={item.topic}>{item.topic || '-'}</span>
                   <span style={{ fontSize: 12, textAlign: 'right', color: item.total_lag > 0 ? '#ef4444' : 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{item.total_lag?.toLocaleString() ?? 0}</span>
                   <span style={{ fontSize: 12, textAlign: 'right' }}>{item.member_count ?? '-'}</span>
                 </div>
