@@ -16,6 +16,13 @@ export interface DashboardOverview {
     total: number
     total_lag: number
   } | null
+  consumer_group_details: Array<{
+    cluster_name: string
+    group_id: string
+    topic: string
+    total_lag: number
+    member_count: number
+  }>
   auth_type_distribution: Record<string, number>
   cluster_sizes: Array<{
     cluster_id: number

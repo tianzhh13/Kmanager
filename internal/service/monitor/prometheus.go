@@ -698,6 +698,17 @@ type DashboardVMData struct {
 	BrokerCountByCluster  map[int64]int     // cluster_id -> current broker_count
 	BrokerMaxByCluster    map[int64]int     // cluster_id -> max broker_count in 7d
 	HealthStatusByCluster map[int64]string  // cluster_id -> health_status
+	CGDetails             []CGDetail        // per-cluster consumer group details
+}
+
+// CGDetail 消费者组详情
+type CGDetail struct {
+	ClusterID   int64  `json:"cluster_id"`
+	ClusterName string `json:"cluster_name"`
+	GroupID     string `json:"group_id"`
+	Topic       string `json:"topic"`
+	TotalLag    int64  `json:"total_lag"`
+	MemberCount int    `json:"member_count"`
 }
 
 // dashboardVMCache Dashboard VM 聚合数据缓存（30s TTL）
@@ -743,6 +754,7 @@ func (s *Service) GetDashboardVMData(ctx context.Context, clusterIDs []int64) *D
 		"partitions_total": fmt.Sprintf(`sum(kafka_topic_partition_replicas{app="kmanager",cluster_id=~"%s"})`, clusterSelector),
 		"cg_total":         `count(count(kafka_consumergroup_lag{app="kmanager"}) by (group,cluster_id))`,
 		"cg_lag":           fmt.Sprintf(`sum(kafka_consumergroup_lag{app="kmanager",cluster_id=~"%s"})`, clusterSelector),
+		"cg_details":       fmt.Sprintf(`kafka_consumergroup_lag{app="kmanager",cluster_id=~"%s"}`, clusterSelector),
 	}
 
 	resultCh := make(chan queryResult, len(queries))
@@ -785,6 +797,12 @@ func (s *Service) GetDashboardVMData(ctx context.Context, clusterIDs []int64) *D
 		cgLag = int64(sumVMInstantValues(data))
 	}
 
+	// 解析 per-cluster consumer group details
+	var cgDetails []CGDetail
+	if data, ok := results["cg_details"]; ok {
+		cgDetails = parseCGDetails(data)
+	}
+
 	// 逐集群判定健康状态
 	// 逻辑：7天内 broker 数最大值 vs 当前值，差值为0→healthy，差值>0→error（有 broker 掉线）
 	// 不依赖 JMX 指标（URP/offline），因为不是所有集群都配 JMX
@@ -817,6 +835,7 @@ func (s *Service) GetDashboardVMData(ctx context.Context, clusterIDs []int64) *D
 		BrokerCountByCluster:   brokersByCluster,
 		BrokerMaxByCluster:     brokerMaxByCluster,
 		HealthStatusByCluster:  healthByCluster,
+		CGDetails:              cgDetails,
 	}
 
 	// 写入缓存
@@ -1078,4 +1097,56 @@ func parseFloatValue(v interface{}) (float64, error) {
 	default:
 		return 0, fmt.Errorf("cannot parse %v", v)
 	}
+}
+
+// parseCGDetails 解析 consumer group lag 详情
+func parseCGDetails(data []byte) []CGDetail {
+	if data == nil {
+		return nil
+	}
+	var vmResult vmQueryResult
+	if err := json.Unmarshal(data, &vmResult); err != nil {
+		return nil
+	}
+
+	// 按 (cluster_id, group) 聚合 lag
+	type cgKey struct {
+		clusterID int64
+		groupID   string
+	}
+	aggregated := make(map[cgKey]*CGDetail)
+
+	for _, r := range vmResult.Data.Result {
+		cidStr := r.Metric["cluster_id"]
+		groupID := r.Metric["consumergroup"]
+		if cidStr == "" || groupID == "" {
+			continue
+		}
+		cid, err := strconv.ParseInt(cidStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		lag := int64(0)
+		if len(r.Value) >= 2 {
+			if v, err := parseFloatValue(r.Value[1]); err == nil {
+				lag = int64(v)
+			}
+		}
+		key := cgKey{clusterID: cid, groupID: groupID}
+		if existing, ok := aggregated[key]; ok {
+			existing.TotalLag += lag
+		} else {
+			aggregated[key] = &CGDetail{
+				ClusterID: cid,
+				GroupID:   groupID,
+				TotalLag:  lag,
+			}
+		}
+	}
+
+	result := make([]CGDetail, 0, len(aggregated))
+	for _, d := range aggregated {
+		result = append(result, *d)
+	}
+	return result
 }
