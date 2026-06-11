@@ -61,7 +61,7 @@ const ClusterList: React.FC = () => {
 
   const buildAuthConfig = (values: any): Record<string, any> | undefined => {
     const authConfig: Record<string, any> = {}
-    if (values.auth_type === 'scram') {
+    if (values.auth_type === 'sasl') {
       authConfig.username = values.scram_username
       authConfig.password = values.scram_password
       authConfig.mechanism = values.scram_mechanism || 'PLAIN'
@@ -99,10 +99,14 @@ const ClusterList: React.FC = () => {
         if (!values.krb5_content) { message.error('请填写 krb5.conf 配置内容'); return }
       }
       const authConfig = buildAuthConfig(values)
+      // 前端 sasl → 后端 plaintext/scram
+      const backendAuthType = values.auth_type === 'sasl'
+        ? (authConfig?.mechanism === 'PLAIN' ? 'plaintext' : 'scram')
+        : values.auth_type
       const testData = {
         cluster_name: values.cluster_name,
         bootstrap_servers: values.bootstrap_servers,
-        auth_type: values.auth_type,
+        auth_type: backendAuthType,
         auth_config: authConfig,
       }
       setTestingConnection(true)
@@ -111,7 +115,7 @@ const ClusterList: React.FC = () => {
       const clusterData = {
         cluster_name: values.cluster_name,
         bootstrap_servers: values.bootstrap_servers,
-        auth_type: values.auth_type,
+        auth_type: backendAuthType,
         auth_config: authConfig,
         jmx_exporter_urls: values.jmx_exporter_urls,
         description: values.description,
@@ -210,12 +214,12 @@ const ClusterList: React.FC = () => {
         </Form.Item>
         <Form.Item name="auth_type" label="认证类型" rules={[{ required: true, message: '请选择认证类型' }]}>
           <Select onChange={(value) => { setAuthType(value); form.setFieldsValue({ auth_type: value }) }}>
-            <Select.Option value="plaintext">PLAINTEXT（无认证）</Select.Option>
-            <Select.Option value="scram">SASL（用户名密码）</Select.Option>
+            <Select.Option value="none">无认证（PLAINTEXT）</Select.Option>
+            <Select.Option value="sasl">SASL 认证（用户名密码）</Select.Option>
             <Select.Option value="kerberos">Kerberos</Select.Option>
           </Select>
         </Form.Item>
-        {authType === 'scram' && (
+        {authType === 'sasl' && (
           <>
             <Form.Item name="scram_username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
               <Input placeholder="Kafka 用户名" />
