@@ -202,13 +202,14 @@ func (v *Validator) ValidateRole(role string) error {
 // ValidateAuthType 验证认证类型
 func (v *Validator) ValidateAuthType(authType string) error {
 	validAuthTypes := map[string]bool{
+		"none":      true,
 		"plaintext": true,
 		"scram":     true,
 		"kerberos":  true,
 	}
 
 	if !validAuthTypes[authType] {
-		return &ValidationError{Field: "auth_type", Message: "invalid auth type. must be one of: plaintext, scram, kerberos"}
+		return &ValidationError{Field: "auth_type", Message: "invalid auth type. must be one of: none, plaintext, scram, kerberos"}
 	}
 
 	return nil

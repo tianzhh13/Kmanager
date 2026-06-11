@@ -402,9 +402,13 @@ func (c *AdminClient) GetTopicPartitionStartOffsets(topicPartitions map[string][
 // configureAuth 配置 Kafka 认证方式
 func configureAuth(config *sarama.Config, authType models.AuthType, authConfigJSON string) error {
 	switch authType {
-	case models.AuthTypePlaintext:
-		// PLAINTEXT 无需额外配置
+	case models.AuthTypeNone:
+		// 无认证，不配置 SASL
 		return nil
+
+	case models.AuthTypePlaintext:
+		// SASL_PLAINTEXT + PLAIN 机制，复用 configureSCRAM（默认 mechanism 为 PLAIN）
+		return configureSCRAM(config, authConfigJSON)
 
 	case models.AuthTypeSCRAM:
 		return configureSCRAM(config, authConfigJSON)
