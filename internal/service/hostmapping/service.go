@@ -2,6 +2,7 @@ package hostmapping
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -13,8 +14,15 @@ import (
 // Service 主机映射服务（带内存缓存）
 type Service struct {
 	repo  *repository.HostMappingRepository
-	cache sync.Map // map[string]string hostname -> ip
+	cache sync.Map // map[string]string cacheKey -> ip
 	mu    sync.RWMutex
+}
+
+// cacheKey 生成缓存 key
+// 集群专属映射: "cluster_name:hostname"
+// 全局映射: ":hostname"
+func cacheKey(hostname, clusterName string) string {
+	return fmt.Sprintf("%s:%s", clusterName, hostname)
 }
 
 // NewService 创建主机映射服务实例
@@ -29,12 +37,32 @@ func NewService(repo *repository.HostMappingRepository) *Service {
 	return svc
 }
 
-// Resolve 解析主机名，返回 IP 地址
-// 如果有映射返回映射的 IP，否则返回原始主机名（走系统 DNS）
+// Resolve 解析主机名（全局映射，向后兼容）
+// 如果有全局映射返回映射的 IP，否则返回原始主机名（走系统 DNS）
 func (s *Service) Resolve(hostname string) string {
-	if ip, ok := s.cache.Load(hostname); ok {
+	key := cacheKey(hostname, "")
+	if ip, ok := s.cache.Load(key); ok {
 		return ip.(string)
 	}
+	return hostname
+}
+
+// ResolveForCluster 集群感知的主机名解析
+// 优先查找集群专属映射，未命中则回退到全局映射，都没有则返回原始主机名
+func (s *Service) ResolveForCluster(hostname, clusterName string) string {
+	// 1. 先查集群专属映射
+	if clusterName != "" {
+		key := cacheKey(hostname, clusterName)
+		if ip, ok := s.cache.Load(key); ok {
+			return ip.(string)
+		}
+	}
+	// 2. 回退到全局映射
+	key := cacheKey(hostname, "")
+	if ip, ok := s.cache.Load(key); ok {
+		return ip.(string)
+	}
+	// 3. 都没有，返回原始主机名
 	return hostname
 }
 
@@ -43,21 +71,27 @@ func (s *Service) Create(ctx context.Context, mapping *models.HostMapping) error
 	if err := s.repo.Create(ctx, mapping); err != nil {
 		return err
 	}
-	s.cache.Store(mapping.Hostname, mapping.IPAddress)
+	key := cacheKey(mapping.Hostname, mapping.ClusterName)
+	s.cache.Store(key, mapping.IPAddress)
 	return nil
 }
 
 // Update 更新主机映射
 func (s *Service) Update(ctx context.Context, mapping *models.HostMapping) error {
-	// 获取旧映射，如果主机名变了需要删除旧缓存
+	// 获取旧映射，如果主机名或集群名变了需要删除旧缓存
 	old, _ := s.repo.GetByID(ctx, mapping.ID)
 	if err := s.repo.Update(ctx, mapping); err != nil {
 		return err
 	}
-	if old != nil && old.Hostname != mapping.Hostname {
-		s.cache.Delete(old.Hostname)
+	if old != nil {
+		oldKey := cacheKey(old.Hostname, old.ClusterName)
+		newKey := cacheKey(mapping.Hostname, mapping.ClusterName)
+		if oldKey != newKey {
+			s.cache.Delete(oldKey)
+		}
 	}
-	s.cache.Store(mapping.Hostname, mapping.IPAddress)
+	newKey := cacheKey(mapping.Hostname, mapping.ClusterName)
+	s.cache.Store(newKey, mapping.IPAddress)
 	return nil
 }
 
@@ -71,7 +105,8 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if mapping != nil {
-		s.cache.Delete(mapping.Hostname)
+		key := cacheKey(mapping.Hostname, mapping.ClusterName)
+		s.cache.Delete(key)
 	}
 	return nil
 }
@@ -105,7 +140,8 @@ func (s *Service) refreshCache() {
 	// 构建新缓存
 	newCache := make(map[string]string, len(mappings))
 	for _, m := range mappings {
-		newCache[m.Hostname] = m.IPAddress
+		key := cacheKey(m.Hostname, m.ClusterName)
+		newCache[key] = m.IPAddress
 	}
 
 	// 更新 sync.Map：先存新的，再删旧的

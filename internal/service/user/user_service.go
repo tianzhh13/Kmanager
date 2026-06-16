@@ -42,9 +42,11 @@ type CreateUserRequest struct {
 
 // UpdateUserRequest 更新用户请求
 type UpdateUserRequest struct {
-	Email  string            `json:"email"`
-	Role   models.UserRole   `json:"role"`
-	Status models.UserStatus `json:"status"`
+	Username string            `json:"username"`
+	Email    string            `json:"email"`
+	Password string            `json:"password"`
+	Role     models.UserRole   `json:"role"`
+	Status   models.UserStatus `json:"status"`
 }
 
 // UpdatePasswordRequest 更新密码请求
@@ -113,6 +115,15 @@ func (s *Service) UpdateUser(ctx context.Context, userID int64, req *UpdateUserR
 		return nil, err
 	}
 
+	// 更新用户名（需要唯一性校验）
+	if req.Username != "" && req.Username != user.Username {
+		existing, err := s.userRepo.FindByUsername(ctx, req.Username)
+		if err == nil && existing != nil && existing.UserID != userID {
+			return nil, ErrUserAlreadyExists
+		}
+		user.Username = req.Username
+	}
+
 	// 更新字段
 	if req.Email != "" {
 		user.Email = req.Email
@@ -122,6 +133,18 @@ func (s *Service) UpdateUser(ctx context.Context, userID int64, req *UpdateUserR
 	}
 	if req.Status != "" {
 		user.Status = req.Status
+	}
+
+	// 管理员重置密码（无需旧密码）
+	if req.Password != "" {
+		if err := password.ValidatePassword(req.Password); err != nil {
+			return nil, err
+		}
+		hashedPassword, err := password.HashPassword(req.Password)
+		if err != nil {
+			return nil, err
+		}
+		user.PasswordHash = hashedPassword
 	}
 
 	if err := s.userRepo.Update(ctx, user); err != nil {

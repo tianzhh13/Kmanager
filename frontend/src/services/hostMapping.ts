@@ -3,6 +3,7 @@ import api from './api'
 export interface HostMapping {
   id: number
   hostname: string
+  cluster_name: string
   ip_address: string
   description: string
   created_at: string
@@ -11,12 +12,14 @@ export interface HostMapping {
 
 export interface CreateHostMappingRequest {
   hostname: string
+  cluster_name?: string
   ip_address: string
   description?: string
 }
 
 export interface UpdateHostMappingRequest {
   hostname?: string
+  cluster_name?: string
   ip_address?: string
   description?: string
 }

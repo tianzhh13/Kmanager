@@ -25,7 +25,7 @@ export const userService = {
     return response.data
   },
 
-  update: async (userId: number, data: { email?: string; role?: string }) => {
+  update: async (userId: number, data: { username?: string; email?: string; password?: string; role?: string }) => {
     const response = await api.put(`/users/${userId}`, data)
     return response.data
   },
@@ -40,5 +40,9 @@ export const userService = {
 
   enable: async (userId: number) => {
     await api.post(`/users/${userId}/enable`)
+  },
+
+  updatePassword: async (userId: number, data: { old_password: string; new_password: string }) => {
+    await api.put(`/users/${userId}/password`, data)
   },
 }

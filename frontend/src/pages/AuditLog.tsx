@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Modal, Select, Button, message, DatePicker } from 'antd'
-import { DownloadOutlined, EyeOutlined } from '@ant-design/icons'
+import { Modal, Select, Button, message, DatePicker, InputNumber } from 'antd'
+import { DownloadOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons'
 import { auditLogAPI } from '../services/auditLog'
 import { SearchBar, LabelTag } from '../components/bento'
 
@@ -36,6 +36,7 @@ const AuditLogPage: React.FC = () => {
 
   const [detailVisible, setDetailVisible] = useState(false)
   const [currentLog, setCurrentLog] = useState<AuditLog | null>(null)
+  const [cleanLoading, setCleanLoading] = useState(false)
 
   useEffect(() => {
     loadLogs()
@@ -114,6 +115,43 @@ const AuditLogPage: React.FC = () => {
     setDetailVisible(true)
   }
 
+  const handleClean = () => {
+    Modal.confirm({
+      title: '清理过期审计日志',
+      content: (
+        <div>
+          <p style={{ marginBottom: 12, color: 'var(--text-2)' }}>将清理指定天数之前的审计日志，此操作不可恢复。</p>
+          <InputNumber
+            id="cleanDays"
+            min={1}
+            max={3650}
+            defaultValue={180}
+            style={{ width: '100%' }}
+            addonAfter="天之前"
+          />
+        </div>
+      ),
+      onOk: async () => {
+        const daysInput = document.getElementById('cleanDays') as HTMLInputElement
+        const days = parseInt(daysInput?.value || '180', 10)
+        setCleanLoading(true)
+        try {
+          await auditLogAPI.clean(days)
+          message.success(`已清理 ${days} 天前的审计日志`)
+          setPage(1)
+          loadLogs()
+        } catch (error: any) {
+          message.error(error?.response?.data?.error || '清理失败')
+        } finally {
+          setCleanLoading(false)
+        }
+      },
+      okText: '确认清理',
+      okButtonProps: { danger: true, loading: cleanLoading },
+      cancelText: '取消',
+    })
+  }
+
   const getActionColor = (act: string): 'green' | 'orange' | 'red' | 'purple' | 'pink' | 'blue' | 'neutral' => {
     if (act.includes('login')) return 'green'
     if (act.includes('logout')) return 'neutral'
@@ -188,6 +226,9 @@ const AuditLogPage: React.FC = () => {
             <div className="page-accent-line" />
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
+            <button className="bento-action-btn bento-action-btn--danger" style={{ padding: '8px 16px', fontSize: 13 }} onClick={handleClean}>
+              <DeleteOutlined /> 清理
+            </button>
             <button className="bento-action-btn" style={{ padding: '8px 16px', fontSize: 13 }} onClick={() => handleExport('csv')}>
               <DownloadOutlined /> CSV
             </button>

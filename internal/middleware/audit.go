@@ -162,6 +162,7 @@ func sanitizeRequestBody(path string, body []byte) []byte {
 	// Check if path matches sensitive patterns
 	isSensitive := strings.Contains(path, "/api/v1/auth/login") ||
 		strings.Contains(path, "/api/v1/auth/change-password") ||
+		strings.Contains(path, "/api/v1/users/") ||
 		strings.Contains(path, "/api/v1/clusters") ||
 		strings.Contains(path, "/api/v1/scram-users")
 

@@ -186,7 +186,7 @@ func (h *ACLHandler) DeleteACLFromKafka(c *gin.Context) {
 
 	// 设置默认值
 	if req.ResourcePattern == "" {
-		req.ResourcePattern = "LITERAL"
+		req.ResourcePattern = "literal"
 	}
 	if req.Host == "" {
 		req.Host = "*"

@@ -244,7 +244,7 @@ const ACLList: React.FC = () => {
           await deleteACLFromKafka(selectedClusterId!, {
             resource_type: acl.resource_type,
             resource_name: acl.resource_name,
-            resource_pattern: acl.resource_pattern || 'LITERAL',
+            resource_pattern: acl.resource_pattern || 'literal',
             principal: acl.principal,
             host: acl.host || '*',
             operation: acl.operation,
@@ -274,6 +274,7 @@ const ACLList: React.FC = () => {
           cluster_id: selectedClusterId,
           resource_type: values.resource_type,
           resource_name: values.resource_name,
+          resource_pattern: values.resource_pattern || 'literal',
           principal: values.principal,
           operation: op,
           permission_type: values.permission,
@@ -420,6 +421,7 @@ const ACLList: React.FC = () => {
                             }}
                           >
                             <LabelTag text={acl.resource_type} color={getResourceTypeColor(acl.resource_type)} />
+              <LabelTag text={acl.resource_pattern === 'prefixed' ? 'Prefix' : 'Literal'} color={acl.resource_pattern === 'prefixed' ? 'warning' : 'neutral'} />
                             <span style={{ fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-mono)', flex: 1 }}>{acl.resource_name}</span>
                             <span style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 600 }}>{acl.operation}</span>
                             <LabelTag text={acl.permission_type} color={acl.permission_type === 'Allow' ? 'green' : 'red'} />
@@ -484,9 +486,10 @@ const ACLList: React.FC = () => {
         ]}
         width={850}
       >
-        <div className="bento-table-header" style={{ gridTemplateColumns: '90px minmax(150px, 1.5fr) 100px 70px 100px 70px' }}>
+        <div className="bento-table-header" style={{ gridTemplateColumns: '90px minmax(130px, 1.5fr) 70px 100px 70px 100px 70px' }}>
           <div>资源类型</div>
           <div>资源名称</div>
+          <div>匹配</div>
           <div>操作</div>
           <div>权限</div>
           <div>Host</div>
@@ -496,9 +499,10 @@ const ACLList: React.FC = () => {
           {viewAclLoading && <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>加载中...</div>}
           {!viewAclLoading && userAcls.length === 0 && <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>该用户暂无权限规则</div>}
           {!viewAclLoading && userAcls.map((acl, index) => (
-            <div key={`${acl.resource_type}-${acl.resource_name}-${acl.operation}-${index}`} className="bento-table-row" style={{ gridTemplateColumns: '90px minmax(150px, 1.5fr) 100px 70px 100px 70px' }}>
+            <div key={`${acl.resource_type}-${acl.resource_name}-${acl.operation}-${index}`} className="bento-table-row" style={{ gridTemplateColumns: '90px minmax(130px, 1.5fr) 70px 100px 70px 100px 70px' }}>
               <LabelTag text={acl.resource_type} color={getResourceTypeColor(acl.resource_type)} />
               <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }} title={acl.resource_name}>{acl.resource_name}</span>
+                            <LabelTag text={acl.resource_pattern === 'prefixed' ? 'Prefix' : 'Literal'} color={acl.resource_pattern === 'prefixed' ? 'warning' : 'neutral'} />
               <span style={{ fontSize: 12 }} title={acl.operation}>{acl.operation}</span>
               <LabelTag text={acl.permission_type} color={acl.permission_type === 'Allow' ? 'green' : 'red'} />
               <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }} title={acl.host}>{acl.host}</span>
@@ -531,6 +535,12 @@ const ACLList: React.FC = () => {
           </Form.Item>
           <Form.Item name="resource_name" label="资源名称" rules={[{ required: true, message: '请输入资源名称' }]}>
             <Input placeholder={selectedResourceType === 'Cluster' ? '集群资源通常填 kafka-cluster 或 *' : '资源名称（如 test-topic 或 * 表示所有）'} />
+          </Form.Item>
+          <Form.Item name="resource_pattern" label="匹配模式" rules={[{ required: true, message: '请选择匹配模式' }]} initialValue="literal">
+            <Select placeholder="选择匹配模式">
+              <Select.Option value="literal">Literal（精确匹配）</Select.Option>
+              <Select.Option value="prefixed">Prefixed（前缀匹配）</Select.Option>
+            </Select>
           </Form.Item>
           <Form.Item name="operation" label="操作" rules={[{ required: true, message: '请选择操作' }]}>
             <Select
