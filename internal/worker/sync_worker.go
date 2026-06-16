@@ -387,14 +387,14 @@ func (w *SyncWorker) syncACLs(ctx context.Context, adminClient *kafka.AdminClien
 	return nil
 }
 
-// buildACLKey 构建 ACL 唯一键（6 字段完整匹配）
+// buildACLKey 构建 ACL 唯一键（7 字段完整匹配，含 ResourcePattern）
 func buildACLKey(acl *models.ACL) string {
-	return fmt.Sprintf("%s:%s:%s:%s:%s:%s", acl.ResourceType, acl.ResourceName, acl.Principal, acl.Host, acl.Operation, acl.PermissionType)
+	return fmt.Sprintf("%s:%s:%s:%s:%s:%s:%s", acl.ResourceType, acl.ResourceName, acl.ResourcePattern, acl.Principal, acl.Host, acl.Operation, acl.PermissionType)
 }
 
-// buildKafkaACLKeyFromResourceAndAcl 构建 Kafka ACL 唯一键（6 字段完整匹配）
+// buildKafkaACLKeyFromResourceAndAcl 构建 Kafka ACL 唯一键（7 字段完整匹配，含 ResourcePatternType）
 func buildKafkaACLKeyFromResourceAndAcl(resource *sarama.Resource, acl *sarama.Acl) string {
-	return fmt.Sprintf("%s:%s:%s:%s:%s:%s", resource.ResourceType, resource.ResourceName, acl.Principal, acl.Host, acl.Operation, acl.PermissionType)
+	return fmt.Sprintf("%s:%s:%s:%s:%s:%s:%s", resource.ResourceType, resource.ResourceName, resource.ResourcePatternType, acl.Principal, acl.Host, acl.Operation, acl.PermissionType)
 }
 
 // cleanupLogs 清理日志

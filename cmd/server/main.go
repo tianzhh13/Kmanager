@@ -71,8 +71,9 @@ func main() {
 	// 初始化主机映射服务（带缓存）
 	hostMappingRepo := repository.NewHostMappingRepository(db)
 	hostMappingSvc := hostmapping.NewService(hostMappingRepo)
-	// 设置 kafka 包的主机名解析器
+	// 设置 kafka 包的主机名解析器（全局 + 集群感知）
 	kafka.HostResolver = hostMappingSvc.Resolve
+	kafka.ClusterHostResolver = hostMappingSvc.ResolveForCluster
 
 	// 初始化并启动 Sync Worker
 	syncWorker := worker.NewSyncWorker(cfg, clusterRepo, topicRepo, aclRepo, auditLogRepo)

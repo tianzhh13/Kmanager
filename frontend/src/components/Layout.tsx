@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Layout as AntLayout, Menu, Avatar, Dropdown, message } from 'antd'
+import { Layout as AntLayout, Menu, Avatar, Dropdown, Modal, Form, Input, message } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   DashboardOutlined,
@@ -14,10 +14,12 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   SwapOutlined,
+  KeyOutlined,
 } from '@ant-design/icons'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { logoutAsync } from '../store/slices/authSlice'
 import api from '../services/api'
+import { userService } from '../services/userService'
 
 const { Header, Sider, Content } = AntLayout
 
@@ -48,6 +50,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { user } = useAppSelector((state) => state.auth)
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const idleTimeoutRef = useRef<number>(DEFAULT_IDLE_TIMEOUT)
+  const [pwdModalVisible, setPwdModalVisible] = useState(false)
+  const [pwdForm] = Form.useForm()
+  const [pwdLoading, setPwdLoading] = useState(false)
 
   // 根据用户角色决定显示哪些菜单
   const userRole = user?.role || ''
@@ -132,14 +137,55 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     navigate('/login')
   }
 
+  const handleOpenPwdModal = () => {
+    setPwdModalVisible(true)
+    pwdForm.resetFields()
+  }
+
+  const handleChangePassword = async (values: { old_password: string; new_password: string; confirm_password: string }) => {
+    if (values.new_password !== values.confirm_password) {
+      message.error('两次输入的新密码不一致')
+      return
+    }
+    if (!user?.user_id) {
+      message.error('无法获取用户信息')
+      return
+    }
+    setPwdLoading(true)
+    try {
+      await userService.updatePassword(user.user_id, {
+        old_password: values.old_password,
+        new_password: values.new_password,
+      })
+      message.success('密码修改成功')
+      setPwdModalVisible(false)
+      pwdForm.resetFields()
+    } catch (error: any) {
+      message.error(error?.response?.data?.error || '密码修改失败')
+    } finally {
+      setPwdLoading(false)
+    }
+  }
+
   const userMenuItems = [
     {
       key: 'profile',
       icon: <UserOutlined />,
       label: user?.username || '用户',
+      disabled: true,
     },
     {
-      key: 'divider',
+      key: 'divider1',
+      type: 'divider' as const,
+    },
+    {
+      key: 'change-password',
+      icon: <KeyOutlined />,
+      label: '修改密码',
+      onClick: handleOpenPwdModal,
+    },
+    {
+      key: 'divider2',
       type: 'divider' as const,
     },
     {
@@ -203,6 +249,33 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           {children}
         </Content>
       </AntLayout>
+
+      {/* 修改密码弹窗 */}
+      <Modal
+        title="修改密码"
+        open={pwdModalVisible}
+        onCancel={() => { setPwdModalVisible(false); pwdForm.resetFields() }}
+        onOk={() => pwdForm.submit()}
+        confirmLoading={pwdLoading}
+        width={420}
+      >
+        <Form form={pwdForm} layout="vertical" onFinish={handleChangePassword}>
+          <Form.Item name="old_password" label="当前密码" rules={[{ required: true, message: '请输入当前密码' }]}>
+            <Input.Password placeholder="请输入当前密码" />
+          </Form.Item>
+          <Form.Item name="new_password" label="新密码" rules={[
+            { required: true, message: '请输入新密码' },
+            { min: 8, message: '密码长度至少 8 个字符' },
+          ]}>
+            <Input.Password placeholder="至少 8 个字符" />
+          </Form.Item>
+          <Form.Item name="confirm_password" label="确认新密码" rules={[
+            { required: true, message: '请再次输入新密码' },
+          ]}>
+            <Input.Password placeholder="再次输入新密码" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </AntLayout>
   )
 }

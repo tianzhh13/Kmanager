@@ -43,7 +43,7 @@ func (r *HostMappingRepository) GetByID(ctx context.Context, id int64) (*models.
 	return &mapping, nil
 }
 
-// GetByHostname 根据主机名获取映射
+// GetByHostname 根据主机名获取映射（兼容旧调用，返回第一个匹配）
 func (r *HostMappingRepository) GetByHostname(ctx context.Context, hostname string) (*models.HostMapping, error) {
 	var mapping models.HostMapping
 	err := r.db.WithContext(ctx).Where("hostname = ?", hostname).First(&mapping).Error
@@ -53,10 +53,21 @@ func (r *HostMappingRepository) GetByHostname(ctx context.Context, hostname stri
 	return &mapping, nil
 }
 
+// GetByHostnameAndCluster 根据主机名和集群名获取映射
+// cluster_name 为空时查找全局映射
+func (r *HostMappingRepository) GetByHostnameAndCluster(ctx context.Context, hostname, clusterName string) (*models.HostMapping, error) {
+	var mapping models.HostMapping
+	err := r.db.WithContext(ctx).Where("hostname = ? AND cluster_name = ?", hostname, clusterName).First(&mapping).Error
+	if err != nil {
+		return nil, err
+	}
+	return &mapping, nil
+}
+
 // List 获取所有主机映射
 func (r *HostMappingRepository) List(ctx context.Context) ([]models.HostMapping, error) {
 	var mappings []models.HostMapping
-	err := r.db.WithContext(ctx).Order("hostname ASC").Find(&mappings).Error
+	err := r.db.WithContext(ctx).Order("hostname ASC, cluster_name ASC").Find(&mappings).Error
 	return mappings, err
 }
 
@@ -67,8 +78,8 @@ func (r *HostMappingRepository) ListWithPagination(ctx context.Context, page, pa
 
 	query := r.db.WithContext(ctx).Model(&models.HostMapping{})
 	if keyword != "" {
-		query = query.Where("hostname LIKE ? OR ip_address LIKE ? OR description LIKE ?",
-			"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+		query = query.Where("hostname LIKE ? OR cluster_name LIKE ? OR ip_address LIKE ? OR description LIKE ?",
+			"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
 	}
 
 	if err := query.Count(&total).Error; err != nil {
@@ -76,7 +87,7 @@ func (r *HostMappingRepository) ListWithPagination(ctx context.Context, page, pa
 	}
 
 	offset := (page - 1) * pageSize
-	if err := query.Order("hostname ASC").Offset(offset).Limit(pageSize).Find(&mappings).Error; err != nil {
+	if err := query.Order("hostname ASC, cluster_name ASC").Offset(offset).Limit(pageSize).Find(&mappings).Error; err != nil {
 		return nil, 0, err
 	}
 

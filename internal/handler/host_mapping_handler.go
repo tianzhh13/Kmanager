@@ -67,6 +67,7 @@ func (h *HostMappingHandler) GetByID(c *gin.Context) {
 func (h *HostMappingHandler) Create(c *gin.Context) {
 	var req struct {
 		Hostname    string `json:"hostname" binding:"required"`
+		ClusterName string `json:"cluster_name"`
 		IPAddress   string `json:"ip_address" binding:"required"`
 		Description string `json:"description"`
 	}
@@ -78,6 +79,7 @@ func (h *HostMappingHandler) Create(c *gin.Context) {
 
 	mapping := &models.HostMapping{
 		Hostname:    req.Hostname,
+		ClusterName: req.ClusterName,
 		IPAddress:   req.IPAddress,
 		Description: req.Description,
 	}
@@ -106,6 +108,7 @@ func (h *HostMappingHandler) Update(c *gin.Context) {
 
 	var req struct {
 		Hostname    *string `json:"hostname"`
+		ClusterName *string `json:"cluster_name"`
 		IPAddress   *string `json:"ip_address"`
 		Description *string `json:"description"`
 	}
@@ -117,6 +120,9 @@ func (h *HostMappingHandler) Update(c *gin.Context) {
 
 	if req.Hostname != nil {
 		existing.Hostname = *req.Hostname
+	}
+	if req.ClusterName != nil {
+		existing.ClusterName = *req.ClusterName
 	}
 	if req.IPAddress != nil {
 		existing.IPAddress = *req.IPAddress

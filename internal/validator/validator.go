@@ -262,12 +262,12 @@ func (v *Validator) ValidatePermissionType(permissionType string) error {
 // ValidateResourcePattern 验证资源匹配模式
 func (v *Validator) ValidateResourcePattern(pattern string) error {
 	validPatterns := map[string]bool{
-		"literal": true,
-		"prefix":  true,
+		"literal":  true,
+		"prefixed": true,
 	}
 
 	if !validPatterns[pattern] {
-		return &ValidationError{Field: "resource_pattern", Message: "resource pattern must be either literal or prefix"}
+		return &ValidationError{Field: "resource_pattern", Message: "resource pattern must be either literal or prefixed"}
 	}
 
 	return nil

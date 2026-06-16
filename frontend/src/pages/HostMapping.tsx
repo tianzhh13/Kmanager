@@ -51,6 +51,7 @@ const HostMappingPage: React.FC = () => {
     setIsEditModal(true)
     form.setFieldsValue({
       hostname: record.hostname,
+      cluster_name: record.cluster_name,
       ip_address: record.ip_address,
       description: record.description,
     })
@@ -94,6 +95,9 @@ const HostMappingPage: React.FC = () => {
       <Form.Item name="hostname" label="主机名" rules={[{ required: true, message: '请输入主机名' }]} extra="Kafka Broker 使用的主机名，如 broker1.example.com">
         <Input placeholder="例如：broker1.example.com" />
       </Form.Item>
+      <Form.Item name="cluster_name" label="集群名称" extra="留空表示全局映射，填写集群名表示该映射仅对指定集群生效">
+        <Input placeholder="例如：kafka-public-prod（可选）" />
+      </Form.Item>
       <Form.Item name="ip_address" label="IP 地址" rules={[{ required: true, message: '请输入 IP 地址' }]}>
         <Input placeholder="例如：192.168.1.100" />
       </Form.Item>
@@ -124,7 +128,7 @@ const HostMappingPage: React.FC = () => {
 
       {/* Search */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
-        <SearchBar value={searchText} onChange={setSearchText} placeholder="搜索主机名或 IP..." />
+        <SearchBar value={searchText} onChange={setSearchText} placeholder="搜索主机名、集群名或 IP..." />
       </div>
 
       {/* Table */}
@@ -134,6 +138,7 @@ const HostMappingPage: React.FC = () => {
             <thead>
               <tr>
                 <th>HOSTNAME</th>
+                <th>CLUSTER</th>
                 <th>IP ADDRESS</th>
                 <th>DESCRIPTION</th>
                 <th>CREATED</th>
@@ -142,13 +147,14 @@ const HostMappingPage: React.FC = () => {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={5} style={{ textAlign: 'center', padding: 40 }}>加载中...</td></tr>
+                <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40 }}>加载中...</td></tr>
               ) : mappings.length === 0 ? (
-                <tr><td colSpan={5} style={{ textAlign: 'center', padding: 40 }}>暂无数据</td></tr>
+                <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40 }}>暂无数据</td></tr>
               ) : (
                 mappings.map(m => (
                   <tr key={m.id}>
                     <td><code style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>{m.hostname}</code></td>
+                    <td><span style={{ fontSize: 13, color: m.cluster_name ? 'var(--brand)' : 'var(--text-muted)' }}>{m.cluster_name || '全局'}</span></td>
                     <td><code style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>{m.ip_address}</code></td>
                     <td>{m.description || '-'}</td>
                     <td>{new Date(m.created_at).toLocaleDateString()}</td>

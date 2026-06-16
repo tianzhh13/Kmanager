@@ -1109,16 +1109,18 @@ func parseCGDetails(data []byte) []CGDetail {
 		return nil
 	}
 
-	// 按 (cluster_id, group) 聚合 lag
+	// 按 (cluster_id, group, topic) 聚合 lag
 	type cgKey struct {
 		clusterID int64
 		groupID   string
+		topic     string
 	}
 	aggregated := make(map[cgKey]*CGDetail)
 
 	for _, r := range vmResult.Data.Result {
 		cidStr := r.Metric["cluster_id"]
 		groupID := r.Metric["consumergroup"]
+		topic := r.Metric["topic"]
 		if cidStr == "" || groupID == "" {
 			continue
 		}
@@ -1132,13 +1134,14 @@ func parseCGDetails(data []byte) []CGDetail {
 				lag = int64(v)
 			}
 		}
-		key := cgKey{clusterID: cid, groupID: groupID}
+		key := cgKey{clusterID: cid, groupID: groupID, topic: topic}
 		if existing, ok := aggregated[key]; ok {
 			existing.TotalLag += lag
 		} else {
 			aggregated[key] = &CGDetail{
 				ClusterID: cid,
 				GroupID:   groupID,
+				Topic:     topic,
 				TotalLag:  lag,
 			}
 		}
