@@ -316,10 +316,15 @@ const ACLList: React.FC = () => {
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <Select
+              showSearch
               placeholder="选择集群"
               value={selectedClusterId}
               onChange={(value) => setSelectedClusterId(value)}
               style={{ width: 200 }}
+              optionFilterProp="children"
+              filterOption={(input, option) =>
+                (option?.children ?? '').toString().toLowerCase().includes(input.toLowerCase())
+              }
             >
               {clusters.map(c => (
                 <Select.Option key={c.cluster_id} value={c.cluster_id}>{c.cluster_name}</Select.Option>
