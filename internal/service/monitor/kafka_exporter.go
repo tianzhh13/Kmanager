@@ -384,7 +384,7 @@ func (s *KafkaExporterService) GetAllConsumerGroupLags(ctx context.Context, clus
 				if lag > 0 && currentOffset >= 0 {
 					ls, err := adminClient.CalculateConsumerGroupLagSeconds(topic, partition, currentOffset, endOffset)
 					if err != nil {
-						logger.Warn("Failed to calculate lag seconds", "topic", topic, "partition", partition, "error", err)
+						logger.Debug("Failed to calculate lag seconds", "topic", topic, "partition", partition, "error", err)
 						lagSeconds = -1
 					} else {
 						lagSeconds = ls
