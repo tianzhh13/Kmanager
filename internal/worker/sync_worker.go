@@ -228,11 +228,17 @@ func (w *SyncWorker) SyncCluster(ctx context.Context, clusterID int64) error {
 	// 同步 Topics
 	if err := w.syncTopics(ctx, adminClient, clusterID); err != nil {
 		logger.Error("Failed to sync topics", "cluster_id", clusterID, "error", err)
+		// 连接可能已损坏，从池中移除，触发下次重试时重建连接
+		w.RemoveAdminClient(clusterID)
+		return fmt.Errorf("failed to sync topics: %w", err)
 	}
 
 	// 同步 ACLs
 	if err := w.syncACLs(ctx, adminClient, clusterID); err != nil {
 		logger.Error("Failed to sync ACLs", "cluster_id", clusterID, "error", err)
+		// 连接可能已损坏，从池中移除，触发下次重试时重建连接
+		w.RemoveAdminClient(clusterID)
+		return fmt.Errorf("failed to sync ACLs: %w", err)
 	}
 
 	logger.Info("Cluster synced successfully", "cluster_id", clusterID)

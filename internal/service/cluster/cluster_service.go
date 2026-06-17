@@ -192,6 +192,7 @@ func (s *Service) CreateCluster(ctx context.Context, req *CreateClusterRequest) 
 
 	// 创建临时集群对象用于测试连接
 	tempCluster := &models.Cluster{
+		ClusterName:      req.ClusterName,
 		BootstrapServers: req.BootstrapServers,
 		AuthType:         req.AuthType,
 	}
@@ -631,6 +632,7 @@ func (s *Service) TestConnectionForCreate(ctx context.Context, req *CreateCluste
 
 	// 创建临时集群对象用于测试连接
 	tempCluster := &models.Cluster{
+		ClusterName:      req.ClusterName,
 		BootstrapServers: req.BootstrapServers,
 		AuthType:         req.AuthType,
 	}
