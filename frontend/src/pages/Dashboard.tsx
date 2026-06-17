@@ -32,7 +32,8 @@ const Dashboard: React.FC = () => {
         const clusters = clusterRes.data || []
         const authMap: Record<string, number> = {}
         clusters.forEach((c: any) => {
-          const type = c.auth_type === 'none' || c.auth_type === 'plaintext' ? 'PLAINTEXT' :
+          const type = c.auth_type === 'none' ? 'PLAINTEXT' :
+            c.auth_type === 'plaintext' ? 'SASL/PLAIN' :
             c.auth_type === 'scram' ? 'SCRAM' :
             c.auth_type === 'kerberos' ? 'Kerberos' : c.auth_type.toUpperCase()
           authMap[type] = (authMap[type] || 0) + 1
@@ -133,18 +134,16 @@ const Dashboard: React.FC = () => {
   const authDonutData: DonutDataItem[] = Object.entries(auth_type_distribution).map(([name, value]) => {
     const colorMap: Record<string, string> = {
       'none': '#3b82f6',
-      'plaintext': '#3b82f6',
-      'PLAINTEXT': '#3b82f6',
+      'plaintext': '#8b5cf6',
       'scram': '#10b981',
       'SCRAM': '#10b981',
-      'SASL_PLAINTEXT': '#8b5cf6',
       'kerberos': '#f59e0b',
       'KERBEROS': '#f59e0b',
     }
-    // Display name: capitalize nicely
+    // Display name
     const displayMap: Record<string, string> = {
       'none': 'PLAINTEXT',
-      'plaintext': 'PLAINTEXT',
+      'plaintext': 'SASL/PLAIN',
       'scram': 'SCRAM',
       'kerberos': 'Kerberos',
     }
