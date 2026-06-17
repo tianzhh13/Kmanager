@@ -337,6 +337,12 @@ func (s *KafkaExporterService) GetAllConsumerGroupLags(ctx context.Context, clus
 		logger.Warn("Error getting topic end offsets", "error", err)
 	}
 
+	// 4.1 批量获取所有 Topic 分区的 LogStartOffset（用于判断消费 offset 是否已过期）
+	oldestOffsets := make(map[string]map[int32]int64)
+	if oldestOffsetsRaw, err := adminClient.GetTopicPartitionStartOffsets(topicPartitions); err == nil {
+		oldestOffsets = oldestOffsetsRaw
+	}
+
 	// 5. 计算每个消费者组的 Lag
 	var result []*ConsumerGroupInfo
 	for _, desc := range descs {
@@ -382,12 +388,22 @@ func (s *KafkaExporterService) GetAllConsumerGroupLags(ctx context.Context, clus
 				// 计算 LagSeconds（仅对有 Lag 的分区计算）
 				lagSeconds := int64(-1) // -1 表示未计算或无法计算
 				if lag > 0 && currentOffset >= 0 {
-					ls, err := adminClient.CalculateConsumerGroupLagSeconds(topic, partition, currentOffset, endOffset)
-					if err != nil {
-						logger.Debug("Failed to calculate lag seconds", "topic", topic, "partition", partition, "error", err)
+					// 检查 offset 是否在有效范围内
+					oldest := int64(-1)
+					if oldestOffsets[topic] != nil {
+						oldest = oldestOffsets[topic][partition]
+					}
+					if oldest >= 0 && currentOffset < oldest {
+						// offset 已过期（被日志清理删除），跳过计算
 						lagSeconds = -1
 					} else {
-						lagSeconds = ls
+						ls, err := adminClient.CalculateConsumerGroupLagSeconds(topic, partition, currentOffset, endOffset)
+						if err != nil {
+							logger.Warn("Failed to calculate lag seconds", "topic", topic, "partition", partition, "error", err)
+							lagSeconds = -1
+						} else {
+							lagSeconds = ls
+						}
 					}
 				}
 

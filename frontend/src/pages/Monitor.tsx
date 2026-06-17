@@ -29,7 +29,7 @@ const Monitor: React.FC = () => {
   useEffect(() => {
     const loadClusters = async () => {
       try {
-        const res = await clusterAPI.list()
+        const res = await clusterAPI.list(1, 100)
         setClusters(res.data || [])
         if (res.data?.length > 0) {
           const clusterIdParam = searchParams.get('clusterId')

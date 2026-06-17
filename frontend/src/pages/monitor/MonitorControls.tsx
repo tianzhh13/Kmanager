@@ -43,10 +43,15 @@ const MonitorControls: React.FC<MonitorControlsProps> = ({
   return (
     <Space>
       <Select
+        showSearch
         placeholder="选择集群"
         value={selectedCluster}
         onChange={onClusterChange}
         style={{ width: 200 }}
+        optionFilterProp="label"
+        filterOption={(input, option) =>
+          (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+        }
         options={clusters.map(c => ({ label: c.cluster_name, value: c.cluster_id }))}
       />
       {timeRange === 'quick' ? (
