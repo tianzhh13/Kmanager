@@ -67,3 +67,6 @@ build/
 
 dist.zip
 dist.zip
+
+# Deployment packages
+*.zip
