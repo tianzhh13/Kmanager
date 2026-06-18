@@ -24,9 +24,9 @@ export interface UpdateTopicConfigRequest {
 }
 
 export const topicService = {
-  list: async (page: number = 1, pageSize: number = 20, clusterId?: number) => {
+  list: async (page: number = 1, pageSize: number = 20, clusterId?: number, search?: string) => {
     const response = await api.get('/topics', {
-      params: { page, page_size: pageSize, cluster_id: clusterId },
+      params: { page, page_size: pageSize, cluster_id: clusterId, search },
     })
     return response.data
   },
@@ -68,5 +68,11 @@ export const topicService = {
       params: { cluster_id: clusterId },
     })
     return response.data
+  },
+
+  updateDescription: async (topicName: string, clusterId: number, description: string): Promise<void> => {
+    await api.put(`/topics/${encodeURIComponent(topicName)}/description`, { description }, {
+      params: { cluster_id: clusterId },
+    })
   },
 }

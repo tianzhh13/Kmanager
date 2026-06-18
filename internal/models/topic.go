@@ -44,6 +44,7 @@ type Topic struct {
 	TopicID           int64       `gorm:"column:topic_id;primaryKey;autoIncrement" json:"topic_id"`
 	ClusterID         int64       `gorm:"column:cluster_id;not null;uniqueIndex:uk_cluster_topic" json:"cluster_id"`
 	TopicName         string      `gorm:"column:topic_name;type:varchar(256);not null;uniqueIndex:uk_cluster_topic;index:idx_topic_name" json:"topic_name"`
+	Description       string      `gorm:"column:description;type:varchar(512)" json:"description"`
 	Partitions        int32       `gorm:"column:partitions;not null" json:"partitions"`
 	ReplicationFactor int16       `gorm:"column:replication_factor;not null" json:"replication_factor"`
 	Config            TopicConfig `gorm:"column:config;type:json" json:"config"`
