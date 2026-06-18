@@ -80,8 +80,10 @@ type ListTopicsRequest struct {
 
 // ListTopicsResponse 列出 Topic 响应
 type ListTopicsResponse struct {
-	Data  []*models.Topic `json:"data"`
-	Total int64           `json:"total"`
+	Data             []*models.Topic `json:"data"`
+	Total            int64           `json:"total"`
+	TotalPartitions  int64           `json:"total_partitions"`
+	TotalReplicas    int64           `json:"total_replicas"`
 }
 
 // CreateTopic 创建 Topic
@@ -390,9 +392,17 @@ func (s *Service) ListTopics(ctx context.Context, req *ListTopicsRequest) (*List
 		return nil, err
 	}
 
+	// 获取集群级别的全量统计
+	totalPartitions, totalReplicas, err := s.topicRepo.GetClusterTopicStats(ctx, req.ClusterID)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ListTopicsResponse{
-		Data:  topics,
-		Total: total,
+		Data:            topics,
+		Total:           total,
+		TotalPartitions: totalPartitions,
+		TotalReplicas:   totalReplicas,
 	}, nil
 }
 
