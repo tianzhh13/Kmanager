@@ -5,6 +5,8 @@ interface TopicState {
   topics: Topic[]
   currentTopic: Topic | null
   total: number
+  totalPartitions: number
+  totalReplicas: number
   loading: boolean
   error: string | null
 }
@@ -13,15 +15,17 @@ const initialState: TopicState = {
   topics: [],
   currentTopic: null,
   total: 0,
+  totalPartitions: 0,
+  totalReplicas: 0,
   loading: false,
   error: null,
 }
 
 export const fetchTopics = createAsyncThunk(
   'topics/fetchTopics',
-  async (params: { page: number; pageSize: number; clusterId?: number }, { rejectWithValue }) => {
+  async (params: { page: number; pageSize: number; clusterId?: number; search?: string }, { rejectWithValue }) => {
     try {
-      const response = await topicService.list(params.page, params.pageSize, params.clusterId)
+      const response = await topicService.list(params.page, params.pageSize, params.clusterId, params.search)
       return response
     } catch (error: any) {
       return rejectWithValue(error.response?.data?.error || '获取 Topic 列表失败')
@@ -73,6 +77,8 @@ const topicSlice = createSlice({
         state.loading = false
         state.topics = action.payload.data
         state.total = action.payload.total
+        state.totalPartitions = action.payload.total_partitions
+        state.totalReplicas = action.payload.total_replicas
       })
       .addCase(fetchTopics.rejected, (state, action) => {
         state.loading = false

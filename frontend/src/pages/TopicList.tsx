@@ -16,13 +16,13 @@ interface Cluster {
 const TopicList: React.FC = () => {
   const dispatch = useAppDispatch()
   const navigate = useNavigate()
-  const { topics, total, loading } = useAppSelector((state) => state.topics)
+  const { topics, total, totalPartitions, totalReplicas, loading } = useAppSelector((state) => state.topics)
   const { user } = useAppSelector((state) => state.auth)
   const isNormalUser = user?.role === 'normal_user'
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [form] = Form.useForm()
   const [page, setPage] = useState(1)
-  const [pageSize] = useState(20)
+  const [pageSize, setPageSize] = useState(20)
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [clustersLoading, setClustersLoading] = useState(false)
   const [selectedClusterId, setSelectedClusterId] = useState<number | null>(null)
@@ -60,9 +60,9 @@ const TopicList: React.FC = () => {
 
   useEffect(() => {
     if (selectedClusterId) {
-      dispatch(fetchTopics({ page, pageSize, clusterId: selectedClusterId }))
+      dispatch(fetchTopics({ page, pageSize, clusterId: selectedClusterId, search: searchText || undefined }))
     }
-  }, [dispatch, page, pageSize, selectedClusterId])
+  }, [dispatch, page, pageSize, selectedClusterId, searchText])
 
   const handleOpenModal = () => {
     if (!selectedClusterId) {
@@ -213,13 +213,6 @@ const TopicList: React.FC = () => {
     }
   }
 
-  const totalPartitions = topics.reduce((sum: number, t: any) => sum + (t.partitions || 0), 0)
-  const totalReplicas = topics.reduce((sum: number, t: any) => sum + ((t.partitions || 0) * (t.replication_factor || 0)), 0)
-
-  const filteredTopics = topics.filter((t: any) =>
-    !searchText || t.topic_name.toLowerCase().includes(searchText.toLowerCase())
-  )
-
   const [gridCols] = useState('2fr 1.2fr 0.8fr 0.8fr 0.8fr 260px')
 
   return (
@@ -281,7 +274,17 @@ const TopicList: React.FC = () => {
 
       {/* Search */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
-        <SearchBar value={searchText} onChange={setSearchText} placeholder="搜索 Topic 名称..." />
+        <SearchBar value={searchText} onChange={(val) => { setSearchText(val); setPage(1) }} placeholder="搜索 Topic 名称..." />
+        <Select
+          value={pageSize}
+          onChange={(val) => { setPageSize(val); setPage(1) }}
+          style={{ width: 100 }}
+          options={[
+            { value: 20, label: '20 条/页' },
+            { value: 50, label: '50 条/页' },
+            { value: 100, label: '100 条/页' },
+          ]}
+        />
       </div>
 
       {/* Table header */}
@@ -306,7 +309,7 @@ const TopicList: React.FC = () => {
             <Spin />
           </div>
         )}
-        {selectedClusterId && !loading && filteredTopics.map((topic: any) => (
+        {selectedClusterId && !loading && topics.map((topic: any) => (
           <div key={topic.id || topic.topic_name} className="bento-table-row" style={{ gridTemplateColumns: gridCols, cursor: 'pointer' }} onClick={() => handleGoToMonitor(topic.topic_name)}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ color: 'var(--brand)', fontSize: 14, fontWeight: 700 }}>&#9830;</span>
@@ -350,7 +353,7 @@ const TopicList: React.FC = () => {
             </div>
           </div>
         ))}
-        {selectedClusterId && !loading && filteredTopics.length === 0 && (
+        {selectedClusterId && !loading && topics.length === 0 && (
           <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-3)' }}>暂无 Topic 数据</div>
         )}
       </div>

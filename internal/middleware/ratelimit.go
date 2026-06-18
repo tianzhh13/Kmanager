@@ -20,7 +20,7 @@ type limiterEntry struct {
 // RateLimiter 限流器
 type RateLimiter struct {
 	limiters    map[string]*limiterEntry
-	mu          sync.Mutex
+	mu          sync.RWMutex
 	rate        rate.Limit
 	burst       int
 	cleanupDone chan struct{}
@@ -81,11 +81,20 @@ func (r *RateLimiter) cleanupStaleEntries() {
 	}
 }
 
-// getLimiter 获取或创建用户的限流器
+// getLimiter 获取或创建用户的限流器（双重检查锁）
 func (r *RateLimiter) getLimiter(key string) *rate.Limiter {
+	r.mu.RLock()
+	if entry, exists := r.limiters[key]; exists {
+		entry.lastAccess = time.Now()
+		r.mu.RUnlock()
+		return entry.limiter
+	}
+	r.mu.RUnlock()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// 再次检查，避免并发创建
 	if entry, exists := r.limiters[key]; exists {
 		entry.lastAccess = time.Now()
 		return entry.limiter

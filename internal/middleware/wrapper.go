@@ -56,34 +56,68 @@ func NewClusterPermissionMiddleware(permissionSvc *auth.PermissionService) *Clus
 	}
 }
 
-// RequireClusterAccess 要求集群访问权限
-func (c *ClusterPermissionMiddlewareWrapper) RequireClusterAccess() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		userID := GetUserID(ctx)
-		userRole := GetUserRole(ctx)
-		var clusterIDStr string
-
-		// 1. 先从 URL 路径参数获取
-		clusterIDStr = ctx.Param("id")
-
-		// 2. 尝试从查询参数获取
-		if clusterIDStr == "" {
-			clusterIDStr = ctx.Query("cluster_id")
+// resolveClusterID 从请求中解析集群 ID
+// fromBody: 是否尝试从请求体中读取（写权限场景）
+func resolveClusterID(ctx *gin.Context, fromBody bool) string {
+	// 1. URL 路径参数
+	if id := ctx.Param("id"); id != "" {
+		return id
+	}
+	// 2. 查询参数
+	if id := ctx.Query("cluster_id"); id != "" {
+		return id
+	}
+	// 3. 请求体（仅写权限场景）
+	if fromBody && ctx.Request.Body != nil {
+		bodyBytes, err := io.ReadAll(ctx.Request.Body)
+		if err == nil && len(bodyBytes) > 0 {
+			ctx.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+			var body struct {
+				ClusterID int64 `json:"cluster_id"`
+			}
+			if err := json.Unmarshal(bodyBytes, &body); err == nil && body.ClusterID > 0 {
+				return strconv.FormatInt(body.ClusterID, 10)
+			}
 		}
+	}
+	return ""
+}
 
-		// 如果没有 cluster_id，直接放行（由 handler 处理）
+// checkClusterAccess 检查集群访问权限
+func (c *ClusterPermissionMiddlewareWrapper) checkClusterAccess(ctx *gin.Context, userID int64, clusterID int64, userRole string, writeMode bool) bool {
+	var hasPermission bool
+	var err error
+	if writeMode {
+		hasPermission, err = c.permissionSvc.CheckClusterPermission(ctx.Request.Context(), userID, clusterID, userRole)
+	} else if userRole == string(models.RoleNormalUser) {
+		hasPermission, err = c.permissionSvc.CheckClusterReadPermission(ctx.Request.Context(), userID, clusterID, userRole)
+	} else {
+		hasPermission, err = c.permissionSvc.CheckClusterPermission(ctx.Request.Context(), userID, clusterID, userRole)
+	}
+	return err == nil && hasPermission
+}
+
+// clusterAccessMiddleware 集群权限中间件的通用实现
+func (c *ClusterPermissionMiddlewareWrapper) clusterAccessMiddleware(writeMode bool, allowMissing bool) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		clusterIDStr := resolveClusterID(ctx, writeMode)
+
 		if clusterIDStr == "" {
-			ctx.Next()
+			if allowMissing {
+				ctx.Next()
+				return
+			}
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "cluster id required"})
+			ctx.Abort()
 			return
 		}
 
-		// 超级管理员拥有所有权限
+		userRole := GetUserRole(ctx)
 		if userRole == string(models.RoleSuperAdmin) {
 			ctx.Next()
 			return
 		}
 
-		// 解析集群ID
 		clusterID, err := strconv.ParseInt(clusterIDStr, 10, 64)
 		if err != nil {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
@@ -91,17 +125,9 @@ func (c *ClusterPermissionMiddlewareWrapper) RequireClusterAccess() gin.HandlerF
 			return
 		}
 
-		// 普通用户使用读权限检查（检查 cluster_user_relation）
-		var hasPermission bool
-		if userRole == string(models.RoleNormalUser) {
-			hasPermission, err = c.permissionSvc.CheckClusterReadPermission(ctx.Request.Context(), userID, clusterID, userRole)
-		} else {
-			hasPermission, err = c.permissionSvc.CheckClusterPermission(ctx.Request.Context(), userID, clusterID, userRole)
-		}
-		if err != nil || !hasPermission {
-			ctx.JSON(http.StatusForbidden, gin.H{
-				"error": "no permission for this cluster",
-			})
+		userID := GetUserID(ctx)
+		if !c.checkClusterAccess(ctx, userID, clusterID, userRole, writeMode) {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "no permission for this cluster"})
 			ctx.Abort()
 			return
 		}
@@ -110,71 +136,14 @@ func (c *ClusterPermissionMiddlewareWrapper) RequireClusterAccess() gin.HandlerF
 	}
 }
 
+// RequireClusterAccess 要求集群访问权限
+func (c *ClusterPermissionMiddlewareWrapper) RequireClusterAccess() gin.HandlerFunc {
+	return c.clusterAccessMiddleware(false, true)
+}
+
 // RequireClusterWriteAccess 要求集群写权限
 func (c *ClusterPermissionMiddlewareWrapper) RequireClusterWriteAccess() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		userID := GetUserID(ctx)
-		userRole := GetUserRole(ctx)
-		var clusterIDStr string
-
-		// 1. 先从 URL 路径参数获取
-		clusterIDStr = ctx.Param("id")
-
-		// 2. 尝试从查询参数获取
-		if clusterIDStr == "" {
-			clusterIDStr = ctx.Query("cluster_id")
-		}
-
-		// 3. 尝试从请求体获取 cluster_id
-		if clusterIDStr == "" && ctx.Request.Body != nil {
-			// 读取请求体
-			bodyBytes, err := io.ReadAll(ctx.Request.Body)
-			if err == nil && len(bodyBytes) > 0 {
-				// 恢复请求体供后续使用
-				ctx.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-				// 解析 JSON 获取 cluster_id
-				var body struct {
-					ClusterID int64 `json:"cluster_id"`
-				}
-				if err := json.Unmarshal(bodyBytes, &body); err == nil && body.ClusterID > 0 {
-					clusterIDStr = strconv.FormatInt(body.ClusterID, 10)
-				}
-			}
-		}
-
-		if clusterIDStr == "" {
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "cluster id required"})
-			ctx.Abort()
-			return
-		}
-
-		// 超级管理员拥有所有权限
-		if userRole == string(models.RoleSuperAdmin) {
-			ctx.Next()
-			return
-		}
-
-		// 解析集群ID
-		clusterID, err := strconv.ParseInt(clusterIDStr, 10, 64)
-		if err != nil {
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
-			ctx.Abort()
-			return
-		}
-
-		// 检查集群权限
-		hasPermission, err := c.permissionSvc.CheckClusterPermission(ctx.Request.Context(), userID, clusterID, userRole)
-		if err != nil || !hasPermission {
-			ctx.JSON(http.StatusForbidden, gin.H{
-				"error": "no permission for this cluster",
-			})
-			ctx.Abort()
-			return
-		}
-
-		ctx.Next()
-	}
+	return c.clusterAccessMiddleware(true, false)
 }
 
 // AuditMiddlewareWrapper 审计中间件包装器
