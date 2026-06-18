@@ -66,4 +66,6 @@ scripts\upgrade_add_sasl_mechanism.sql
 build/
 
 dist.zip
-dist.zip
+
+# Deployment packages
+*.zip
