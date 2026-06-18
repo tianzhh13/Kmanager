@@ -152,20 +152,24 @@ func (h *TopicHandler) ListTopics(c *gin.Context) {
 
 	req.Search = c.Query("search")
 
-	if offsetStr := c.Query("offset"); offsetStr != "" {
-		offset, err := strconv.Atoi(offsetStr)
-		if err != nil || offset < 0 {
-			offset = 0
+	// 分页参数：前端传 page/page_size，转为 offset/limit
+	page := 1
+	pageSize := 20
+
+	if pageStr := c.Query("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
 		}
-		req.Offset = offset
 	}
 
-	if limitStr := c.Query("limit"); limitStr != "" {
-		limit, _ := strconv.Atoi(limitStr)
-		req.Limit = limit
-	} else {
-		req.Limit = 20 // 默认每页 20 条
+	if psStr := c.Query("page_size"); psStr != "" {
+		if ps, err := strconv.Atoi(psStr); err == nil && ps > 0 {
+			pageSize = ps
+		}
 	}
+
+	req.Offset = (page - 1) * pageSize
+	req.Limit = pageSize
 
 	// 获取当前用户信息
 	userID := middleware.GetUserID(c)
