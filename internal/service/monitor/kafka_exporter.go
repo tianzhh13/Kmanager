@@ -18,7 +18,7 @@ import (
 type ConsumerGroupInfo struct {
 	GroupID  string         `json:"group_id"`
 	State    string         `json:"state"`
-	Members  int            `json:"members"`
+	Members  int            `json:"member_count"`
 	TotalLag int64          `json:"total_lag"`
 	Topics   []TopicLagInfo `json:"topics"`
 }
