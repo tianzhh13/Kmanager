@@ -121,8 +121,9 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
         resp.data.result.forEach((r: any) => {
           const name = r.metric.topic
           if (name && !topicMap.has(name)) {
-            // kafka_topic_partitions 的值本身就是分区数
-            const partitions = r.value ? parseInt(r.value[1]) || 1 : 1
+            // kafka_topic_partitions 的值本身就是分区数（range query 返回 values，instant query 返回 value）
+            const raw = r.value || (r.values && r.values[0])
+            const partitions = raw ? parseInt(raw[1]) || 1 : 1
             topicMap.set(name, { name, partitions, replication_factor: 1 })
           }
         })
