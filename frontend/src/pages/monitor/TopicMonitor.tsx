@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Select, Spin, Alert } from 'antd'
 import EChartsReact from 'echarts-for-react/lib/core'
 import echarts from '../../utils/echarts'
@@ -27,6 +27,8 @@ interface TopicMonitorProps {
   metrics: ClusterMetricsResponse | null
   activeTab: string
   jmxAvailable?: boolean
+  initialTopic?: string | null
+  initialConsumerGroup?: string | null
 }
 
 interface TopicInfo {
@@ -41,7 +43,7 @@ interface PartitionMetric {
   values: { time: string; value: number }[]
 }
 
-const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRange, customRange, metrics, activeTab, jmxAvailable }) => {
+const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRange, customRange, metrics, activeTab, jmxAvailable, initialTopic, initialConsumerGroup }) => {
   const [topics, setTopics] = useState<TopicInfo[]>([])
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null)
   const [selectedConsumerGroup, setSelectedConsumerGroup] = useState<string | null>(null)
@@ -59,6 +61,7 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
   const [topicIsrVsReplicaData, setTopicIsrVsReplicaData] = useState<{ isr: PartitionMetric[]; replica: PartitionMetric[] }>({ isr: [], replica: [] })
   const [topicUnderReplicatedCount, setTopicUnderReplicatedCount] = useState(0)
   const [debugOpen, setDebugOpen] = useState(false)
+  const initialConsumerGroupRef = useRef<string | null>(initialConsumerGroup || null)
   const { overrides, getQ, setOverride, resetOverride, resetAll } = usePromqlOverrides('topic_monitor')
   const { q, defaultPromqls } = useDefaultPromqls(getQ)
 
@@ -242,8 +245,23 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
 
   // Load topics on tab activation
   useEffect(() => {
-    if (activeTab === 'topic' && cluster) loadTopics()
-  }, [activeTab, cluster, loadTopics])
+    if (activeTab === 'topic' && cluster) {
+      loadTopics().then(() => {
+        // 如果有 initialTopic 参数，加载完成后自动选中
+        if (initialTopic) {
+          // 延迟一下等待 topics 状态更新
+          setTimeout(() => {
+            setSelectedTopic(initialTopic)
+            // 从 ref 获取 initialConsumerGroup，避免被 useEffect 清除
+            if (initialConsumerGroupRef.current) {
+              setSelectedConsumerGroup(initialConsumerGroupRef.current)
+              initialConsumerGroupRef.current = null // 用完清除
+            }
+          }, 100)
+        }
+      })
+    }
+  }, [activeTab, cluster, loadTopics, initialTopic])
 
   // Load consumer groups for selected topic
   useEffect(() => {
@@ -252,10 +270,16 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
         .filter(cg => cg.topics.some(t => t.topic === selectedTopic))
         .map(cg => cg.group_id)
       setTopicConsumerGroups(cgs)
-      if (selectedConsumerGroup && !cgs.includes(selectedConsumerGroup)) setSelectedConsumerGroup(null)
+      // 只有当 initialConsumerGroupRef 为空时才清除 selectedConsumerGroup
+      if (selectedConsumerGroup && !cgs.includes(selectedConsumerGroup) && !initialConsumerGroupRef.current) {
+        setSelectedConsumerGroup(null)
+      }
     } else {
       setTopicConsumerGroups([])
-      setSelectedConsumerGroup(null)
+      // 只有当 initialConsumerGroupRef 为空时才清除 selectedConsumerGroup
+      if (!initialConsumerGroupRef.current) {
+        setSelectedConsumerGroup(null)
+      }
     }
   }, [selectedTopic, metrics?.consumer_groups])
 

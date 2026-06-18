@@ -204,15 +204,15 @@ export function createMultiLineChartOption(
     },
     legend: {
       data: seriesList.map(s => s.name),
-      top: 0,
-      right: 0,
+      bottom: 0,
+      left: 'center',
       type: 'scroll',
       icon: 'roundRect',
       itemWidth: 14,
       itemHeight: 3,
       textStyle: { fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 11, color: '#57534e' },
     },
-    grid: { ...SHARED_GRID, top: 36 },
+    grid: { ...SHARED_GRID, bottom: 40 },
     xAxis: { ...SHARED_X_AXIS, data: times },
     yAxis: {
       ...SHARED_Y_AXIS,
@@ -491,17 +491,14 @@ export const buildMultiSeriesChartOption = (
   const entries = Object.entries(safeData).filter(([, d]) => d && d.times && d.values)
   if (entries.length === 0) return emptyOption(title)
 
-  const seriesList: MultiLineSeries[] = entries.map(([id, d]) => ({
-    name: `Broker ${id}`,
-    times: fullTimes || d.times,
-    values: d.times.map((t, i) => {
-      if (fullTimes) {
-        const idx = d.times.indexOf(t)
-        return idx >= 0 ? d.values[idx] : 0
-      }
-      return d.values[i]
-    }),
-  }))
+  const seriesList: MultiLineSeries[] = entries.map(([id, d]) => {
+    const times = fullTimes || d.times
+    const values = times.map((t) => {
+      const idx = d.times.indexOf(t)
+      return idx >= 0 ? d.values[idx] : 0
+    })
+    return { name: `Broker ${id}`, times, values }
+  })
 
   return createMultiLineChartOption(title, seriesList, yAxisName, tooltipFormatter)
 }

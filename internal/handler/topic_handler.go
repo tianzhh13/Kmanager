@@ -152,20 +152,24 @@ func (h *TopicHandler) ListTopics(c *gin.Context) {
 
 	req.Search = c.Query("search")
 
-	if offsetStr := c.Query("offset"); offsetStr != "" {
-		offset, err := strconv.Atoi(offsetStr)
-		if err != nil || offset < 0 {
-			offset = 0
+	// 分页参数：前端传 page/page_size，转为 offset/limit
+	page := 1
+	pageSize := 20
+
+	if pageStr := c.Query("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
 		}
-		req.Offset = offset
 	}
 
-	if limitStr := c.Query("limit"); limitStr != "" {
-		limit, _ := strconv.Atoi(limitStr)
-		req.Limit = limit
-	} else {
-		req.Limit = 20 // 默认每页 20 条
+	if psStr := c.Query("page_size"); psStr != "" {
+		if ps, err := strconv.Atoi(psStr); err == nil && ps > 0 {
+			pageSize = ps
+		}
 	}
+
+	req.Offset = (page - 1) * pageSize
+	req.Limit = pageSize
 
 	// 获取当前用户信息
 	userID := middleware.GetUserID(c)
@@ -193,6 +197,31 @@ func (h *TopicHandler) ListTopics(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// UpdateTopicDescription 更新 Topic 描述
+func (h *TopicHandler) UpdateTopicDescription(c *gin.Context) {
+	clusterIDStr := c.Query("cluster_id")
+	topicName := c.Param("name")
+
+	clusterID, err := strconv.ParseInt(clusterIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster_id"})
+		return
+	}
+
+	var req topic.UpdateTopicDescriptionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
+		return
+	}
+
+	if err := h.topicSvc.UpdateTopicDescription(c.Request.Context(), clusterID, topicName, &req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "topic description updated successfully"})
 }
 
 // SyncTopics 同步 Topic

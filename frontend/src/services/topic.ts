@@ -69,4 +69,10 @@ export const topicService = {
     })
     return response.data
   },
+
+  updateDescription: async (topicName: string, clusterId: number, description: string): Promise<void> => {
+    await api.put(`/topics/${encodeURIComponent(topicName)}/description`, { description }, {
+      params: { cluster_id: clusterId },
+    })
+  },
 }

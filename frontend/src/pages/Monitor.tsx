@@ -26,6 +26,10 @@ const Monitor: React.FC = () => {
   const [quickRange, setQuickRange] = useState<string>('1h')
   const [customRange, setCustomRange] = useState<[Dayjs, Dayjs] | null>(null)
 
+  // 从 URL 参数获取 topicName 和 consumerGroup
+  const topicNameParam = searchParams.get('topicName')
+  const consumerGroupParam = searchParams.get('consumerGroup')
+
   useEffect(() => {
     const loadClusters = async () => {
       try {
@@ -154,6 +158,8 @@ const Monitor: React.FC = () => {
             metrics={metrics}
             activeTab={activeTab}
             jmxAvailable={metrics?.jmx_exporter_available ?? false}
+            initialTopic={topicNameParam}
+            initialConsumerGroup={consumerGroupParam}
           />
         )}
       </Spin>
