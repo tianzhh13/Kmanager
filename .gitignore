@@ -69,3 +69,6 @@ dist.zip
 
 # Deployment packages
 *.zip
+
+# AI assistant config
+.claude/
