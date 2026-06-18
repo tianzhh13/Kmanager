@@ -35,6 +35,9 @@ const TopicList: React.FC = () => {
   const [cgData, setCgData] = useState<any[]>([])
   const [cgLoading, setCgLoading] = useState(false)
   const [searchText, setSearchText] = useState('')
+  const [descModalVisible, setDescModalVisible] = useState(false)
+  const [descTopicName, setDescTopicName] = useState('')
+  const [descForm] = Form.useForm()
 
   useEffect(() => {
     const loadClusters = async () => {
@@ -90,6 +93,7 @@ const TopicList: React.FC = () => {
       const payload = {
         cluster_id: clusterId,
         topic_name: values.topic_name,
+        description: values.description || '',
         partitions: Number(values.partitions),
         replication_factor: Number(values.replication_factor),
       }
@@ -153,6 +157,11 @@ const TopicList: React.FC = () => {
     navigate(`/monitor?clusterId=${selectedClusterId}&tab=topic&topicName=${encodeURIComponent(topicName)}`)
   }
 
+  const handleGoToMonitorWithConsumer = (topicName: string, consumerGroup: string) => {
+    if (!selectedClusterId) return
+    navigate(`/monitor?clusterId=${selectedClusterId}&tab=topic&topicName=${encodeURIComponent(topicName)}&consumerGroup=${encodeURIComponent(consumerGroup)}`)
+  }
+
   const handleViewConfig = async (topicName: string) => {
     if (!selectedClusterId) return
     setConfigTopicName(topicName)
@@ -171,6 +180,7 @@ const TopicList: React.FC = () => {
 
   const handleViewConsumerGroups = async (topicName: string) => {
     if (!selectedClusterId) return
+    setConfigTopicName(topicName)  // 设置当前 topic 名称，用于弹窗标题和跳转
     setCgModalVisible(true)
     setCgLoading(true)
     setCgData([])
@@ -184,6 +194,25 @@ const TopicList: React.FC = () => {
     }
   }
 
+  const handleEditDescription = (topicName: string, currentDesc: string) => {
+    setDescTopicName(topicName)
+    descForm.setFieldsValue({ description: currentDesc || '' })
+    setDescModalVisible(true)
+  }
+
+  const handleSaveDescription = async () => {
+    try {
+      const values = await descForm.validateFields()
+      await topicService.updateDescription(descTopicName, selectedClusterId!, values.description)
+      message.success('描述更新成功')
+      setDescModalVisible(false)
+      dispatch(fetchTopics({ page, pageSize, clusterId: selectedClusterId! }))
+    } catch (error: any) {
+      const errorMsg = error?.response?.data?.error || error?.message || '更新失败'
+      message.error(errorMsg)
+    }
+  }
+
   const totalPartitions = topics.reduce((sum: number, t: any) => sum + (t.partitions || 0), 0)
   const totalReplicas = topics.reduce((sum: number, t: any) => sum + ((t.partitions || 0) * (t.replication_factor || 0)), 0)
 
@@ -191,7 +220,7 @@ const TopicList: React.FC = () => {
     !searchText || t.topic_name.toLowerCase().includes(searchText.toLowerCase())
   )
 
-  const [gridCols] = useState('2fr 1fr 1fr 1fr 220px')
+  const [gridCols] = useState('2fr 1.2fr 0.8fr 0.8fr 0.8fr 260px')
 
   return (
     <div>
@@ -258,6 +287,7 @@ const TopicList: React.FC = () => {
       {/* Table header */}
       <div className="bento-table-header" style={{ gridTemplateColumns: gridCols }}>
         <div>Topic Name</div>
+        <div>Description</div>
         <div style={{ textAlign: 'center' }}>Partitions</div>
         <div style={{ textAlign: 'center' }}>Replicas</div>
         <div style={{ textAlign: 'center' }}>Created</div>
@@ -290,6 +320,9 @@ const TopicList: React.FC = () => {
                 <LabelTag text="SYSTEM" color="warning" />
               )}
             </div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {topic.description || '-'}
+            </div>
             <div style={{ textAlign: 'center' }}>
               <LabelTag text={String(topic.partitions)} color={topic.topic_name.startsWith('__') ? 'warning' : 'orange'} />
             </div>
@@ -304,6 +337,11 @@ const TopicList: React.FC = () => {
               <button className="bento-action-btn" onClick={(e) => { e.stopPropagation(); handleViewConsumerGroups(topic.topic_name) }}>
                 <TeamOutlined /> 消费组
               </button>
+              {!isNormalUser && !topic.topic_name.startsWith('__') && (
+                <button className="bento-action-btn" onClick={(e) => { e.stopPropagation(); handleEditDescription(topic.topic_name, topic.description) }}>
+                  <SettingOutlined /> 描述
+                </button>
+              )}
               {!isNormalUser && !topic.topic_name.startsWith('__') && (
                 <button className="bento-action-btn bento-action-btn--danger" onClick={(e) => { e.stopPropagation(); handleDelete(topic.topic_name) }}>
                   <DeleteOutlined /> 删除
@@ -367,6 +405,9 @@ const TopicList: React.FC = () => {
           <Form.Item name="topic_name" label="Topic 名称" rules={[{ required: true, message: '请输入 Topic 名称' }]}>
             <Input placeholder="请输入 Topic 名称" />
           </Form.Item>
+          <Form.Item name="description" label="描述">
+            <Input placeholder="请输入描述（可选，用于标识 Topic 用途）" />
+          </Form.Item>
           <Form.Item name="partitions" label="分区数" rules={[{ required: true, message: '请输入分区数' }]} initialValue={1}>
             <InputNumber min={1} max={100} style={{ width: '100%' }} placeholder="请输入分区数" />
           </Form.Item>
@@ -426,13 +467,35 @@ const TopicList: React.FC = () => {
           <div className="bento-table-body">
             {cgData.map((item: any) => (
               <div key={item.group_id} className="bento-table-row" style={{ gridTemplateColumns: 'minmax(200px, 2fr) 100px 80px' }}>
-                <span className="text-mono bento-table-cell-wrap" style={{ fontSize: 12, fontWeight: 600, wordBreak: 'break-all' }} title={item.group_id}>{item.group_id}</span>
+                <a
+                  className="text-mono bento-table-cell-wrap"
+                  style={{ fontSize: 12, fontWeight: 600, wordBreak: 'break-all', color: 'var(--brand)', cursor: 'pointer' }}
+                  title={item.group_id}
+                  onClick={() => { setCgModalVisible(false); handleGoToMonitorWithConsumer(configTopicName, item.group_id) }}
+                >
+                  {item.group_id}
+                </a>
                 <LabelTag text={item.state} color={item.state === 'Stable' ? 'green' : item.state === 'Empty' ? 'orange' : 'red'} />
                 <span style={{ textAlign: 'center', fontSize: 13 }}>{item.member_count}</span>
               </div>
             ))}
           </div>
         </Spin>
+      </Modal>
+
+      {/* Edit Description Modal */}
+      <Modal
+        title={`编辑描述 - ${descTopicName}`}
+        open={descModalVisible}
+        onOk={handleSaveDescription}
+        onCancel={() => setDescModalVisible(false)}
+        destroyOnClose
+      >
+        <Form form={descForm} layout="vertical">
+          <Form.Item name="description" label="描述">
+            <Input.TextArea placeholder="请输入描述，用于标识 Topic 用途（如：用户行为日志、订单数据等）" rows={3} />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   )

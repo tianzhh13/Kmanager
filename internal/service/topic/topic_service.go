@@ -56,6 +56,7 @@ func NewService(
 type CreateTopicRequest struct {
 	ClusterID         int64             `json:"cluster_id" binding:"required"`
 	TopicName         string            `json:"topic_name" binding:"required"`
+	Description       string            `json:"description"`
 	Partitions        int32             `json:"partitions" binding:"required,min=1"`
 	ReplicationFactor int16             `json:"replication_factor" binding:"required,min=1"`
 	Config            map[string]string `json:"config"`
@@ -144,6 +145,7 @@ func (s *Service) CreateTopic(ctx context.Context, req *CreateTopicRequest) erro
 	topic := &models.Topic{
 		ClusterID:         req.ClusterID,
 		TopicName:         req.TopicName,
+		Description:       req.Description,
 		Partitions:        req.Partitions,
 		ReplicationFactor: req.ReplicationFactor,
 		SyncStatus:        "synced",
@@ -493,6 +495,29 @@ func (s *Service) SyncTopics(ctx context.Context, clusterID int64) error {
 	}
 
 	logger.Info("SyncTopics: completed", "cluster_id", clusterID, "new", newCount, "updated", updateCount, "deleted", deleteCount)
+	return nil
+}
+
+// UpdateTopicDescriptionRequest 更新 Topic 描述请求
+type UpdateTopicDescriptionRequest struct {
+	Description string `json:"description"`
+}
+
+// UpdateTopicDescription 更新 Topic 描述
+func (s *Service) UpdateTopicDescription(ctx context.Context, clusterID int64, topicName string, req *UpdateTopicDescriptionRequest) error {
+	topic, err := s.topicRepo.FindByName(ctx, clusterID, topicName)
+	if err != nil {
+		return fmt.Errorf("failed to find topic: %w", err)
+	}
+	if topic == nil {
+		return ErrTopicNotFound
+	}
+
+	topic.Description = req.Description
+	if err := s.topicRepo.Update(ctx, topic); err != nil {
+		return fmt.Errorf("failed to update topic description: %w", err)
+	}
+
 	return nil
 }
 

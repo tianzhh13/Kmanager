@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS `topic` (
     `topic_id` BIGINT PRIMARY KEY AUTO_INCREMENT,
     `cluster_id` BIGINT NOT NULL,
     `topic_name` VARCHAR(256) NOT NULL,
+    `description` VARCHAR(512) DEFAULT '',
     `partitions` INT NOT NULL,
     `replication_factor` SMALLINT NOT NULL,
     `config` JSON,

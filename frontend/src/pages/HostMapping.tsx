@@ -137,12 +137,12 @@ const HostMappingPage: React.FC = () => {
           <table className="bento-table">
             <thead>
               <tr>
-                <th>HOSTNAME</th>
-                <th>CLUSTER</th>
-                <th>IP ADDRESS</th>
-                <th>DESCRIPTION</th>
-                <th>CREATED</th>
-                <th>ACTIONS</th>
+                <th style={{ textAlign: 'center' }}>HOSTNAME</th>
+                <th style={{ textAlign: 'center' }}>CLUSTER</th>
+                <th style={{ textAlign: 'center' }}>IP ADDRESS</th>
+                <th style={{ textAlign: 'center' }}>DESCRIPTION</th>
+                <th style={{ textAlign: 'center' }}>CREATED</th>
+                <th style={{ textAlign: 'right' }}>ACTIONS</th>
               </tr>
             </thead>
             <tbody>
@@ -153,13 +153,13 @@ const HostMappingPage: React.FC = () => {
               ) : (
                 mappings.map(m => (
                   <tr key={m.id}>
-                    <td><code style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>{m.hostname}</code></td>
-                    <td><span style={{ fontSize: 13, color: m.cluster_name ? 'var(--brand)' : 'var(--text-muted)' }}>{m.cluster_name || '全局'}</span></td>
-                    <td><code style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>{m.ip_address}</code></td>
-                    <td>{m.description || '-'}</td>
-                    <td>{new Date(m.created_at).toLocaleDateString()}</td>
-                    <td>
-                      <div style={{ display: 'flex', gap: 6 }}>
+                    <td style={{ textAlign: 'center' }}><code style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>{m.hostname}</code></td>
+                    <td style={{ textAlign: 'center' }}><span style={{ fontSize: 13, color: m.cluster_name ? 'var(--brand)' : 'var(--text-muted)' }}>{m.cluster_name || '全局'}</span></td>
+                    <td style={{ textAlign: 'center' }}><code style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>{m.ip_address}</code></td>
+                    <td style={{ textAlign: 'center' }}>{m.description || '-'}</td>
+                    <td style={{ textAlign: 'center' }}>{new Date(m.created_at).toLocaleDateString()}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                         <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(m)}>编辑</Button>
                         <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(m.id)}>删除</Button>
                       </div>

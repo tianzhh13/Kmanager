@@ -209,6 +209,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				topics.GET("/:name", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.GetTopic)
 				topics.GET("/:name/config", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.GetTopicConfig)
 				topics.GET("/:name/consumer-groups", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.GetTopicConsumerGroups)
+				topics.PUT("/:name/description", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.UpdateTopicDescription)
 				topics.DELETE("/:name", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.DeleteTopic)
 				topics.PUT("/:name/config", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.UpdateTopicConfig)
 				topics.POST("/sync/:id", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.SyncTopics)
