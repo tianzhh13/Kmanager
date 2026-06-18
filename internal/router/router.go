@@ -209,6 +209,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				topics.GET("/:name", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.GetTopic)
 				topics.GET("/:name/config", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.GetTopicConfig)
 				topics.GET("/:name/consumer-groups", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.GetTopicConsumerGroups)
+				topics.PUT("/:name/description", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.UpdateTopicDescription)
 				topics.DELETE("/:name", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.DeleteTopic)
 				topics.PUT("/:name/config", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.UpdateTopicConfig)
 				topics.POST("/sync/:id", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.SyncTopics)
@@ -269,9 +270,9 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			topicPerms := authenticated.Group("/topic-permissions")
 			topicPerms.Use(middleware.RequireSuperAdminOrClusterAdmin())
 			{
-				topicPerms.POST("", middleware.RequireSuperAdminOrClusterAdmin(), topicPermHandler.AssignTopicPermission)
-				topicPerms.POST("/batch", middleware.RequireSuperAdminOrClusterAdmin(), topicPermHandler.BatchAssignTopicPermission)
-				topicPerms.DELETE("", middleware.RequireSuperAdminOrClusterAdmin(), topicPermHandler.RevokeTopicPermission)
+				topicPerms.POST("", topicPermHandler.AssignTopicPermission)
+				topicPerms.POST("/batch", topicPermHandler.BatchAssignTopicPermission)
+				topicPerms.DELETE("", topicPermHandler.RevokeTopicPermission)
 				topicPerms.GET("/user/:userId", topicPermHandler.GetUserTopicPermissions)
 				topicPerms.GET("/user/:userId/cluster/:clusterId", topicPermHandler.GetUserClusterTopicPermissions)
 			}

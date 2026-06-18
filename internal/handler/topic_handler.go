@@ -199,6 +199,31 @@ func (h *TopicHandler) ListTopics(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// UpdateTopicDescription 更新 Topic 描述
+func (h *TopicHandler) UpdateTopicDescription(c *gin.Context) {
+	clusterIDStr := c.Query("cluster_id")
+	topicName := c.Param("name")
+
+	clusterID, err := strconv.ParseInt(clusterIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster_id"})
+		return
+	}
+
+	var req topic.UpdateTopicDescriptionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
+		return
+	}
+
+	if err := h.topicSvc.UpdateTopicDescription(c.Request.Context(), clusterID, topicName, &req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "topic description updated successfully"})
+}
+
 // SyncTopics 同步 Topic
 func (h *TopicHandler) SyncTopics(c *gin.Context) {
 	clusterIDStr := c.Param("id")

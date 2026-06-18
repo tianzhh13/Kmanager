@@ -97,8 +97,9 @@ func (r *userRepository) Search(ctx context.Context, keyword string, offset, lim
 	var users []*models.User
 	var total int64
 
+	safeKeyword := escapeLikeKeyword(keyword)
 	query := r.db.WithContext(ctx).Model(&models.User{}).
-		Where("username LIKE ? OR email LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
+		Where("username LIKE ? OR email LIKE ?", "%"+safeKeyword+"%", "%"+safeKeyword+"%")
 
 	// 获取总数
 	if err := query.Count(&total).Error; err != nil {

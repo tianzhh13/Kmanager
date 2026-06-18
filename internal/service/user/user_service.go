@@ -64,7 +64,7 @@ func (s *Service) CreateUser(ctx context.Context, req *CreateUserRequest) (*mode
 	}
 
 	// 验证密码复杂度
-	if err := password.ValidatePassword(req.Password); err != nil {
+	if err := password.ValidateComplexity(req.Password); err != nil {
 		return nil, err
 	}
 
@@ -137,7 +137,7 @@ func (s *Service) UpdateUser(ctx context.Context, userID int64, req *UpdateUserR
 
 	// 管理员重置密码（无需旧密码）
 	if req.Password != "" {
-		if err := password.ValidatePassword(req.Password); err != nil {
+		if err := password.ValidateComplexity(req.Password); err != nil {
 			return nil, err
 		}
 		hashedPassword, err := password.HashPassword(req.Password)
@@ -166,12 +166,12 @@ func (s *Service) UpdatePassword(ctx context.Context, userID int64, req *UpdateP
 	}
 
 	// 验证旧密码
-	if !password.CheckPassword(user.PasswordHash, req.OldPassword) {
+	if !password.Verify(user.PasswordHash, req.OldPassword) {
 		return ErrInvalidPassword
 	}
 
 	// 验证新密码复杂度
-	if err := password.ValidatePassword(req.NewPassword); err != nil {
+	if err := password.ValidateComplexity(req.NewPassword); err != nil {
 		return err
 	}
 

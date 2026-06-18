@@ -68,6 +68,7 @@ build/
 dist.zip
 
 # Deployment packages
+# Deployment packages
 *.zip
 
 # AI assistant config
