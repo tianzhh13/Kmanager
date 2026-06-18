@@ -118,24 +118,13 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
       const resp = res.data.results['topic_list']
       if (resp && resp.status === 'success') {
         const topicMap = new Map<string, TopicInfo>()
-        const topicPartitionsMap = new Map<string, Set<number>>()
         resp.data.result.forEach((r: any) => {
           const name = r.metric.topic
-          if (name) {
-            if (!topicMap.has(name)) {
-              topicMap.set(name, { name, partitions: 1, replication_factor: 1 })
-              topicPartitionsMap.set(name, new Set())
-            }
-            const partNum = parseInt(r.metric.partition)
-            if (!isNaN(partNum)) {
-              topicPartitionsMap.get(name)!.add(partNum)
-            }
+          if (name && !topicMap.has(name)) {
+            // kafka_topic_partitions 的值本身就是分区数
+            const partitions = r.value ? parseInt(r.value[1]) || 1 : 1
+            topicMap.set(name, { name, partitions, replication_factor: 1 })
           }
-        })
-        // Set correct partition count from actual partition labels
-        topicPartitionsMap.forEach((parts, name) => {
-          const info = topicMap.get(name)!
-          info.partitions = parts.size || 1
         })
         setTopics(Array.from(topicMap.values()))
       }
@@ -348,13 +337,13 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
     return metrics.consumer_groups
       .filter(cg => cg.topics.some(t => t.topic === selectedTopic))
       .map(cg => {
-        const topicData = cg.topics.filter(t => t.topic === selectedTopic)
+        const topicData = cg.topics.find(t => t.topic === selectedTopic)
         return {
           group_id: cg.group_id,
           state: cg.state,
           member_count: cg.member_count || 0,
-          partitions: topicData.length,
-          lag: topicData.reduce((s, t) => s + t.lag, 0),
+          partitions: topicData?.partitions?.length || 0,
+          lag: topicData?.lag || 0,
         }
       })
   }, [selectedTopic, metrics?.consumer_groups])
