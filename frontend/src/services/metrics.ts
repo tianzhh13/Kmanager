@@ -19,12 +19,20 @@ export interface BrokerMetrics {
 // 消费者组信息（来自内置 Kafka Exporter）
 // ============================================================
 
+export interface PartitionLag {
+  partition: number
+  current_offset: number
+  end_offset: number
+  lag: number
+  lag_seconds: number
+}
+
 export interface TopicLag {
   topic: string
-  partition: number
+  partitions: PartitionLag[]
+  current_offset: number
+  end_offset: number
   lag: number
-  log_end_offset: number
-  consumer_offset: number
 }
 
 export interface ConsumerGroupInfo {
