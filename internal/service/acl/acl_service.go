@@ -583,6 +583,14 @@ func (s *Service) convertOperation(op models.OperationType) sarama.AclOperation 
 		return sarama.AclOperationDescribe
 	case "all":
 		return sarama.AclOperationAll
+	case "describeconfigs":
+		return sarama.AclOperationDescribeConfigs
+	case "alterconfigs":
+		return sarama.AclOperationAlterConfigs
+	case "clusteraction":
+		return sarama.AclOperationClusterAction
+	case "idempotentwrite":
+		return sarama.AclOperationIdempotentWrite
 	default:
 		return sarama.AclOperationAny
 	}
@@ -604,6 +612,14 @@ func (s *Service) convertOperationFromSarama(op sarama.AclOperation) models.Oper
 		return models.OperationDescribe
 	case sarama.AclOperationAll:
 		return models.OperationAll
+	case sarama.AclOperationDescribeConfigs:
+		return models.OperationDescribeConfigs
+	case sarama.AclOperationAlterConfigs:
+		return models.OperationAlterConfigs
+	case sarama.AclOperationClusterAction:
+		return models.OperationClusterAction
+	case sarama.AclOperationIdempotentWrite:
+		return models.OperationIdempotentWrite
 	default:
 		return models.OperationRead
 	}

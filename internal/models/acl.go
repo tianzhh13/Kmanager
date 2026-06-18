@@ -25,13 +25,17 @@ const (
 type OperationType string
 
 const (
-	OperationRead     OperationType = "read"
-	OperationWrite    OperationType = "write"
-	OperationCreate   OperationType = "create"
-	OperationDelete   OperationType = "delete"
-	OperationAlter    OperationType = "alter"
-	OperationDescribe OperationType = "describe"
-	OperationAll      OperationType = "all"
+	OperationRead             OperationType = "read"
+	OperationWrite            OperationType = "write"
+	OperationCreate           OperationType = "create"
+	OperationDelete           OperationType = "delete"
+	OperationAlter            OperationType = "alter"
+	OperationDescribe         OperationType = "describe"
+	OperationAll              OperationType = "all"
+	OperationDescribeConfigs  OperationType = "describeconfigs"
+	OperationAlterConfigs     OperationType = "alterconfigs"
+	OperationClusterAction    OperationType = "clusteraction"
+	OperationIdempotentWrite  OperationType = "idempotentwrite"
 )
 
 // PermissionType ACL 权限类型
