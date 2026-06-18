@@ -24,9 +24,9 @@ export interface UpdateTopicConfigRequest {
 }
 
 export const topicService = {
-  list: async (page: number = 1, pageSize: number = 20, clusterId?: number) => {
+  list: async (page: number = 1, pageSize: number = 20, clusterId?: number, search?: string) => {
     const response = await api.get('/topics', {
-      params: { page, page_size: pageSize, cluster_id: clusterId },
+      params: { page, page_size: pageSize, cluster_id: clusterId, search },
     })
     return response.data
   },

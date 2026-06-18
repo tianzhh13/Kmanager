@@ -270,9 +270,9 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			topicPerms := authenticated.Group("/topic-permissions")
 			topicPerms.Use(middleware.RequireSuperAdminOrClusterAdmin())
 			{
-				topicPerms.POST("", middleware.RequireSuperAdminOrClusterAdmin(), topicPermHandler.AssignTopicPermission)
-				topicPerms.POST("/batch", middleware.RequireSuperAdminOrClusterAdmin(), topicPermHandler.BatchAssignTopicPermission)
-				topicPerms.DELETE("", middleware.RequireSuperAdminOrClusterAdmin(), topicPermHandler.RevokeTopicPermission)
+				topicPerms.POST("", topicPermHandler.AssignTopicPermission)
+				topicPerms.POST("/batch", topicPermHandler.BatchAssignTopicPermission)
+				topicPerms.DELETE("", topicPermHandler.RevokeTopicPermission)
 				topicPerms.GET("/user/:userId", topicPermHandler.GetUserTopicPermissions)
 				topicPerms.GET("/user/:userId/cluster/:clusterId", topicPermHandler.GetUserClusterTopicPermissions)
 			}

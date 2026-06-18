@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"kafka-management-platform/internal/models"
 
@@ -24,6 +25,7 @@ type TopicRepository interface {
 	DeleteByCluster(ctx context.Context, clusterID int64) error
 	Count(ctx context.Context) (int64, error)
 	CountByCluster(ctx context.Context) (map[int64]int64, error)
+	GetClusterTopicStats(ctx context.Context, clusterID int64) (totalPartitions int64, totalReplicas int64, err error)
 }
 
 type topicRepository struct {
@@ -140,13 +142,22 @@ func (r *topicRepository) ListByNames(ctx context.Context, clusterID int64, topi
 	return topics, total, err
 }
 
+// escapeLikeKeyword 转义 LIKE 查询中的通配符，防止注入
+func escapeLikeKeyword(keyword string) string {
+	keyword = strings.ReplaceAll(keyword, `\`, `\\`)
+	keyword = strings.ReplaceAll(keyword, `%`, `\%`)
+	keyword = strings.ReplaceAll(keyword, `_`, `\_`)
+	return keyword
+}
+
 // Search 搜索 Topic
 func (r *topicRepository) Search(ctx context.Context, clusterID int64, keyword string, offset, limit int) ([]*models.Topic, int64, error) {
 	var topics []*models.Topic
 	var total int64
 
+	safeKeyword := escapeLikeKeyword(keyword)
 	query := r.db.WithContext(ctx).Model(&models.Topic{}).
-		Where("topic_name LIKE ?", "%"+keyword+"%")
+		Where("topic_name LIKE ?", "%"+safeKeyword+"%")
 
 	if clusterID > 0 {
 		query = query.Where("cluster_id = ?", clusterID)
@@ -210,4 +221,23 @@ func (r *topicRepository) CountByCluster(ctx context.Context) (map[int64]int64, 
 		m[r.ClusterID] = r.Count
 	}
 	return m, nil
+}
+
+// GetClusterTopicStats 获取集群级别的 Topic 统计（总分区数、总副本数）
+func (r *topicRepository) GetClusterTopicStats(ctx context.Context, clusterID int64) (totalPartitions int64, totalReplicas int64, err error) {
+	type statsResult struct {
+		TotalPartitions int64
+		TotalReplicas   int64
+	}
+	var stats statsResult
+
+	query := r.db.WithContext(ctx).Model(&models.Topic{})
+	if clusterID > 0 {
+		query = query.Where("cluster_id = ?", clusterID)
+	}
+
+	err = query.Select("COALESCE(SUM(partitions), 0) as total_partitions, COALESCE(SUM(partitions * replication_factor), 0) as total_replicas").
+		Scan(&stats).Error
+
+	return stats.TotalPartitions, stats.TotalReplicas, err
 }
