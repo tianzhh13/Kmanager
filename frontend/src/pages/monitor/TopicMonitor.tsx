@@ -144,6 +144,10 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
       const clusterId = cluster.cluster_id
       const s = start.unix(), e = end.unix()
 
+      // 当时间范围超过 24 小时时，使用包含日期的格式，避免不同日期的相同时间点重叠
+      const durationHours = end.diff(start, 'hour', true)
+      const timeFormat = durationHours > 24 ? 'MM-DD HH:mm' : 'HH:mm'
+
       const queries: BatchQueryItem[] = [
         {
           id: 'produce_rate',
@@ -186,7 +190,7 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
           const partition = parseInt(item.metric.partition || '0')
           partitionMap.set(partition, {
             partition,
-            values: item.values.map((v: [number, string]) => ({ time: dayjs.unix(v[0]).format('HH:mm'), value: parseFloat(v[1]) || 0 }))
+            values: item.values.map((v: [number, string]) => ({ time: dayjs.unix(v[0]).format(timeFormat), value: parseFloat(v[1]) || 0 }))
           })
         })
         return Array.from(partitionMap.values())
