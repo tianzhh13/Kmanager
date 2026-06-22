@@ -203,9 +203,9 @@ const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, q
       })
 
       // 根据查询范围生成完整时间轴，缺失数据点填 null
-      // 当时间范围超过 24 小时时，使用包含日期的格式，避免不同日期的相同时间点重叠
+      // 当时间范围达到 24 小时时，使用包含日期的格式，避免不同日期的相同时间点重叠
       const durationHours = end.diff(start, 'hour', true)
-      const timeFormat = durationHours > 24 ? 'MM-DD HH:mm' : 'HH:mm'
+      const timeFormat = durationHours >= 24 ? 'MM-DD HH:mm' : 'HH:mm'
       const fullTimes: string[] = []
       let cursor = start
       while (cursor.isBefore(end) || cursor.isSame(end, 'minute')) {
