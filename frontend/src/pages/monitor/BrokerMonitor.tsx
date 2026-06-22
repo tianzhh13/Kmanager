@@ -438,11 +438,14 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
       setBrokerJvmDeadlockedThreads(jvmDeadlockedRes || 0)
       setBrokerJvmBufferPoolData(jvmBufPoolRes)
 
+      // 当时间范围超过 24 小时时，使用包含日期的格式，避免不同日期的相同时间点重叠
+      const { start: startTs, end: endTs, step: stepStr } = getTimeRange()
+      const durationHours = endTs.diff(startTs, 'hour', true)
+      const timeFormat = durationHours > 24 ? 'MM-DD HH:mm' : 'HH:mm'
       const times: string[] = []
-      let cursor = getTimeRange().start
-      const { end: endTs, step: stepStr } = getTimeRange()
+      let cursor = startTs
       while (cursor.isBefore(endTs) || cursor.isSame(endTs, 'minute')) {
-        times.push(cursor.format('HH:mm'))
+        times.push(cursor.format(timeFormat))
         cursor = cursor.add(parseInt(stepStr), 'second')
       }
       setFullTimes(times)
