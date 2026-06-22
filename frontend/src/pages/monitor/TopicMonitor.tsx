@@ -146,7 +146,7 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
 
       // 当时间范围超过 24 小时时，使用包含日期的格式，避免不同日期的相同时间点重叠
       const durationHours = end.diff(start, 'hour', true)
-      const timeFormat = durationHours > 24 ? 'MM-DD HH:mm' : 'HH:mm'
+      const timeFormat = durationHours >= 24 ? 'MM-DD HH:mm' : 'HH:mm'
 
       const queries: BatchQueryItem[] = [
         {
