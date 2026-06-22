@@ -203,16 +203,19 @@ const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, q
       })
 
       // 根据查询范围生成完整时间轴，缺失数据点填 null
+      // 当时间范围超过 24 小时时，使用包含日期的格式，避免不同日期的相同时间点重叠
+      const durationHours = end.diff(start, 'hour', true)
+      const timeFormat = durationHours > 24 ? 'MM-DD HH:mm' : 'HH:mm'
       const fullTimes: string[] = []
       let cursor = start
       while (cursor.isBefore(end) || cursor.isSame(end, 'minute')) {
-        fullTimes.push(cursor.format('HH:mm'))
+        fullTimes.push(cursor.format(timeFormat))
         cursor = cursor.add(parseInt(step), 'second')
       }
 
       // 将 VM 返回的稀疏时间序列对齐到完整时间轴，缺失填 null
       const alignToTimes = (values: Array<[number, string]>): (number | null)[] => {
-        const map = new Map(values.map(v => [dayjs.unix(v[0]).format('HH:mm'), parseFloat(v[1]) || 0] as [string, number]))
+        const map = new Map(values.map(v => [dayjs.unix(v[0]).format(timeFormat), parseFloat(v[1]) || 0] as [string, number]))
         return fullTimes.map(t => map.has(t) ? map.get(t)! : null)
       }
 
