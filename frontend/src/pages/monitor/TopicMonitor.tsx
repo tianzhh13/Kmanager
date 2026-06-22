@@ -267,7 +267,7 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
   useEffect(() => {
     if (selectedTopic && metrics?.consumer_groups) {
       const cgs = metrics.consumer_groups
-        .filter(cg => cg.topics.some(t => t.topic === selectedTopic))
+        .filter(cg => (cg.topics || []).some(t => t.topic === selectedTopic))
         .map(cg => cg.group_id)
       setTopicConsumerGroups(cgs)
       // 只有当 initialConsumerGroupRef 为空时才清除 selectedConsumerGroup
@@ -346,9 +346,9 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
   const consumerGroupRows = React.useMemo(() => {
     if (!selectedTopic || !metrics?.consumer_groups) return []
     return metrics.consumer_groups
-      .filter(cg => cg.topics.some(t => t.topic === selectedTopic))
+      .filter(cg => (cg.topics || []).some(t => t.topic === selectedTopic))
       .map(cg => {
-        const topicData = cg.topics.filter(t => t.topic === selectedTopic)
+        const topicData = (cg.topics || []).filter(t => t.topic === selectedTopic)
         return {
           group_id: cg.group_id,
           state: cg.state,
@@ -411,7 +411,7 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
             <StatCard label="CG COUNT" value={topicConsumerGroups.length} />
             <StatCard
               label="TOTAL LAG"
-              value={metrics?.consumer_groups?.filter(cg => cg.topics.some(t => t.topic === selectedTopic)).reduce((sum, cg) => sum + cg.topics.filter(t => t.topic === selectedTopic).reduce((s, t) => s + t.lag, 0), 0) || 0}
+              value={metrics?.consumer_groups?.filter(cg => (cg.topics || []).some(t => t.topic === selectedTopic)).reduce((sum, cg) => sum + (cg.topics || []).filter(t => t.topic === selectedTopic).reduce((s, t) => s + t.lag, 0), 0) || 0}
               color="#ef4444"
             />
           </div>
