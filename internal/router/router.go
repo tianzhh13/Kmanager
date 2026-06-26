@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"time"
 
 	"kafka-management-platform/internal/cache"
@@ -96,9 +97,14 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	scramSvc := scram.NewService(scramUserRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
 	dashboardSvc := dashboard.NewService(clusterRepo, topicRepo, userRepo, monitorSvc)
 
-	// 初始化 Token 黑名单缓存
+	// 初始化 Token 黑名单缓存（内存 + 数据库双写）
 	memoryCache := cache.NewMemoryCache(24 * time.Hour)
 	tokenBlacklistCache := cache.NewTokenBlacklistCache(memoryCache)
+	tokenBlacklistRepo := repository.NewTokenBlacklistRepository(db)
+	tokenBlacklistCache.SetRepository(tokenBlacklistRepo)
+
+	// 从数据库加载活跃黑名单到内存缓存
+	tokenBlacklistCache.LoadFromDB(context.Background())
 
 	// 初始化用户状态缓存（30 秒 TTL，减少认证中间件数据库查询）
 	userStatusCache := cache.NewMemoryCache(30 * time.Second)

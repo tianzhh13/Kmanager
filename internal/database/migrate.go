@@ -21,6 +21,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.AuditLog{},
 		&models.ScramUser{},
 		&models.HostMapping{},
+		&models.TokenBlacklist{},
 	)
 
 	if err != nil {

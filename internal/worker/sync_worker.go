@@ -21,6 +21,8 @@ const (
 	maxRetries = 3
 	// 重试间隔
 	retryInterval = 10 * time.Second
+	// 集群同步最大并发数
+	maxSyncConcurrency = 10
 )
 
 // SyncWorker 数据同步 Worker
@@ -135,7 +137,7 @@ func (w *SyncWorker) runScheduledSync() {
 	}
 }
 
-// syncAllClustersWithRetry 带重试的同步所有集群
+// syncAllClustersWithRetry 带重试的同步所有集群（并发控制）
 func (w *SyncWorker) syncAllClustersWithRetry() {
 	ctx := context.Background()
 
@@ -147,9 +149,22 @@ func (w *SyncWorker) syncAllClustersWithRetry() {
 
 	logger.Info("Found clusters to sync", "count", len(clusters))
 
+	// 使用 channel 作为信号量控制并发数
+	sem := make(chan struct{}, maxSyncConcurrency)
+	var wg sync.WaitGroup
+
 	for _, cluster := range clusters {
-		w.syncClusterWithRetry(ctx, cluster.ClusterID)
+		clusterID := cluster.ClusterID
+		wg.Add(1)
+		sem <- struct{}{} // 获取并发槽位
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }() // 释放并发槽位
+			w.syncClusterWithRetry(ctx, clusterID)
+		}()
 	}
+
+	wg.Wait()
 }
 
 // syncClusterWithRetry 带重试的同步单个集群

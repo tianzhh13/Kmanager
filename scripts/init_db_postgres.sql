@@ -135,6 +135,17 @@ CREATE TABLE IF NOT EXISTS scram_users (
 
 CREATE INDEX IF NOT EXISTS idx_scram_users_cluster_id ON scram_users(cluster_id);
 
+-- Token 黑名单表（持久化已注销的 Token）
+CREATE TABLE IF NOT EXISTS token_blacklist (
+    id BIGSERIAL PRIMARY KEY,
+    token_hash VARCHAR(64) NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (token_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires_at ON token_blacklist(expires_at);
+
 -- 创建更新时间触发器函数
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
