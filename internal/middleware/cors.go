@@ -1,9 +1,24 @@
 package middleware
 
 import (
+	"sync"
+
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 )
+
+var (
+	cachedOrigins   []string
+	cachedOriginsOnce sync.Once
+)
+
+// getCachedOrigins 获取缓存的允许跨域来源列表（初始化时读取一次）
+func getCachedOrigins() []string {
+	cachedOriginsOnce.Do(func() {
+		cachedOrigins = viper.GetStringSlice("cors.allowed_origins")
+	})
+	return cachedOrigins
+}
 
 // isOriginAllowed 检查origin是否在允许列表中
 func isOriginAllowed(origin string, allowedOrigins []string) bool {
@@ -23,8 +38,8 @@ func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
 
-		// 获取允许的跨域来源列表
-		allowedOrigins := viper.GetStringSlice("cors.allowed_origins")
+		// 从缓存获取允许的跨域来源列表（只在首次调用时读取 viper）
+		allowedOrigins := getCachedOrigins()
 
 		// 根据gin模式决定CORS策略
 		isReleaseMode := gin.Mode() == gin.ReleaseMode

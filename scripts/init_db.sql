@@ -154,6 +154,16 @@ CREATE TABLE IF NOT EXISTS `host_mappings` (
     UNIQUE KEY `uk_hostname` (`hostname`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Token 黑名单表（持久化已注销的 Token）
+CREATE TABLE IF NOT EXISTS `token_blacklist` (
+    `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+    `token_hash` VARCHAR(64) NOT NULL,
+    `expires_at` TIMESTAMP NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_token_hash` (`token_hash`),
+    INDEX `idx_expires_at` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 插入默认超级管理员用户
 -- 密码: admin123 (使用 bcrypt 加密，cost=12)
 INSERT INTO `user` (`username`, `password_hash`, `email`, `role`, `status`, `created_at`, `updated_at`)
