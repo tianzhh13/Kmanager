@@ -2,12 +2,16 @@ package cache
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"kafka-management-platform/internal/logger"
+	"kafka-management-platform/internal/models"
+	"kafka-management-platform/internal/repository"
 )
 
 // CacheItem 缓存项
@@ -19,7 +23,7 @@ type CacheItem struct {
 // MemoryCache 内存缓存实现
 type MemoryCache struct {
 	items      map[string]*CacheItem
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	defaultTTL time.Duration
 	maxItems   int // 最大缓存条目数，0 表示不限制
 	stopCh     chan struct{}
@@ -52,20 +56,24 @@ func (c *MemoryCache) Stop() {
 
 // Get 获取缓存值
 func (c *MemoryCache) Get(ctx context.Context, key string) (interface{}, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	c.mu.RLock()
 	item, exists := c.items[key]
 	if !exists {
+		c.mu.RUnlock()
 		return nil, nil
 	}
 
 	// 检查是否过期
 	if time.Now().After(item.Expiration) {
+		c.mu.RUnlock()
+		// 过期条目需要写锁删除
+		c.mu.Lock()
 		delete(c.items, key)
+		c.mu.Unlock()
 		return nil, nil
 	}
 
+	c.mu.RUnlock()
 	return item.Value, nil
 }
 
@@ -236,9 +244,10 @@ func (cc *ClusterCache) InvalidateCluster(ctx context.Context, clusterID int64) 
 	return cc.cache.Delete(ctx, key)
 }
 
-// TokenBlacklistCache Token 黑名单缓存
+// TokenBlacklistCache Token 黑名单缓存（内存 + 数据库双写）
 type TokenBlacklistCache struct {
 	cache Cache
+	repo  repository.TokenBlacklistRepository
 	ttl   time.Duration
 }
 
@@ -250,20 +259,104 @@ func NewTokenBlacklistCache(cache Cache) *TokenBlacklistCache {
 	}
 }
 
-// IsBlacklisted 检查 Token 是否在黑名单中
+// SetRepository 设置数据库仓库（用于持久化）
+func (tbc *TokenBlacklistCache) SetRepository(repo repository.TokenBlacklistRepository) {
+	tbc.repo = repo
+}
+
+// hashToken 计算 Token 的 SHA256 哈希（避免存储原始 Token）
+func hashToken(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
+}
+
+// IsBlacklisted 检查 Token 是否在黑名单中（先查内存，再查数据库）
 func (tbc *TokenBlacklistCache) IsBlacklisted(ctx context.Context, token string) (bool, error) {
 	key := fmt.Sprintf("blacklist:%s", token)
 	val, err := tbc.cache.Get(ctx, key)
-	if err != nil {
-		return false, err
+	if err == nil && val != nil {
+		return true, nil
 	}
-	return val != nil, nil
+
+	// 内存未命中，查数据库
+	if tbc.repo != nil {
+		tokenHash := hashToken(token)
+		dbResult, dbErr := tbc.repo.IsBlacklisted(ctx, tokenHash)
+		if dbErr == nil && dbResult {
+			// 数据库命中，回填内存缓存
+			_ = tbc.cache.Set(ctx, key, true, tbc.ttl)
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
-// AddToBlacklist 将 Token 加入黑名单
+// AddToBlacklist 将 Token 加入黑名单（内存 + 数据库双写）
 func (tbc *TokenBlacklistCache) AddToBlacklist(ctx context.Context, token string) error {
 	key := fmt.Sprintf("blacklist:%s", token)
-	return tbc.cache.Set(ctx, key, true, tbc.ttl)
+	// 写入内存缓存
+	if err := tbc.cache.Set(ctx, key, true, tbc.ttl); err != nil {
+		return err
+	}
+
+	// 写入数据库
+	if tbc.repo != nil {
+		tokenHash := hashToken(token)
+		entry := &models.TokenBlacklist{
+			TokenHash: tokenHash,
+			ExpiresAt: time.Now().Add(tbc.ttl),
+		}
+		if err := tbc.repo.Create(ctx, entry); err != nil {
+			logger.Warn("Failed to persist token to blacklist DB", "error", err)
+			// 数据库写入失败不影响业务（内存已写入）
+		}
+	}
+
+	return nil
+}
+
+// LoadFromDB 从数据库加载活跃黑名单到内存缓存（启动时调用）
+func (tbc *TokenBlacklistCache) LoadFromDB(ctx context.Context) {
+	if tbc.repo == nil {
+		return
+	}
+
+	entries, err := tbc.repo.LoadActive(ctx)
+	if err != nil {
+		logger.Warn("Failed to load token blacklist from DB", "error", err)
+		return
+	}
+
+	loaded := 0
+	for _, entry := range entries {
+		key := fmt.Sprintf("blacklist:db:%s", entry.TokenHash)
+		remaining := time.Until(entry.ExpiresAt)
+		if remaining <= 0 {
+			continue
+		}
+		_ = tbc.cache.Set(ctx, key, true, remaining)
+		loaded++
+	}
+
+	logger.Info("Loaded token blacklist from DB", "count", loaded, "total", len(entries))
+}
+
+// CleanupExpired 清理过期的黑名单记录
+func (tbc *TokenBlacklistCache) CleanupExpired(ctx context.Context) {
+	if tbc.repo == nil {
+		return
+	}
+
+	deleted, err := tbc.repo.DeleteExpired(ctx)
+	if err != nil {
+		logger.Warn("Failed to cleanup expired token blacklist", "error", err)
+		return
+	}
+
+	if deleted > 0 {
+		logger.Info("Cleaned up expired token blacklist entries", "count", deleted)
+	}
 }
 
 // JSONCache 支持 JSON 序列化的缓存

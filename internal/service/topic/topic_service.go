@@ -190,9 +190,12 @@ func (s *Service) DeleteTopic(ctx context.Context, clusterID int64, topicName st
 		return fmt.Errorf("failed to delete topic from kafka: %w", err)
 	}
 
-	// 从数据库删除 Topic
+	// 从数据库删除 Topic（幂等：如果已被 SyncWorker 清理则视为成功）
 	topic, err := s.topicRepo.FindByName(ctx, clusterID, topicName)
 	if err != nil {
+		if errors.Is(err, repository.ErrTopicNotFound) {
+			return nil
+		}
 		return fmt.Errorf("failed to find topic: %w", err)
 	}
 	if err := s.topicRepo.Delete(ctx, topic.TopicID); err != nil {
@@ -299,21 +302,30 @@ func (s *Service) GetTopicConsumerGroups(ctx context.Context, clusterID int64, t
 		return nil, fmt.Errorf("failed to list consumer groups: %w", err)
 	}
 
-	// 2. 逐个 Describe 消费组，筛选包含目标 Topic 的
+	// 2. 过滤系统消费组，收集需要 Describe 的 groupID
 	var result []TopicConsumerGroupInfo
+	var groupIDs []string
 	for groupID := range groups {
-		// 排除系统消费组
 		if len(groupID) > 0 && groupID[0] == '_' {
 			continue
 		}
+		groupIDs = append(groupIDs, groupID)
+	}
 
-		desc, err := adminClient.DescribeConsumerGroups([]string{groupID})
-		if err != nil || len(desc) == 0 {
-			continue
-		}
+	if len(groupIDs) == 0 {
+		return result, nil
+	}
 
+	// 3. 批量 Describe（一次 RPC 调用代替 N 次）
+	descriptions, err := adminClient.DescribeConsumerGroups(groupIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe consumer groups: %w", err)
+	}
+
+	// 4. 筛选订阅了目标 Topic 的消费组
+	for _, desc := range descriptions {
 		memberTopicSet := make(map[string]bool)
-		for _, member := range desc[0].Members {
+		for _, member := range desc.Members {
 			// 从 MemberAssignment 中解析订阅的 Topic
 			assignment, _ := member.GetMemberAssignment()
 			if assignment != nil {
@@ -335,9 +347,9 @@ func (s *Service) GetTopicConsumerGroups(ctx context.Context, clusterID int64, t
 		}
 
 		result = append(result, TopicConsumerGroupInfo{
-			GroupID:     groupID,
-			State:       string(desc[0].State),
-			MemberCount: len(desc[0].Members),
+			GroupID:     desc.GroupId,
+			State:       string(desc.State),
+			MemberCount: len(desc.Members),
 		})
 	}
 

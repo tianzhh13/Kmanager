@@ -46,9 +46,10 @@ func AuditMiddleware(auditSvc *audit.Service) gin.HandlerFunc {
 		// 记录请求开始时间
 		startTime := time.Now()
 
-		// 记录请求体（用于后续可能的审计），限制最大 64KB 避免内存压力
+		// 只对写操作（POST/PUT/DELETE/PATCH）读取请求体，GET/OPTIONS/HEAD 跳过
 		var requestBody []byte
-		if c.Request.Body != nil {
+		method := c.Request.Method
+		if c.Request.Body != nil && (method == "POST" || method == "PUT" || method == "DELETE" || method == "PATCH") {
 			requestBody, _ = io.ReadAll(io.LimitReader(c.Request.Body, 64*1024))
 			c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 		}
