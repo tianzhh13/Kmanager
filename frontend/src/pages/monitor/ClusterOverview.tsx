@@ -338,7 +338,10 @@ const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, q
           {(!metrics?.consumer_groups || metrics.consumer_groups.length === 0) ? (
             <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>暂无消费组数据</div>
           ) : (
-            metrics.consumer_groups.map((g, i) => (
+            metrics.consumer_groups
+              .filter(g => g.total_lag > 0)
+              .sort((a, b) => b.total_lag - a.total_lag)
+              .map((g, i) => (
               <div key={i} className="bento-table-row" style={{ gridTemplateColumns: 'minmax(180px, 1.5fr) minmax(150px, 1fr) 90px 70px' }}>
                 <span className="bento-table-cell-wrap" style={{ fontSize: 12, fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }} title={g.group_id}>{g.group_id}</span>
                 <span className="bento-table-cell-wrap" style={{ fontSize: 12 }} title={g.topics?.map(t => t.topic).join(', ')}>{g.topics?.map(t => t.topic).join(', ') || '-'}</span>
