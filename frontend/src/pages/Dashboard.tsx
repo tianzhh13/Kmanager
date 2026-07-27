@@ -418,9 +418,10 @@ const Dashboard: React.FC = () => {
         </div>
         <div className="bento-table-body">
           {(!overview?.consumer_group_details || overview.consumer_group_details.length === 0) ? (
-            <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>暂无消费组数据</div>
+            <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>暂无 Lag 数据</div>
           ) : (
             overview.consumer_group_details
+              .filter(item => item.total_lag > 0)
               .sort((a, b) => b.total_lag - a.total_lag)
               .map((item, i) => (
                 <div key={i} className="bento-table-row" style={{ gridTemplateColumns: '120px minmax(180px, 1.5fr) minmax(120px, 1fr) 90px 70px' }}>
