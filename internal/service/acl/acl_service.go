@@ -515,6 +515,10 @@ func (s *Service) validateCreateACLRequest(req *CreateACLRequest) error {
 	if req.Principal == "" {
 		return fmt.Errorf("principal is required")
 	}
+	// Kafka 协议要求：Cluster 类型的资源名称必须是 "kafka-cluster"
+	if strings.ToLower(string(req.ResourceType)) == "cluster" && req.ResourceName != "kafka-cluster" {
+		return fmt.Errorf("cluster resource type requires resource_name to be 'kafka-cluster'")
+	}
 	return nil
 }
 

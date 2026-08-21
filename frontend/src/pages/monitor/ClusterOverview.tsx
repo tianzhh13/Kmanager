@@ -3,6 +3,7 @@ import { Alert, Modal } from 'antd'
 import EChartsReact from 'echarts-for-react/lib/core'
 import echarts from '../../utils/echarts'
 import dayjs, { Dayjs } from 'dayjs'
+import { useSearchParams } from 'react-router-dom'
 import DashboardGrid from '../../components/DashboardGrid'
 import { usePromqlOverrides, useDefaultPromqls, PromqlDebugger, PromqlDebugButton } from '../../components/PromqlDebugger'
 import { ClusterMetricsResponse, metricsAPI, BatchQueryItem, extractInstantValue } from '../../services/metrics'
@@ -24,6 +25,7 @@ interface ClusterOverviewProps {
 }
 
 const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, quickRange, customRange, metrics, jmxAvailable }) => {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [overviewStats, setOverviewStats] = useState({
     topicPartitionTotal: null as number | null,
     consumerGroupMemberCount: null as number | null,
@@ -342,8 +344,18 @@ const ClusterOverview: React.FC<ClusterOverviewProps> = ({ cluster, timeRange, q
               .filter(g => g.total_lag > 0)
               .sort((a, b) => b.total_lag - a.total_lag)
               .map((g, i) => (
-              <div key={i} className="bento-table-row" style={{ gridTemplateColumns: 'minmax(180px, 1.5fr) minmax(150px, 1fr) 90px 70px' }}>
-                <span className="bento-table-cell-wrap" style={{ fontSize: 12, fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }} title={g.group_id}>{g.group_id}</span>
+              <div key={i} className="bento-table-row" style={{ gridTemplateColumns: 'minmax(180px, 1.5fr) minmax(150px, 1fr) 90px 70px', cursor: 'pointer' }}
+                onClick={() => {
+                  setLagModalOpen(false)
+                  const params = new URLSearchParams(searchParams)
+                  params.set('tab', 'topic')
+                  params.set('topicName', g.topics?.[0]?.topic || '')
+                  params.set('consumerGroup', g.group_id)
+                  setSearchParams(params, { replace: true })
+                }}>
+                <span className="bento-table-cell-wrap" style={{ fontSize: 12, fontFamily: 'var(--font-mono)', wordBreak: 'break-all', color: 'var(--brand)', fontWeight: 600 }} title={g.group_id}>
+                  {g.group_id}
+                </span>
                 <span className="bento-table-cell-wrap" style={{ fontSize: 12 }} title={g.topics?.map(t => t.topic).join(', ')}>{g.topics?.map(t => t.topic).join(', ') || '-'}</span>
                 <span style={{ fontSize: 12, textAlign: 'right', color: g.total_lag > 0 ? '#ef4444' : 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{g.total_lag?.toLocaleString() ?? 0}</span>
                 <span style={{ fontSize: 12, textAlign: 'right' }}>{g.member_count ?? '-'}</span>

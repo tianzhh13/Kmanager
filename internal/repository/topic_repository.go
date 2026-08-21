@@ -21,6 +21,7 @@ type TopicRepository interface {
 	List(ctx context.Context, clusterID int64, offset, limit int) ([]*models.Topic, int64, error)
 	ListByNames(ctx context.Context, clusterID int64, topicNames []string, offset, limit int) ([]*models.Topic, int64, error)
 	Search(ctx context.Context, clusterID int64, keyword string, offset, limit int) ([]*models.Topic, int64, error)
+	SearchInNames(ctx context.Context, clusterID int64, topicNames []string, keyword string, offset, limit int) ([]*models.Topic, int64, error)
 	ListByCluster(ctx context.Context, clusterID int64) ([]*models.Topic, error)
 	DeleteByCluster(ctx context.Context, clusterID int64) error
 	Count(ctx context.Context) (int64, error)
@@ -162,6 +163,34 @@ func (r *topicRepository) Search(ctx context.Context, clusterID int64, keyword s
 	if clusterID > 0 {
 		query = query.Where("cluster_id = ?", clusterID)
 	}
+
+	// 获取总数
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 获取分页数据
+	err := query.
+		Offset(offset).
+		Limit(limit).
+		Order("created_at DESC").
+		Find(&topics).Error
+
+	return topics, total, err
+}
+
+// SearchInNames 在指定 Topic 名称列表中模糊搜索
+func (r *topicRepository) SearchInNames(ctx context.Context, clusterID int64, topicNames []string, keyword string, offset, limit int) ([]*models.Topic, int64, error) {
+	var topics []*models.Topic
+	var total int64
+
+	if len(topicNames) == 0 {
+		return topics, 0, nil
+	}
+
+	safeKeyword := escapeLikeKeyword(keyword)
+	query := r.db.WithContext(ctx).Model(&models.Topic{}).
+		Where("cluster_id = ? AND topic_name IN ? AND topic_name LIKE ?", clusterID, topicNames, "%"+safeKeyword+"%")
 
 	// 获取总数
 	if err := query.Count(&total).Error; err != nil {

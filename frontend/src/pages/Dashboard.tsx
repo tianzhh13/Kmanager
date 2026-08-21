@@ -32,8 +32,8 @@ const Dashboard: React.FC = () => {
         const clusters = clusterRes.data || []
         const authMap: Record<string, number> = {}
         clusters.forEach((c: any) => {
-          const type = c.auth_type === 'none' ? 'PLAINTEXT' :
-            c.auth_type === 'plaintext' ? 'SASL/PLAIN' :
+          const type = c.auth_type === 'none' ? 'NONE' :
+            c.auth_type === 'plaintext' ? 'PLAIN' :
             c.auth_type === 'scram' ? 'SCRAM' :
             c.auth_type === 'kerberos' ? 'Kerberos' : c.auth_type.toUpperCase()
           authMap[type] = (authMap[type] || 0) + 1
@@ -134,7 +134,9 @@ const Dashboard: React.FC = () => {
   const authDonutData: DonutDataItem[] = Object.entries(auth_type_distribution).map(([name, value]) => {
     const colorMap: Record<string, string> = {
       'none': '#3b82f6',
+      'NONE': '#3b82f6',
       'plaintext': '#8b5cf6',
+      'PLAIN': '#8b5cf6',
       'scram': '#10b981',
       'SCRAM': '#10b981',
       'kerberos': '#f59e0b',
@@ -142,12 +144,16 @@ const Dashboard: React.FC = () => {
     }
     // Display name
     const displayMap: Record<string, string> = {
-      'none': 'PLAINTEXT',
-      'plaintext': 'SASL/PLAIN',
+      'none': 'NONE',
+      'NONE': 'NONE',
+      'plaintext': 'PLAIN',
+      'PLAIN': 'PLAIN',
       'scram': 'SCRAM',
+      'SCRAM': 'SCRAM',
       'kerberos': 'Kerberos',
+      'KERBEROS': 'Kerberos',
     }
-    return { name: displayMap[name] || name.toUpperCase(), value, color: colorMap[name] || '#f97316' }
+    return { name: displayMap[name] || name, value, color: colorMap[name] || '#f97316' }
   })
 
   // Cluster size stacked bar
@@ -344,11 +350,11 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Cluster health list */}
-        <div className="bento-card" style={{ gridColumn: 'span 7' }}>
+        {/* Cluster health list - 占满整行，分成两列 */}
+        <div className="bento-card" style={{ gridColumn: 'span 12' }}>
           <div className="bento-card-inner">
             <SectionTitle title="集群健康状态" />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 24px' }}>
               {cluster_sizes.map(c => {
                 const statusMap: Record<string, { label: string; color: string }> = {
                   healthy: { label: '正常', color: '#10b981' },
@@ -358,7 +364,7 @@ const Dashboard: React.FC = () => {
                 }
                 const s = statusMap[c.health_status] || statusMap.unknown
                 return (
-                  <div key={c.cluster_id} className="cluster-card-row" onClick={() => navigate(`/monitor?clusterId=${c.cluster_id}`)}>
+                  <div key={c.cluster_id} className="cluster-card-row" onClick={() => navigate(`/clusters/monitor?clusterId=${c.cluster_id}`)}>
                     <HealthDot status={c.health_status as any} />
                     <span style={{ fontWeight: 600, flex: 1 }}>{c.cluster_name}</span>
                     {c.broker_count !== null && (
@@ -373,34 +379,6 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
         </div>
-
-        {/* Quick actions */}
-        <div className="bento-card" style={{ gridColumn: 'span 5' }}>
-          <div className="bento-card-inner" style={{ gap: 16 }}>
-            <SectionTitle title="快速入口" />
-            <a onClick={() => navigate('/clusters')} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 20px', borderRadius: 14, background: 'linear-gradient(135deg, rgba(249,115,22,0.08), rgba(249,115,22,0.02))', border: '1px solid var(--brand-border)', textDecoration: 'none', color: 'inherit', cursor: 'pointer', transition: 'transform 180ms cubic-bezier(0.32,0.72,0,1)' }}>
-              <span style={{ width: 40, height: 40, borderRadius: 12, background: 'var(--brand)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>&#9881;</span>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>集群管理</div>
-                <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>管理 {clusters.total} 个集群配置</div>
-              </div>
-            </a>
-            <a onClick={() => navigate('/monitor')} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 20px', borderRadius: 14, background: 'var(--brand-soft)', border: '1px solid var(--border)', textDecoration: 'none', color: 'inherit', cursor: 'pointer', transition: 'transform 180ms cubic-bezier(0.32,0.72,0,1)' }}>
-              <span style={{ width: 40, height: 40, borderRadius: 12, background: '#1c1917', color: 'var(--brand)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>&#9635;</span>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>监控中心</div>
-                <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>实时指标与告警</div>
-              </div>
-            </a>
-            <a onClick={() => navigate('/topics')} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 20px', borderRadius: 14, background: 'var(--brand-soft)', border: '1px solid var(--border)', textDecoration: 'none', color: 'inherit', cursor: 'pointer', transition: 'transform 180ms cubic-bezier(0.32,0.72,0,1)' }}>
-              <span style={{ width: 40, height: 40, borderRadius: 12, background: '#1c1917', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>&#9830;</span>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>Topic 管理</div>
-                <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>{topics_total.toLocaleString()} 个 Topic</div>
-              </div>
-            </a>
-           </div>
-        </div>
       </div>
       <Modal
         title="消费组 Lag 详情"
@@ -409,7 +387,7 @@ const Dashboard: React.FC = () => {
         footer={null}
         width={800}
       >
-        <div className="bento-table-header" style={{ gridTemplateColumns: '120px minmax(180px, 1.5fr) minmax(120px, 1fr) 90px 70px' }}>
+        <div className="bento-table-header" style={{ gridTemplateColumns: '100px minmax(180px, 1.5fr) minmax(120px, 1fr) 90px 70px' }}>
           <div>集群</div>
           <div>Consumer Group</div>
           <div>Topic</div>
@@ -424,9 +402,10 @@ const Dashboard: React.FC = () => {
               .filter(item => item.total_lag > 0)
               .sort((a, b) => b.total_lag - a.total_lag)
               .map((item, i) => (
-                <div key={i} className="bento-table-row" style={{ gridTemplateColumns: '120px minmax(180px, 1.5fr) minmax(120px, 1fr) 90px 70px' }}>
+                <div key={i} className="bento-table-row" style={{ gridTemplateColumns: '100px minmax(180px, 1.5fr) minmax(120px, 1fr) 90px 70px', cursor: 'pointer' }}
+                  onClick={() => { setLagModalOpen(false); navigate(`/clusters/monitor?clusterId=${item.cluster_id}&tab=topic&topicName=${encodeURIComponent(item.topic || '')}&consumerGroup=${encodeURIComponent(item.group_id)}`) }}>
                   <span style={{ fontSize: 12 }} title={item.cluster_name}>{item.cluster_name}</span>
-                  <span className="bento-table-cell-wrap" style={{ fontSize: 12, fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }} title={item.group_id}>{item.group_id}</span>
+                  <span className="bento-table-cell-wrap" style={{ fontSize: 12, fontFamily: 'var(--font-mono)', wordBreak: 'break-all', color: 'var(--brand)', fontWeight: 600 }} title={item.group_id}>{item.group_id}</span>
                   <span className="bento-table-cell-wrap" style={{ fontSize: 12 }} title={item.topic}>{item.topic || '-'}</span>
                   <span style={{ fontSize: 12, textAlign: 'right', color: item.total_lag > 0 ? '#ef4444' : 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{item.total_lag?.toLocaleString() ?? 0}</span>
                   <span style={{ fontSize: 12, textAlign: 'right' }}>{item.member_count ?? '-'}</span>

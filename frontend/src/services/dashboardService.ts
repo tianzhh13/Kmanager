@@ -17,6 +17,7 @@ export interface DashboardOverview {
     total_lag: number
   } | null
   consumer_group_details: Array<{
+    cluster_id: number
     cluster_name: string
     group_id: string
     topic: string

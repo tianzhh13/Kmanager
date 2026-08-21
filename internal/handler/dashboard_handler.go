@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"kafka-management-platform/internal/middleware"
 	"kafka-management-platform/internal/service/dashboard"
 
 	"github.com/gin-gonic/gin"
@@ -24,7 +25,10 @@ func NewDashboardHandler(dashboardSvc *dashboard.Service) *DashboardHandler {
 // GET /api/v1/dashboard/overview
 // 权限：Any authenticated
 func (h *DashboardHandler) GetOverview(c *gin.Context) {
-	result, err := h.dashboardSvc.GetOverview(c.Request.Context())
+	userID := middleware.GetUserID(c)
+	role := middleware.GetUserRole(c)
+
+	result, err := h.dashboardSvc.GetOverview(c.Request.Context(), userID, role)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -753,7 +753,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
         <div style={{ marginBottom: 20 }}>
           <SectionTitle title="Broker 总览" />
           <div style={{ overflowX: 'auto' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr 120px 100px 100px 100px', gap: 0, minWidth: 700 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(80px,10%) minmax(140px,30%) minmax(100px,18%) minmax(80px,14%) minmax(80px,14%) minmax(90px,14%)', gap: 0, minWidth: 600 }}>
               {/* Header */}
               <div className="bento-grid-header">Broker ID</div>
               <div className="bento-grid-header">Host</div>
@@ -765,7 +765,7 @@ const BrokerMonitor: React.FC<BrokerMonitorProps> = ({ cluster, timeRange, quick
               {brokerOverviewData.map((b: any) => (
                 <React.Fragment key={b.broker_id}>
                   <div className="bento-grid-cell mono">{b.broker_id}</div>
-                  <div className="bento-grid-cell mono">{b.broker_host}</div>
+                  <div className="bento-grid-cell mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.broker_host}</div>
                   <div className="bento-grid-cell mono">{b.leader_percent?.toFixed(1) ?? 0}%</div>
                   <div className="bento-grid-cell mono">{b.leader_count}</div>
                   <div className="bento-grid-cell mono">{b.replica_count}</div>

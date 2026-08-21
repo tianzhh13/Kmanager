@@ -2,20 +2,17 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Layout as AntLayout, Menu, Avatar, Dropdown, Modal, Form, Input, message } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
-  DashboardOutlined,
-  ClusterOutlined,
-  FileTextOutlined,
-  LockOutlined,
-  LineChartOutlined,
-  AuditOutlined,
-  TeamOutlined,
-  LogoutOutlined,
-  UserOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  SwapOutlined,
-  KeyOutlined,
-} from '@ant-design/icons'
+	  DashboardOutlined,
+	  ClusterOutlined,
+	  AuditOutlined,
+	  TeamOutlined,
+	  LogoutOutlined,
+	  UserOutlined,
+	  MenuFoldOutlined,
+	  MenuUnfoldOutlined,
+	  SwapOutlined,
+	  KeyOutlined,
+	} from '@ant-design/icons'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { logoutAsync } from '../store/slices/authSlice'
 import api from '../services/api'
@@ -30,6 +27,9 @@ const DEFAULT_IDLE_TIMEOUT = 15 * 60 * 1000
 const routeBreadcrumb: Record<string, string> = {
   '/dashboard': '仪表盘',
   '/clusters': '集群管理',
+  '/clusters/topics': '集群管理 - Topic 管理',
+  '/clusters/acls': '集群管理 - ACL 管理',
+  '/clusters/monitor': '集群管理 - 监控中心',
   '/topics': 'Topic 管理',
   '/acls': 'ACL 管理',
   '/monitor': '监控中心',
@@ -61,17 +61,31 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const menuItems = [
     { key: '/dashboard', icon: <DashboardOutlined />, label: '仪表盘' },
-    ...((isSuperAdmin || isClusterAdmin) ? [{ key: '/clusters', icon: <ClusterOutlined />, label: '集群管理' }] : []),
-    { key: '/topics', icon: <FileTextOutlined />, label: 'Topic 管理' },
-    ...(isSuperAdmin ? [{ key: '/acls', icon: <LockOutlined />, label: 'ACL 管理' }] : []),
-    { key: '/monitor', icon: <LineChartOutlined />, label: '监控中心' },
+    {
+      key: '/clusters',
+      icon: <ClusterOutlined />,
+      label: '集群管理',
+      children: [
+        { key: '/clusters', label: '集群列表' },
+        { key: '/clusters/topics', label: 'Topic 管理' },
+        ...((isSuperAdmin || isClusterAdmin) ? [{ key: '/clusters/acls', label: 'ACL 管理' }] : []),
+        { key: '/clusters/monitor', label: '监控中心' },
+      ],
+    },
     ...((isSuperAdmin || isClusterAdmin) ? [{ key: '/audit-logs', icon: <AuditOutlined />, label: '审计日志' }] : []),
     ...(isSuperAdmin ? [{ key: '/users', icon: <TeamOutlined />, label: '用户管理' }] : []),
     ...(isSuperAdmin ? [{ key: '/host-mappings', icon: <SwapOutlined />, label: '主机映射' }] : []),
   ]
 
   const handleMenuClick = (key: string) => {
-    navigate(key)
+    // 从当前 URL 提取 clusterId 参数，传递给新页面保持集群选中状态
+    const params = new URLSearchParams(location.search)
+    const clusterId = params.get('clusterId')
+    if (clusterId && key.startsWith('/clusters/')) {
+      navigate(`${key}?clusterId=${clusterId}`)
+    } else {
+      navigate(key)
+    }
   }
 
   // 从后端获取系统配置
@@ -222,6 +236,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           theme="dark"
           mode="inline"
           selectedKeys={[location.pathname]}
+          defaultOpenKeys={location.pathname.startsWith('/clusters') ? ['/clusters'] : []}
           items={menuItems}
           onClick={({ key }) => handleMenuClick(key)}
         />
