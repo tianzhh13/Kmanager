@@ -101,6 +101,7 @@ export interface BatchQueryItem {
   start: number   // unix timestamp
   end: number     // unix timestamp
   step: string
+  instant?: boolean  // true 表示即时查询（查 /api/v1/query），false 为范围查询
 }
 
 export interface BatchQueryResponse {

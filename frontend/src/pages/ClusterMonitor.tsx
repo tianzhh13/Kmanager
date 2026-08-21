@@ -14,7 +14,7 @@ interface ClusterOption {
   cluster_name: string
 }
 
-const Monitor: React.FC = () => {
+const ClusterMonitor: React.FC = () => {
 	  const [searchParams, setSearchParams] = useSearchParams()
 	  const [loading, setLoading] = useState(false)
 	  const [clusters, setClusters] = useState<ClusterOption[]>([])
@@ -25,18 +25,17 @@ const Monitor: React.FC = () => {
 	  const [quickRange, setQuickRange] = useState<string>('1h')
 	  const [customRange, setCustomRange] = useState<[Dayjs, Dayjs] | null>(null)
 
-	  // 从 URL 参数获取 topicName 和 consumerGroup
 	  const topicNameParam = searchParams.get('topicName')
 	  const consumerGroupParam = searchParams.get('consumerGroup')
 
-	  // tab 从 URL 派生，保证 URL 与展示始终一致
+	  // tab 唯一数据源：直接从 URL 计算，保证 URL 与展示始终一致
 	  const tabParam = searchParams.get('tab')
 	  const activeTab = tabParam && ['overview', 'broker', 'topic'].includes(tabParam) ? tabParam : 'overview'
 
 	  const setActiveTab = (tab: string) => {
 	    const params = new URLSearchParams(searchParams)
 	    params.set('tab', tab)
-	    // 切换到非 topic 标签时，清除 topicName/consumerGroup 参数
+	    // 切换到非 topic 标签时，清除 topicName/consumerGroup 参数，避免残留干扰后续操作
 	    if (tab !== 'topic') {
 	      params.delete('topicName')
 	      params.delete('consumerGroup')
@@ -44,27 +43,36 @@ const Monitor: React.FC = () => {
 	    setSearchParams(params, { replace: true })
 	  }
 
-	  useEffect(() => {
-	    const loadClusters = async () => {
-	      try {
-	        const res = await clusterAPI.list(1, 100)
-	        setClusters(res.data || [])
-	        if (res.data?.length > 0) {
-	          const clusterIdParam = searchParams.get('clusterId')
+  // 同步选中集群到 URL
+  useEffect(() => {
+    if (selectedCluster) {
+      const params = new URLSearchParams(searchParams)
+      params.set('clusterId', String(selectedCluster.cluster_id))
+      setSearchParams(params, { replace: true })
+    }
+  }, [selectedCluster?.cluster_id])
 
-	          if (clusterIdParam) {
-	            const targetCluster = res.data.find((c: ClusterOption) => c.cluster_id === parseInt(clusterIdParam))
-	            setSelectedCluster(targetCluster || res.data[0])
-	          } else {
-	            setSelectedCluster(res.data[0])
-	          }
-	        }
-	      } catch (error) {
-	        message.error('加载集群列表失败')
-	      }
-	    }
-	    loadClusters()
-	  }, [])
+  useEffect(() => {
+    const loadClusters = async () => {
+      try {
+        const res = await clusterAPI.list(1, 100)
+        setClusters(res.data || [])
+        if (res.data?.length > 0) {
+          const clusterIdParam = searchParams.get('clusterId')
+
+          if (clusterIdParam) {
+            const targetCluster = res.data.find((c: ClusterOption) => c.cluster_id === parseInt(clusterIdParam))
+            setSelectedCluster(targetCluster || res.data[0])
+          } else {
+            setSelectedCluster(res.data[0])
+          }
+        }
+      } catch (error) {
+        message.error('加载集群列表失败')
+      }
+    }
+    loadClusters()
+  }, [])
 
   useEffect(() => {
     const loadMetrics = async () => {
@@ -90,7 +98,6 @@ const Monitor: React.FC = () => {
 
   return (
     <div>
-      {/* Header with controls inline */}
       <div className="page-header">
         <div className="page-header-row">
           <div>
@@ -114,65 +121,42 @@ const Monitor: React.FC = () => {
         </div>
       </div>
 
-      {/* Custom tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20 }}>
         {tabs.map(tab => (
-          <button
-            key={tab.key}
+          <button key={tab.key}
             className={`bento-action-btn${activeTab === tab.key ? ' bento-pagination-btn--active' : ''}`}
             style={{
-              padding: '8px 20px',
-              fontSize: 13,
+              padding: '8px 20px', fontSize: 13,
               fontWeight: activeTab === tab.key ? 700 : 500,
               background: activeTab === tab.key ? 'var(--brand)' : 'var(--card)',
               color: activeTab === tab.key ? '#fff' : 'var(--text-2)',
               border: activeTab === tab.key ? 'none' : '1px solid var(--border)',
               borderRadius: 10,
             }}
-onClick={() => setActiveTab(tab.key)}>
-	            {tab.label}
+            onClick={() => setActiveTab(tab.key)}>
+            {tab.label}
           </button>
         ))}
       </div>
 
-      {/* Tab content */}
       <Spin spinning={loading}>
         {activeTab === 'overview' && selectedCluster && (
-          <ClusterOverview
-            cluster={selectedCluster}
-            timeRange={timeRange}
-            quickRange={quickRange}
-            customRange={customRange}
-            metrics={metrics}
-            jmxAvailable={metrics?.jmx_exporter_available ?? false}
-          />
+          <ClusterOverview cluster={selectedCluster} timeRange={timeRange} quickRange={quickRange}
+            customRange={customRange} metrics={metrics} jmxAvailable={metrics?.jmx_exporter_available ?? false} />
         )}
         {activeTab === 'broker' && selectedCluster && (
-          <BrokerMonitor
-            cluster={selectedCluster}
-            timeRange={timeRange}
-            quickRange={quickRange}
-            customRange={customRange}
-            activeTab={activeTab}
-            jmxAvailable={metrics?.jmx_exporter_available ?? false}
-          />
+          <BrokerMonitor cluster={selectedCluster} timeRange={timeRange} quickRange={quickRange}
+            customRange={customRange} activeTab={activeTab} jmxAvailable={metrics?.jmx_exporter_available ?? false} />
         )}
         {activeTab === 'topic' && selectedCluster && (
-          <TopicMonitor
-            cluster={selectedCluster}
-            timeRange={timeRange}
-            quickRange={quickRange}
-            customRange={customRange}
-            metrics={metrics}
-            activeTab={activeTab}
+          <TopicMonitor cluster={selectedCluster} timeRange={timeRange} quickRange={quickRange}
+            customRange={customRange} metrics={metrics} activeTab={activeTab}
             jmxAvailable={metrics?.jmx_exporter_available ?? false}
-            initialTopic={topicNameParam}
-            initialConsumerGroup={consumerGroupParam}
-          />
+            initialTopic={topicNameParam} initialConsumerGroup={consumerGroupParam} />
         )}
       </Spin>
     </div>
   )
 }
 
-export default Monitor
+export default ClusterMonitor
