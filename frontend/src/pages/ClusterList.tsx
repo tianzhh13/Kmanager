@@ -29,12 +29,26 @@ const ClusterList: React.FC = () => {
   const [statsClusters, setStatsClusters] = useState<ClusterWithStats[]>([])
 
   useEffect(() => {
+    loadAllData()
+  }, [dispatch, page, pageSize])
+
+  const loadAllData = () => {
     dispatch(fetchClusters({ page, pageSize }))
     // Also fetch with stats for health dots
     clusterAPI.listWithStats(1, 100).then(res => {
       setStatsClusters(res.data || [])
     }).catch(() => {})
-  }, [dispatch, page, pageSize])
+  }
+
+  // 监听 deleteCluster 完成，刷新 stat 卡片
+  useEffect(() => {
+    // 通过 Redux 状态变化触发刷新
+    if (!loading) {
+      clusterAPI.listWithStats(1, 100).then(res => {
+        setStatsClusters(res.data || [])
+      }).catch(() => {})
+    }
+  }, [clusters.length])
 
   const getHealthStatus = (clusterId: number): string => {
     const sc = statsClusters.find(c => c.cluster_id === clusterId)
@@ -47,13 +61,15 @@ const ClusterList: React.FC = () => {
     c.bootstrap_servers.toLowerCase().includes(searchText.toLowerCase())
   )
 
-  const plaintextCount = clusters.filter(c => c.auth_type === 'none' || c.auth_type === 'plaintext').length
+  const noneCount = clusters.filter(c => c.auth_type === 'none').length
+  const plainCount = clusters.filter(c => c.auth_type === 'plaintext').length
   const scramCount = clusters.filter(c => c.auth_type === 'scram').length
   const kerberosCount = clusters.filter(c => c.auth_type === 'kerberos').length
   const jmxCount = clusters.filter(c => c.jmx_exporter_urls).length
 
   const authTypeToColor = (type: string): 'green' | 'blue' | 'orange' | 'purple' => {
-    if (type === 'none' || type === 'plaintext') return 'green'
+    if (type === 'none') return 'green'
+    if (type === 'plaintext') return 'green'
     if (type === 'scram') return 'blue'
     if (type === 'kerberos') return 'orange'
     return 'purple'
@@ -214,8 +230,8 @@ const ClusterList: React.FC = () => {
         </Form.Item>
         <Form.Item name="auth_type" label="认证类型" rules={[{ required: true, message: '请选择认证类型' }]}>
           <Select onChange={(value) => { setAuthType(value); form.setFieldsValue({ auth_type: value }) }}>
-            <Select.Option value="none">无认证（PLAINTEXT）</Select.Option>
-            <Select.Option value="sasl">SASL 认证（用户名密码）</Select.Option>
+            <Select.Option value="none">无认证（NONE）</Select.Option>
+            <Select.Option value="sasl">SASL 认证（PLAIN / SCRAM）</Select.Option>
             <Select.Option value="kerberos">Kerberos</Select.Option>
           </Select>
         </Form.Item>
@@ -290,9 +306,10 @@ const ClusterList: React.FC = () => {
       </div>
 
       {/* Stat cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 16, marginBottom: 20 }}>
         <StatCard label="CLUSTER TOTAL" value={total} />
-        <StatCard label="PLAINTEXT" value={plaintextCount} />
+        <StatCard label="NONE" value={noneCount} subtitle="无认证" />
+        <StatCard label="PLAIN" value={plainCount} subtitle="SASL/PLAIN" />
         <StatCard label="SCRAM" value={scramCount} subtitle="SHA-256 / SHA-512" />
         <StatCard label="KERBEROS" value={kerberosCount} subtitle="GSSAPI auth" />
         <StatCard label="JMX CONFIGURED" value={`${jmxCount}/${total}`} valueColor={jmxCount === total ? '#10b981' : undefined} />
@@ -311,7 +328,7 @@ const ClusterList: React.FC = () => {
           const hasJMX = !!cluster.jmx_exporter_urls
           const isError = health === 'error'
           return (
-            <div key={cluster.cluster_id} className={`cluster-bento-card${isError ? ' cluster-bento-card--error' : ''}`}>
+            <div key={cluster.cluster_id} className={`cluster-bento-card${isError ? ' cluster-bento-card--error' : ''}`} style={{ cursor: 'pointer' }} onClick={() => navigate(`/clusters/topics?clusterId=${cluster.cluster_id}`)}>
               <div className="cluster-bento-card-inner">
                 {/* Header: health dot + name + tags */}
                 <div className="cluster-card-header">
@@ -324,7 +341,7 @@ const ClusterList: React.FC = () => {
                     color={cluster.status === 'active' ? 'green' : 'orange'}
                   />
                   <LabelTag
-                    text={cluster.auth_type?.toUpperCase() || 'NONE'}
+                    text={cluster.auth_type === 'none' ? 'NONE' : cluster.auth_type === 'plaintext' ? 'PLAIN' : cluster.auth_type?.toUpperCase() || 'NONE'}
                     color={authTypeToColor(cluster.auth_type)}
                   />
                 </div>
@@ -348,7 +365,7 @@ const ClusterList: React.FC = () => {
                   </div>
                 </div>
                 {/* Action buttons */}
-                <div className="cluster-card-footer">
+                <div className="cluster-card-footer" onClick={(e) => e.stopPropagation()}>
                   {isSuperAdmin && (
                     <div className="cluster-card-actions">
                       <button className="bento-action-btn" onClick={() => handleEdit(cluster)}>
@@ -359,7 +376,10 @@ const ClusterList: React.FC = () => {
                       </button>
                     </div>
                   )}
-                  <button className="bento-action-btn bento-action-btn--brand" onClick={() => navigate(`/monitor?clusterId=${cluster.cluster_id}`)}>
+                  <button className="bento-action-btn bento-action-btn--brand" onClick={() => window.open(`/clusters/topics?clusterId=${cluster.cluster_id}`, '_self')}>
+                    Topic
+                  </button>
+                  <button className="bento-action-btn" onClick={() => window.open(`/clusters/monitor?clusterId=${cluster.cluster_id}`, '_self')}>
                     监控
                   </button>
                 </div>

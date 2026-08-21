@@ -1,16 +1,17 @@
 package dashboard
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"time"
+		"context"
+		"encoding/json"
+		"fmt"
+		"time"
 
-	"kafka-management-platform/internal/cache"
-	"kafka-management-platform/internal/logger"
-	"kafka-management-platform/internal/repository"
-	"kafka-management-platform/internal/service/monitor"
-)
+		"kafka-management-platform/internal/cache"
+		"kafka-management-platform/internal/logger"
+		"kafka-management-platform/internal/models"
+		"kafka-management-platform/internal/repository"
+		"kafka-management-platform/internal/service/monitor"
+	)
 
 // OverviewResponse Dashboard 概览响应
 type OverviewResponse struct {
@@ -42,6 +43,7 @@ type ConsumerGroupStats struct {
 
 // ConsumerGroupDetail 消费者组详情（按集群分组）
 type ConsumerGroupDetail struct {
+	ClusterID   int64  `json:"cluster_id"`
 	ClusterName string `json:"cluster_name"`
 	GroupID     string `json:"group_id"`
 	Topic       string `json:"topic"`
@@ -86,9 +88,13 @@ func NewService(
 const overviewCacheKey = "dashboard:overview"
 
 // GetOverview 获取 Dashboard 概览数据（带 30s 缓存）
-func (s *Service) GetOverview(ctx context.Context) (*OverviewResponse, error) {
+// 根据用户角色过滤：super_admin 看所有集群，其他角色只看已授权的集群
+func (s *Service) GetOverview(ctx context.Context, userID int64, role string) (*OverviewResponse, error) {
+	// 缓存 key 区分角色，避免权限泄露
+	cacheKey := fmt.Sprintf("%s:role=%s:user=%d", overviewCacheKey, role, userID)
+
 	// 检查缓存
-	if cached, err := s.cache.Get(ctx, overviewCacheKey); err == nil && cached != nil {
+	if cached, err := s.cache.Get(ctx, cacheKey); err == nil && cached != nil {
 		if data, ok := cached.([]byte); ok {
 			var resp OverviewResponse
 			if err := json.Unmarshal(data, &resp); err == nil {
@@ -101,8 +107,9 @@ func (s *Service) GetOverview(ctx context.Context) (*OverviewResponse, error) {
 		AuthTypeDist: make(map[string]int),
 	}
 
-	// 1. MySQL 查询
-	clusters, _, err := s.clusterRepo.List(ctx, 0, 10000)
+	// 1. MySQL 查询 — 使用 ListByUser 按角色过滤
+	// 获取所有集群用于统计（无分页限制）
+	clusters, _, err := s.clusterRepo.ListByUser(ctx, userID, models.UserRole(role), 0, 10000)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list clusters: %w", err)
 	}
@@ -152,16 +159,17 @@ func (s *Service) GetOverview(ctx context.Context) (*OverviewResponse, error) {
 			for _, c := range clusters {
 				clusterNameMap[c.ClusterID] = c.ClusterName
 			}
-			details := make([]ConsumerGroupDetail, len(vmData.CGDetails))
-			for i, d := range vmData.CGDetails {
-				details[i] = ConsumerGroupDetail{
-					ClusterName: clusterNameMap[d.ClusterID],
-					GroupID:     d.GroupID,
-					Topic:       d.Topic,
-					TotalLag:    d.TotalLag,
-					MemberCount: d.MemberCount,
+details := make([]ConsumerGroupDetail, len(vmData.CGDetails))
+				for i, d := range vmData.CGDetails {
+					details[i] = ConsumerGroupDetail{
+						ClusterID:   d.ClusterID,
+						ClusterName: clusterNameMap[d.ClusterID],
+						GroupID:     d.GroupID,
+						Topic:       d.Topic,
+						TotalLag:    d.TotalLag,
+						MemberCount: d.MemberCount,
+					}
 				}
-			}
 			resp.ConsumerGroupDetails = details
 		}
 	}
@@ -264,10 +272,10 @@ func (s *Service) GetOverview(ctx context.Context) (*OverviewResponse, error) {
 	resp.Clusters.Error = errorN
 	resp.Clusters.Unknown = unknown
 
-	// 写入缓存
-	if data, err := json.Marshal(resp); err == nil {
-		_ = s.cache.Set(ctx, overviewCacheKey, data, 0)
-	}
+// 写入缓存（使用角色区分的 key）
+		if data, err := json.Marshal(resp); err == nil {
+			_ = s.cache.Set(ctx, cacheKey, data, 0)
+		}
 
 	return resp, nil
 }

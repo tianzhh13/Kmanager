@@ -281,6 +281,7 @@ type TopicConsumerGroupInfo struct {
 	GroupID     string `json:"group_id"`
 	State       string `json:"state"`
 	MemberCount int    `json:"member_count"`
+	TotalLag    int64  `json:"total_lag"`
 }
 
 // GetTopicConsumerGroups 获取 Topic 的消费组列表
@@ -322,38 +323,86 @@ func (s *Service) GetTopicConsumerGroups(ctx context.Context, clusterID int64, t
 		return nil, fmt.Errorf("failed to describe consumer groups: %w", err)
 	}
 
-	// 4. 筛选订阅了目标 Topic 的消费组
-	for _, desc := range descriptions {
-		memberTopicSet := make(map[string]bool)
-		for _, member := range desc.Members {
-			// 从 MemberAssignment 中解析订阅的 Topic
-			assignment, _ := member.GetMemberAssignment()
-			if assignment != nil {
-				for topic := range assignment.Topics {
-					memberTopicSet[topic] = true
+// 4. 筛选订阅了目标 Topic 的消费组
+		var filteredDescriptions []*sarama.GroupDescription
+		for _, desc := range descriptions {
+			memberTopicSet := make(map[string]bool)
+			for _, member := range desc.Members {
+				// 从 MemberAssignment 中解析订阅的 Topic
+				assignment, _ := member.GetMemberAssignment()
+				if assignment != nil {
+					for topic := range assignment.Topics {
+						memberTopicSet[topic] = true
+					}
+				}
+				// 兼容：也从 MemberMetadata 中解析
+				metadata, _ := member.GetMemberMetadata()
+				if metadata != nil && len(metadata.Topics) > 0 {
+					for _, t := range metadata.Topics {
+						memberTopicSet[t] = true
+					}
 				}
 			}
-			// 兼容：也从 MemberMetadata 中解析
-			metadata, _ := member.GetMemberMetadata()
-			if metadata != nil && len(metadata.Topics) > 0 {
-				for _, t := range metadata.Topics {
-					memberTopicSet[t] = true
+
+			if !memberTopicSet[topicName] {
+				continue
+			}
+
+			filteredDescriptions = append(filteredDescriptions, desc)
+		}
+
+		// 5. 批量获取 Lag（仅对筛选后的消费组）
+		if len(filteredDescriptions) > 0 {
+			// 先获取 Topic 每个分区的 LogEndOffset
+allPartitions, err := adminClient.GetTopicPartitionDetails()
+				var partitionIDs []int32
+				if err == nil {
+					for _, p := range allPartitions {
+						if p.Topic == topicName {
+							partitionIDs = append(partitionIDs, p.Partition)
+						}
+					}
 				}
+			topicPartitions := map[string][]int32{topicName: partitionIDs}
+			logEndOffsets, err := adminClient.GetTopicPartitionOffsets(topicPartitions)
+			if err != nil {
+				logger.Warn("failed to get log end offsets for lag calculation", "topic", topicName, "error", err)
+			}
+
+			for _, desc := range filteredDescriptions {
+				info := TopicConsumerGroupInfo{
+					GroupID:     desc.GroupId,
+					State:       string(desc.State),
+					MemberCount: len(desc.Members),
+				}
+
+// 计算 Lag
+					if logEndOffsets != nil && len(logEndOffsets) > 0 {
+						var totalLag int64
+						if partitionOffsets, ok := logEndOffsets[topicName]; ok && len(partitionOffsets) > 0 {
+							// 获取消费组的当前 offset
+							offsetResp, err := adminClient.ListConsumerGroupOffsets(desc.GroupId, topicPartitions)
+							if err == nil && offsetResp != nil {
+								for partitionID, logEndOffset := range partitionOffsets {
+									if topicBlocks, ok := offsetResp.Blocks[topicName]; ok {
+										if block, ok := topicBlocks[partitionID]; ok && block.Err == sarama.ErrNoError {
+											lag := logEndOffset - block.Offset
+											if lag > 0 {
+												totalLag += lag
+											}
+										}
+									}
+								}
+							}
+						}
+						info.TotalLag = totalLag
+					}
+
+				result = append(result, info)
 			}
 		}
 
-		if !memberTopicSet[topicName] {
-			continue
-		}
-
-		result = append(result, TopicConsumerGroupInfo{
-			GroupID:     desc.GroupId,
-			State:       string(desc.State),
-			MemberCount: len(desc.Members),
-		})
-	}
-
-	return result, nil
+		return result, nil
 }
 
 // getClusterWithAuth 获取集群配置并解密认证信息
@@ -390,15 +439,20 @@ func (s *Service) ListTopics(ctx context.Context, req *ListTopicsRequest) (*List
 	var total int64
 	var err error
 
-	// 如果有 Topic 权限限制（普通用户），使用过滤查询
-	if len(req.AllowedTopics) > 0 {
-		topics, total, err = s.topicRepo.ListByNames(ctx, req.ClusterID, req.AllowedTopics, req.Offset, req.Limit)
-	} else if req.Search != "" {
-		// 根据是否有搜索条件选择合适的查询方法
-		topics, total, err = s.topicRepo.Search(ctx, req.ClusterID, req.Search, req.Offset, req.Limit)
-	} else {
-		topics, total, err = s.topicRepo.List(ctx, req.ClusterID, req.Offset, req.Limit)
-	}
+// 如果有 Topic 权限限制（普通用户），结合搜索进行过滤
+		if len(req.AllowedTopics) > 0 {
+			// 如果同时有搜索条件，在允许的 Topic 列表中模糊搜索
+			if req.Search != "" {
+				topics, total, err = s.topicRepo.SearchInNames(ctx, req.ClusterID, req.AllowedTopics, req.Search, req.Offset, req.Limit)
+			} else {
+				topics, total, err = s.topicRepo.ListByNames(ctx, req.ClusterID, req.AllowedTopics, req.Offset, req.Limit)
+			}
+		} else if req.Search != "" {
+			// 根据是否有搜索条件选择合适的查询方法
+			topics, total, err = s.topicRepo.Search(ctx, req.ClusterID, req.Search, req.Offset, req.Limit)
+		} else {
+			topics, total, err = s.topicRepo.List(ctx, req.ClusterID, req.Offset, req.Limit)
+		}
 
 	if err != nil {
 		return nil, err

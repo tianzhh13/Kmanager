@@ -17,6 +17,11 @@ const AuditLog = lazy(() => import('./pages/AuditLog'))
 const UserManagement = lazy(() => import('./pages/UserManagement'))
 const HostMapping = lazy(() => import('./pages/HostMapping'))
 
+// 集群管理相关子页面（作为二级路由，也保持独立路由兼容）
+const ClusterTopics = lazy(() => import('./pages/ClusterTopics'))
+const ClusterACLs = lazy(() => import('./pages/ClusterACLs'))
+const ClusterMonitor = lazy(() => import('./pages/ClusterMonitor'))
+
 // 懒加载 fallback
 const LazyFallback = () => (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', minHeight: 200 }}>
@@ -58,13 +63,30 @@ function App() {
                   <Routes>
                     <Route path="/" element={<Navigate to="/dashboard" replace />} />
                     <Route path="/dashboard" element={<Dashboard />} />
-                    <Route path="/topics" element={<TopicList />} />
-                    <Route path="/monitor" element={<Monitor />} />
+                    {/* 集群管理及其二级页面 */}
                     <Route path="/clusters" element={
-                      <RequireRole allowedRoles={['super_admin', 'cluster_admin']}>
+                      <RequireRole allowedRoles={['super_admin', 'cluster_admin', 'normal_user']}>
                         <ClusterList />
                       </RequireRole>
                     } />
+                    <Route path="/clusters/topics" element={
+                      <RequireRole allowedRoles={['super_admin', 'cluster_admin', 'normal_user']}>
+                        <ClusterTopics />
+                      </RequireRole>
+                    } />
+                    <Route path="/clusters/acls" element={
+                      <RequireRole allowedRoles={['super_admin', 'cluster_admin']}>
+                        <ClusterACLs />
+                      </RequireRole>
+                    } />
+                    <Route path="/clusters/monitor" element={
+                      <RequireRole allowedRoles={['super_admin', 'cluster_admin', 'normal_user']}>
+                        <ClusterMonitor />
+                      </RequireRole>
+                    } />
+                    {/* 保留独立路由兼容（旧链接仍然可用，跳转到新页面时携带 clusterId 参数） */}
+                    <Route path="/topics" element={<TopicList />} />
+                    <Route path="/monitor" element={<Monitor />} />
                     <Route path="/acls" element={
                       <RequireRole allowedRoles={['super_admin']}>
                         <ACLList />

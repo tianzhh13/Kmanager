@@ -159,7 +159,7 @@ const UserManagement: React.FC = () => {
     setClusterAuthModalVisible(true)
     setClusterAuthLoading(true)
     try {
-      const clustersRes = await clusterAPI.list()
+      const clustersRes = await clusterAPI.list(1, 1000)
       const clusters = clustersRes.data || []
       setAllClusters(clusters)
       const userClustersRes = await api.get(`/clusters/user/${user.user_id}`)
