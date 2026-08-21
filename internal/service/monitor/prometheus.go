@@ -253,6 +253,7 @@ func (h *Handler) GetClusterMetrics(c *gin.Context) {
 		return
 	}
 
+	logger.Info("GetClusterMetrics called", "cluster_id", clusterID)
 	metrics, err := h.svc.GetClusterMetrics(c.Request.Context(), clusterID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -572,11 +573,12 @@ func parseInt64Param(param string) (int64, error) {
 
 // batchQueryItem 单个查询请求
 type batchQueryItem struct {
-	ID    string `json:"id"`
-	Query string `json:"query"`
-	Start int64  `json:"start"`
-	End   int64  `json:"end"`
-	Step  string `json:"step"`
+	ID      string `json:"id"`
+	Query   string `json:"query"`
+	Start   int64  `json:"start"`
+	End     int64  `json:"end"`
+	Step    string `json:"step"`
+	Instant bool   `json:"instant"`
 }
 
 // batchQueryRequest 批量查询请求
@@ -591,6 +593,7 @@ type dedupedQuery struct {
 	Start       time.Time
 	End         time.Time
 	Step        string
+	IsInstant   bool
 	OriginalIDs []string
 }
 
@@ -618,25 +621,30 @@ func (h *Handler) BatchQueryMetrics(c *gin.Context) {
 		return
 	}
 
-	// 1. 去重：相同 query+start+end+step 只查一次
-	uniqueMap := make(map[string]int)
-	deduped := make([]dedupedQuery, 0, len(req.Queries))
-	for _, q := range req.Queries {
-		key := fmt.Sprintf("%s|%d|%d|%s", q.Query, q.Start, q.End, q.Step)
-		if idx, ok := uniqueMap[key]; ok {
-			deduped[idx].OriginalIDs = append(deduped[idx].OriginalIDs, q.ID)
-		} else {
-			uniqueMap[key] = len(deduped)
-			deduped = append(deduped, dedupedQuery{
-				Key:         key,
-				Query:       q.Query,
-				Start:       time.Unix(q.Start, 0),
-				End:         time.Unix(q.End, 0),
-				Step:        q.Step,
-				OriginalIDs: []string{q.ID},
-			})
+// 1. 去重：相同 query+start+end+step+instant 只查一次
+		uniqueMap := make(map[string]int)
+		deduped := make([]dedupedQuery, 0, len(req.Queries))
+		for _, q := range req.Queries {
+			instantPrefix := "0"
+			if q.Instant {
+				instantPrefix = "1"
+			}
+			key := fmt.Sprintf("%s|%s|%d|%d|%s", instantPrefix, q.Query, q.Start, q.End, q.Step)
+			if idx, ok := uniqueMap[key]; ok {
+				deduped[idx].OriginalIDs = append(deduped[idx].OriginalIDs, q.ID)
+			} else {
+				uniqueMap[key] = len(deduped)
+				deduped = append(deduped, dedupedQuery{
+					Key:         key,
+					Query:       q.Query,
+					Start:       time.Unix(q.Start, 0),
+					End:         time.Unix(q.End, 0),
+					Step:        q.Step,
+					IsInstant:   q.Instant,
+					OriginalIDs: []string{q.ID},
+				})
+			}
 		}
-	}
 
 	// 2. 并发查询（缓存 + VM）
 	ctx := c.Request.Context()
@@ -662,11 +670,17 @@ func (h *Handler) BatchQueryMetrics(c *gin.Context) {
 				return
 			}
 
-			// 查询 VM
-			result, err := h.svc.QueryMetricsRange(ctx, dq.Query, dq.Start, dq.End, dq.Step)
-			if err != nil {
-				result = []byte(`{"status":"error","data":{"result":[]}}`)
-			}
+// 查询 VM
+				var result []byte
+				var qErr error
+				if dq.IsInstant {
+					result, qErr = h.svc.QueryMetricsInstant(ctx, dq.Query)
+				} else {
+					result, qErr = h.svc.QueryMetricsRange(ctx, dq.Query, dq.Start, dq.End, dq.Step)
+				}
+				if qErr != nil {
+					result = []byte(`{"status":"error","data":{"result":[]}}`)
+				}
 
 			// 写入缓存
 			_ = metricsCache.Set(ctx, dq.Key, result, 0)
@@ -863,34 +877,29 @@ func (s *Service) GetClustersHealthStatus(ctx context.Context, clusterIDs []int6
 		}
 	}
 
-	// VM 未覆盖或返回 unknown 的集群，用 AdminClient 补充
-	// 如果 AdminClient 能连上说明集群可达 → healthy
-	needFallback := false
-	for _, id := range clusterIDs {
-		if result[id] == "" || result[id] == "unknown" {
-			needFallback = true
-			break
-		}
-	}
-	if needFallback {
-		adminCounts := s.GetAdminClientBrokerCounts(ctx, clusterIDs)
+// VM 未覆盖或返回 unknown 的集群，用 AdminClient 补充
+		// 如果 AdminClient 能连上说明集群可达 → healthy
+		// 如果 AdminClient 连不上（如认证变更后）→ error
+		needFallback := false
 		for _, id := range clusterIDs {
 			if result[id] == "" || result[id] == "unknown" {
-				if _, ok := adminCounts[id]; ok {
-					result[id] = "healthy"
-				} else {
-					result[id] = "unknown"
+				needFallback = true
+				break
+			}
+		}
+		if needFallback {
+			adminCounts := s.GetAdminClientBrokerCounts(ctx, clusterIDs)
+			for _, id := range clusterIDs {
+				if result[id] == "" || result[id] == "unknown" {
+					if _, ok := adminCounts[id]; ok {
+						result[id] = "healthy"
+					} else {
+						// AdminClient 连不上 → 标记为 error（不健康）
+						result[id] = "error"
+					}
 				}
 			}
 		}
-	}
-
-	// 填充默认值
-	for _, id := range clusterIDs {
-		if result[id] == "" {
-			result[id] = "unknown"
-		}
-	}
 
 	return result
 }

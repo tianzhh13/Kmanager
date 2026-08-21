@@ -4,6 +4,7 @@ import EChartsReact from 'echarts-for-react/lib/core'
 import echarts from '../../utils/echarts'
 import dayjs, { Dayjs } from 'dayjs'
 import DashboardGrid from '../../components/DashboardGrid'
+import { topicService } from '../../services/topic'
 import { usePromqlOverrides, useDefaultPromqls, PromqlDebugger, PromqlDebugButton } from '../../components/PromqlDebugger'
 import { ClusterMetricsResponse, metricsAPI, BatchQueryItem, extractInstantValue } from '../../services/metrics'
 import {
@@ -61,6 +62,8 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
   const [topicIsrVsReplicaData, setTopicIsrVsReplicaData] = useState<{ isr: PartitionMetric[]; replica: PartitionMetric[] }>({ isr: [], replica: [] })
   const [topicUnderReplicatedCount, setTopicUnderReplicatedCount] = useState(0)
   const [debugOpen, setDebugOpen] = useState(false)
+  const [consumerGroupLags, setConsumerGroupLags] = useState<Record<string, number>>({})
+  const [cgLagLoading, setCgLagLoading] = useState(false)
   const initialConsumerGroupRef = useRef<string | null>(initialConsumerGroup || null)
   const { overrides, getQ, setOverride, resetOverride, resetAll } = usePromqlOverrides('topic_monitor')
   const { q, defaultPromqls } = useDefaultPromqls(getQ)
@@ -106,28 +109,39 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
     if (!cluster) return
     setTopicLoading(true)
     try {
-      const now = dayjs()
-      const queries: BatchQueryItem[] = [{
-        id: 'topic_list',
-        query: `kafka_topic_partitions{app="kmanager",cluster_id="${cluster.cluster_id}"}`,
-        start: now.subtract(1, 'minute').unix(),
-        end: now.unix(),
-        step: '60s',
-      }]
-      const res = await metricsAPI.batchQuery(queries)
-      const resp = res.data.results['topic_list']
-      if (resp && resp.status === 'success') {
+      // 优先通过后端 API 获取 topic 列表（支持按角色权限过滤）
+      const res = await topicService.list(1, 1000, cluster.cluster_id)
+      const topicList = res.data || []
+      if (topicList.length > 0) {
         const topicMap = new Map<string, TopicInfo>()
-        resp.data.result.forEach((r: any) => {
-          const name = r.metric.topic
-          if (name && !topicMap.has(name)) {
-            // kafka_topic_partitions 的值本身就是分区数（range query 返回 values，instant query 返回 value）
-            const raw = r.value || (r.values && r.values[0])
-            const partitions = raw ? parseInt(raw[1]) || 1 : 1
-            topicMap.set(name, { name, partitions, replication_factor: 1 })
-          }
+        topicList.forEach((t: any) => {
+          topicMap.set(t.topic_name, { name: t.topic_name, partitions: t.partitions || 1, replication_factor: t.replication_factor || 1 })
         })
         setTopics(Array.from(topicMap.values()))
+      } else {
+        // 后端无数据时，从 VM 获取（兜底，但无权限过滤）
+        const now = dayjs()
+        const queries: BatchQueryItem[] = [{
+          id: 'topic_list',
+          query: `kafka_topic_partitions{app="kmanager",cluster_id="${cluster.cluster_id}"}`,
+          start: now.subtract(1, 'minute').unix(),
+          end: now.unix(),
+          step: '60s',
+        }]
+        const vmRes = await metricsAPI.batchQuery(queries)
+        const resp = vmRes.data.results['topic_list']
+        if (resp && resp.status === 'success') {
+          const topicMap = new Map<string, TopicInfo>()
+          resp.data.result.forEach((r: any) => {
+            const name = r.metric.topic
+            if (name && !topicMap.has(name)) {
+              const raw = r.value || (r.values && r.values[0])
+              const partitions = raw ? parseInt(raw[1]) || 1 : 1
+              topicMap.set(name, { name, partitions, replication_factor: 1 })
+            }
+          })
+          setTopics(Array.from(topicMap.values()))
+        }
       }
     } catch (error) {
       console.error('Failed to load topics', error)
@@ -237,6 +251,40 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
     }
   }, [cluster, selectedTopic, selectedConsumerGroup, getTimeRange, jmxAvailable, overrides])
 
+  // 从 VM 即时查询当前 Topic 下各消费组的 Lag（和折线图同源，避免数据不一致）
+  const loadConsumerGroupLags = useCallback(async () => {
+    if (!cluster || !selectedTopic) return
+    setCgLagLoading(true)
+    try {
+      const now = Math.floor(Date.now() / 1000)
+      const queries: BatchQueryItem[] = [{
+        id: 'cg_lags',
+        query: `sum(kafka_consumergroup_lag_sum{app="kmanager",cluster_id="${cluster.cluster_id}",topic="${selectedTopic}"}) by (consumergroup)`,
+        start: now,
+        end: now,
+        step: '60s',
+        instant: true,
+      }]
+      const res = await metricsAPI.batchQuery(queries)
+      const r = res.data.results['cg_lags']
+      if (r?.status === 'success' && r.data?.result) {
+        const lags: Record<string, number> = {}
+        r.data.result.forEach((item: { metric: Record<string, string>; value?: [number, string]; values?: Array<[number, string]> }) => {
+          const group = item.metric?.consumergroup
+          if (group) {
+            const val = item.value?.[1] ?? (item.values?.[0]?.[1])
+            lags[group] = parseFloat(val || '0')
+          }
+        })
+        setConsumerGroupLags(lags)
+      }
+    } catch (error) {
+      console.error('Failed to load consumer group lags', error)
+    } finally {
+      setCgLagLoading(false)
+    }
+  }, [cluster, selectedTopic])
+
   // Load topics on tab activation
   useEffect(() => {
     if (activeTab === 'topic' && cluster) {
@@ -294,6 +342,13 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
     if (selectedTopic && cluster && activeTab === 'topic') loadPartitionMetrics()
   }, [selectedTopic, selectedConsumerGroup, cluster, quickRange, customRange, timeRange, activeTab, loadPartitionMetrics])
 
+  // 选中 Topic 变化时，从 VM 加载消费组 Lag 聚合值
+  useEffect(() => {
+    if (selectedTopic && cluster && activeTab === 'topic') {
+      loadConsumerGroupLags()
+    }
+  }, [selectedTopic, cluster, activeTab, loadConsumerGroupLags])
+
   // ─── Chart builders ───
 
   const getTotalRateOption = (data: PartitionMetric[], unit: string, color: string, cgLabel?: string) => {
@@ -337,21 +392,23 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
   const chartKey = `${selectedTopic}-${selectedConsumerGroup}-${selectedPartitions.join('-')}`
 
   // Consumer group data for custom rows
+  // lag 优先使用 VM 即时查询值（与折线图同源），无 VM 数据时 fallback 到 metrics 即时值
   const consumerGroupRows = React.useMemo(() => {
     if (!selectedTopic || !metrics?.consumer_groups) return []
     return metrics.consumer_groups
       .filter(cg => (cg.topics || []).some(t => t.topic === selectedTopic))
       .map(cg => {
         const topicData = (cg.topics || []).find(t => t.topic === selectedTopic)
+        const vmLag = consumerGroupLags[cg.group_id]
         return {
           group_id: cg.group_id,
           state: cg.state,
           member_count: cg.member_count || 0,
           partitions: topicData?.partitions?.length || 0,
-          lag: topicData?.lag || 0,
+          lag: vmLag !== undefined ? vmLag : (topicData?.lag || 0),
         }
       })
-  }, [selectedTopic, metrics?.consumer_groups])
+  }, [selectedTopic, metrics?.consumer_groups, consumerGroupLags])
 
   const cgStateColor = (state: string): 'green' | 'red' | 'orange' | 'blue' | 'neutral' => {
     switch (state) {
@@ -405,7 +462,10 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
             <StatCard label="CG COUNT" value={topicConsumerGroups.length} />
             <StatCard
               label="TOTAL LAG"
-              value={metrics?.consumer_groups?.filter(cg => (cg.topics || []).some(t => t.topic === selectedTopic)).reduce((sum, cg) => sum + (cg.topics || []).filter(t => t.topic === selectedTopic).reduce((s, t) => s + t.lag, 0), 0) || 0}
+              value={Object.keys(consumerGroupLags).length > 0
+                ? Object.values(consumerGroupLags).reduce((sum, lag) => sum + lag, 0)
+                : (metrics?.consumer_groups?.filter(cg => (cg.topics || []).some(t => t.topic === selectedTopic)).reduce((sum, cg) => sum + (cg.topics || []).filter(t => t.topic === selectedTopic).reduce((s, t) => s + t.lag, 0), 0) || 0)
+              }
               color="#ef4444"
             />
           </div>
@@ -413,7 +473,10 @@ const TopicMonitor: React.FC<TopicMonitorProps> = ({ cluster, timeRange, quickRa
           {/* Consumer Group Custom Rows */}
           {topicConsumerGroups.length > 0 && (
             <div style={{ marginBottom: 20 }}>
-              <SectionTitle title="消费组列表" />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <SectionTitle title="消费组列表" />
+                {cgLagLoading && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>Lag 加载中...</span>}
+              </div>
               <div style={{ overflowX: 'auto' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px 80px 90px 100px', gap: 0, minWidth: 500 }}>
                   <div className="bento-grid-header">GROUP</div>
