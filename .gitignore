@@ -4,8 +4,8 @@
 *.dll
 *.so
 *.dylib
-kafka-management-platform
-kafka-collector
+kafka-management-platform*
+kafka-collector*
 
 # Test binary, built with `go test -c`
 *.test
@@ -54,7 +54,8 @@ frontend/node_modules/
 frontend/.env.local
 frontend/.env.production
 
-# Note: frontend/dist/ is NOT ignored - we include pre-built frontend in Git
+# 前端构建产物由 `make build-frontend` 生成，不入库
+frontend/dist/
 
 # Database
 *.db
@@ -72,3 +73,4 @@ dist.zip
 
 # AI assistant config
 .claude/
+.zcode/

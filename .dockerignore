@@ -48,6 +48,8 @@ frontend/public/
 *.dll
 *.so
 *.dylib
+kafka-management-platform-x86
+kafka-collector-x86
 
 # 文档
 docs/
@@ -59,6 +61,7 @@ README.md
 .vscode/
 .kiro/
 .sisyphus/
+.zcode/
 
 # Docker 相关文件
 Dockerfile
