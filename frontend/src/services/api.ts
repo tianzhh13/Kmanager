@@ -1,8 +1,7 @@
 import axios from 'axios'
 
-// 开发环境：Vite代理到 localhost:18080
-// 生产环境：前端和后端在同一域名下，使用相对路径
-const baseURL = '/api/v1'
+// baseURL 跟随 vite base（/kmanager/），保证页面与 API 同前缀
+const baseURL = `${import.meta.env.BASE_URL}api/v1`
 
 const api = axios.create({
   baseURL,
@@ -70,8 +69,10 @@ api.interceptors.response.use(
           return api(originalRequest)
         } catch {
           // 刷新失败，使用 history 替换当前 URL（不触发全页刷新）
-          if (window.location.pathname !== '/login') {
-            window.history.replaceState(null, '', '/login')
+          // 注意：这里是裸浏览器 API，不走 react-router，需手动带上 basename 前缀
+          const loginPath = `${import.meta.env.BASE_URL}login`
+          if (window.location.pathname !== loginPath) {
+            window.history.replaceState(null, '', loginPath)
           }
           return Promise.reject(error)
         }

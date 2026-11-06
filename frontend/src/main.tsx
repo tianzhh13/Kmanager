@@ -96,7 +96,7 @@ const theme = {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <Provider store={store}>
-      <BrowserRouter>
+      <BrowserRouter basename="/kmanager">
         <ConfigProvider locale={zhCN} theme={theme}>
           <App />
         </ConfigProvider>
