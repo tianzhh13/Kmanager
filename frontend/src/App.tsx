@@ -16,6 +16,8 @@ const Monitor = lazy(() => import('./pages/Monitor'))
 const AuditLog = lazy(() => import('./pages/AuditLog'))
 const UserManagement = lazy(() => import('./pages/UserManagement'))
 const HostMapping = lazy(() => import('./pages/HostMapping'))
+const TicketCenter = lazy(() => import('./pages/TicketCenter'))
+const TicketCreate = lazy(() => import('./pages/TicketCreate'))
 
 // 集群管理相关子页面（作为二级路由，也保持独立路由兼容）
 const ClusterTopics = lazy(() => import('./pages/ClusterTopics'))
@@ -105,6 +107,17 @@ function App() {
                     <Route path="/host-mappings" element={
                       <RequireRole allowedRoles={['super_admin']}>
                         <HostMapping />
+                      </RequireRole>
+                    } />
+                    {/* 工单中心（所有角色可访问，服务端按角色控制数据范围） */}
+                    <Route path="/tickets" element={
+                      <RequireRole allowedRoles={['super_admin', 'cluster_admin', 'normal_user']}>
+                        <TicketCenter />
+                      </RequireRole>
+                    } />
+                    <Route path="/tickets/create" element={
+                      <RequireRole allowedRoles={['super_admin', 'cluster_admin', 'normal_user']}>
+                        <TicketCreate />
                       </RequireRole>
                     } />
                   </Routes>

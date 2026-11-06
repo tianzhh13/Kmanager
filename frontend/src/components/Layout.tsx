@@ -12,6 +12,7 @@ import {
 	  MenuUnfoldOutlined,
 	  SwapOutlined,
 	  KeyOutlined,
+	  FileDoneOutlined,
 	} from '@ant-design/icons'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { logoutAsync } from '../store/slices/authSlice'
@@ -36,6 +37,8 @@ const routeBreadcrumb: Record<string, string> = {
   '/audit-logs': '审计日志',
   '/users': '用户管理',
   '/host-mappings': '主机映射',
+  '/tickets': '工单中心',
+  '/tickets/create': '工单中心 - 新建工单',
 }
 
 interface LayoutProps {
@@ -61,6 +64,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const menuItems = [
     { key: '/dashboard', icon: <DashboardOutlined />, label: '仪表盘' },
+    { key: '/tickets', icon: <FileDoneOutlined />, label: '工单中心' },
     {
       key: '/clusters',
       icon: <ClusterOutlined />,

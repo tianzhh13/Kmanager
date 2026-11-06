@@ -164,6 +164,34 @@ CREATE TABLE IF NOT EXISTS `token_blacklist` (
     INDEX `idx_expires_at` (`expires_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 工单表（申请 Topic / 申请权限的审批流；作为审批留痕不设外键，集群/用户删除后记录保留）
+CREATE TABLE IF NOT EXISTS `ticket` (
+    `ticket_id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+    `ticket_no` VARCHAR(32) NOT NULL COMMENT '工单编号 TK-YYYYMMDD-NNNN',
+    `type` VARCHAR(32) NOT NULL COMMENT '类型：topic_create(申请Topic)/permission_grant(申请权限)',
+    `cluster_id` BIGINT NOT NULL,
+    `applicant_id` BIGINT NOT NULL COMMENT '申请人（平台用户）ID',
+    `title` VARCHAR(128) NOT NULL,
+    `form` TEXT NOT NULL COMMENT '申请表单 JSON',
+    `status` VARCHAR(32) NOT NULL DEFAULT 'pending' COMMENT '状态：pending/executing/succeeded/failed/rejected/cancelled',
+    `approver_id` BIGINT COMMENT '审批人ID',
+    `approve_remark` TEXT COMMENT '审批备注/驳回原因',
+    `result` TEXT COMMENT '执行结果摘要 JSON',
+    `credential` TEXT COMMENT '新建 SCRAM 用户凭证（加密存储，一次性查看后清空）',
+    `credential_viewed_at` TIMESTAMP NULL COMMENT '凭证查看时间',
+    `error_msg` TEXT COMMENT '执行失败原因',
+    `applied_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `approved_at` TIMESTAMP NULL,
+    `completed_at` TIMESTAMP NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_ticket_no` (`ticket_no`),
+    INDEX `idx_ticket_type` (`type`),
+    INDEX `idx_ticket_cluster_id` (`cluster_id`),
+    INDEX `idx_ticket_applicant_id` (`applicant_id`),
+    INDEX `idx_ticket_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 插入默认超级管理员用户
 -- 密码: admin123 (使用 bcrypt 加密，cost=12)
 INSERT INTO `user` (`username`, `password_hash`, `email`, `role`, `status`, `created_at`, `updated_at`)

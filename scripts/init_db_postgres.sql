@@ -146,6 +146,35 @@ CREATE TABLE IF NOT EXISTS token_blacklist (
 
 CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires_at ON token_blacklist(expires_at);
 
+-- 工单表（申请 Topic / 申请权限的审批流；作为审批留痕不设外键，集群/用户删除后记录保留）
+CREATE TABLE IF NOT EXISTS ticket (
+    ticket_id BIGSERIAL PRIMARY KEY,
+    ticket_no VARCHAR(32) NOT NULL,
+    type VARCHAR(32) NOT NULL,
+    cluster_id BIGINT NOT NULL,
+    applicant_id BIGINT NOT NULL,
+    title VARCHAR(128) NOT NULL,
+    form TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    approver_id BIGINT,
+    approve_remark TEXT,
+    result TEXT,
+    credential TEXT,
+    credential_viewed_at TIMESTAMP,
+    error_msg TEXT,
+    applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    approved_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (ticket_no)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ticket_type ON ticket(type);
+CREATE INDEX IF NOT EXISTS idx_ticket_cluster_id ON ticket(cluster_id);
+CREATE INDEX IF NOT EXISTS idx_ticket_applicant_id ON ticket(applicant_id);
+CREATE INDEX IF NOT EXISTS idx_ticket_status ON ticket(status);
+
 -- 创建更新时间触发器函数
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -166,6 +195,9 @@ CREATE TRIGGER update_topic_updated_at BEFORE UPDATE ON topic
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_scram_users_updated_at BEFORE UPDATE ON scram_users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_ticket_updated_at BEFORE UPDATE ON ticket
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- 插入默认超级管理员用户

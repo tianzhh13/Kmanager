@@ -2,6 +2,9 @@ package router
 
 import (
 	"context"
+	"net/http"
+	"path"
+	"strings"
 	"time"
 
 	"kafka-management-platform/internal/cache"
@@ -17,6 +20,7 @@ import (
 	"kafka-management-platform/internal/service/hostmapping"
 	"kafka-management-platform/internal/service/monitor"
 	"kafka-management-platform/internal/service/scram"
+	"kafka-management-platform/internal/service/ticket"
 	"kafka-management-platform/internal/service/topic"
 	"kafka-management-platform/internal/service/user"
 	"kafka-management-platform/pkg/encryption"
@@ -73,6 +77,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	clusterUserRepo := repository.NewClusterUserRepository(db)
 	scramUserRepo := repository.NewScramUserRepository(db)
 	topicPermRepo := repository.NewTopicPermissionRepository(db)
+	ticketRepo := repository.NewTicketRepository(db)
 
 	// 初始化 VictoriaMetrics 客户端
 	vmClient := victoriametrics.NewClient(
@@ -96,6 +101,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	userSvc := user.NewService(userRepo)
 	scramSvc := scram.NewService(scramUserRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
 	dashboardSvc := dashboard.NewService(clusterRepo, topicRepo, userRepo, monitorSvc)
+	ticketSvc := ticket.NewService(ticketRepo, clusterRepo, topicRepo, scramUserRepo, userRepo, permissionSvc, auditSvc, encryptionSvc, topicSvc, scramSvc, aclSvc)
 
 	// 初始化 Token 黑名单缓存（内存 + 数据库双写）
 	memoryCache := cache.NewMemoryCache(24 * time.Hour)
@@ -119,14 +125,24 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	monitorHandler := monitor.NewHandler(monitorSvc)
 	scramUserHandler := handler.NewScramUserHandler(scramSvc)
 	dashboardHandler := handler.NewDashboardHandler(dashboardSvc)
+	ticketHandler := handler.NewTicketHandler(ticketSvc)
 
 	// 初始化中间件
 	permissionMiddleware := middleware.NewPermissionMiddleware(permissionSvc)
 	clusterPermissionMiddleware := middleware.NewClusterPermissionMiddleware(permissionSvc)
 	auditMiddleware := middleware.NewAuditMiddleware(auditSvc) // 审计中间件
 
+	// webBase 是统一运维平台纳管要求的应用路径前缀。
+	// 页面、API、静态资源全部挂在该前缀下，保证 http://{IP}:{PORT}/kmanager 可访问。
+	const webBase = "/kmanager"
+
+	// 根路径重定向到带前缀的入口，避免裸访问 404
+	r.GET("/", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, webBase)
+	})
+
 	// 健康检查
-	r.GET("/health", func(c *gin.Context) {
+	r.GET(webBase+"/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"status":  "ok",
 			"message": "Kafka Management Platform is running",
@@ -134,14 +150,14 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	})
 
 	// 系统配置（公开接口，无需认证）
-	r.GET("/api/v1/system/config", func(c *gin.Context) {
+	r.GET(webBase+"/api/v1/system/config", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"idle_timeout": cfg.Session.IdleTimeout, // 无操作自动登出时间（分钟）
 		})
 	})
 
 	// API v1 路由组
-	v1 := r.Group("/api/v1")
+	v1 := r.Group(webBase + "/api/v1")
 	{
 		// 认证路由（无需认证，但需要限流）
 		authGroup := v1.Group("/auth")
@@ -242,6 +258,20 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				scramUsers.POST("/sync/:id", clusterPermissionMiddleware.RequireClusterWriteAccess(), scramUserHandler.SyncUsers)
 			}
 
+			// 工单路由（审批人权限校验在 service 内按工单所属集群完成）
+			tickets := authenticated.Group("/tickets")
+			{
+				tickets.GET("", ticketHandler.List)
+				tickets.GET("/stats", ticketHandler.Stats)
+				tickets.POST("", ticketHandler.Submit)
+				tickets.GET("/:id", ticketHandler.Get)
+				tickets.POST("/:id/approve", ticketHandler.Approve)
+				tickets.POST("/:id/reject", ticketHandler.Reject)
+				tickets.POST("/:id/cancel", ticketHandler.Cancel)
+				tickets.POST("/:id/retry", ticketHandler.Retry)
+				tickets.POST("/:id/credentials", ticketHandler.TakeCredential)
+			}
+
 			// 监控路由
 			metrics := authenticated.Group("/metrics")
 			{
@@ -302,43 +332,43 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	// 配置前端构建产物的目录路径
 	frontendDistPath := "./frontend/dist"
 
-	// 静态资源目录（JS、CSS 等）
-	r.Static("/assets", frontendDistPath+"/assets")
+	// 静态资源目录（JS、CSS 等）—— 同样挂在前缀下，与前端 vite base 对齐
+	r.Static(webBase+"/assets", frontendDistPath+"/assets")
 
 	// 其他静态资源文件
-	r.StaticFile("/vite.svg", frontendDistPath+"/vite.svg")
+	r.StaticFile(webBase+"/vite.svg", frontendDistPath+"/vite.svg")
 
-	// SPA fallback - 所有非 API 路由返回 index.html
+	// 应用入口，直接返回 index.html
+	r.GET(webBase, func(c *gin.Context) {
+		c.File(frontendDistPath + "/index.html")
+	})
+
+	// SPA fallback - 带前缀的非 API 路由返回 index.html
 	// 这支持前端路由（如 /clusters, /topics 等）在刷新时能正常工作
 	r.NoRoute(func(c *gin.Context) {
-		path := c.Request.URL.Path
-		// 如果是 API 请求但路由不存在，返回 404 JSON 响应
-		if len(path) >= 4 && path[:4] == "/api" {
+		reqPath := c.Request.URL.Path
+		// API 请求（带前缀或根 /api）未命中路由 → 404 JSON
+		if strings.HasPrefix(reqPath, webBase+"/api") || strings.HasPrefix(reqPath, "/api") {
 			c.JSON(404, gin.H{
 				"code":    404,
 				"message": "API endpoint not found",
 			})
 			return
 		}
-		// 如果请求的是静态资源文件（有扩展名），返回 404
-		// 这样可以避免对不存在的静态资源返回 index.html
-		if len(path) > 1 {
-			for i := len(path) - 1; i >= 0; i-- {
-				if path[i] == '.' {
-					// 有文件扩展名，可能是静态资源请求
-					c.JSON(404, gin.H{
-						"code":    404,
-						"message": "resource not found",
-					})
-					return
-				}
-				if path[i] == '/' {
-					break
-				}
+		// 带前缀的请求：有文件扩展名视为静态资源 → 404；否则返回 index.html（SPA 路由）
+		if strings.HasPrefix(reqPath, webBase+"/") || reqPath == webBase {
+			if path.Ext(reqPath) != "" {
+				c.JSON(404, gin.H{
+					"code":    404,
+					"message": "resource not found",
+				})
+				return
 			}
+			c.File(frontendDistPath + "/index.html")
+			return
 		}
-		// 其他请求返回 index.html（SPA 路由）
-		c.File(frontendDistPath + "/index.html")
+		// 其它根路径请求重定向到入口
+		c.Redirect(http.StatusFound, webBase)
 	})
 
 	return r
