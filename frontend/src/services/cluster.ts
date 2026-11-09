@@ -46,7 +46,22 @@ export interface ClusterListResponse {
   page_size: number
 }
 
+// 集群基础信息（工单申请选择集群用，所有登录用户可见，不含连接与认证细节）
+export interface ClusterOption {
+  cluster_id: number
+  cluster_name: string
+  auth_type: string
+  sasl_mechanism?: string
+  status: string
+}
+
 export const clusterAPI = {
+  // 集群基础信息（不做权限过滤，所有登录用户可见）
+  options: async (): Promise<ClusterOption[]> => {
+    const response = await api.get('/clusters/options')
+    return response.data?.data || []
+  },
+
   list: async (page: number = 1, pageSize: number = 20, withStats?: boolean) => {
     const response = await api.get('/clusters', {
       params: { page, page_size: pageSize, with_stats: withStats || undefined },

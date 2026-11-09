@@ -43,6 +43,8 @@ type Ticket struct {
 	// Form / Result 存 JSON 文本；用 text 而非 json 列，避免空值插入被数据库拒绝
 	Form   string `gorm:"column:form;type:text;not null" json:"form"`
 	Status TicketStatus `gorm:"column:status;type:varchar(32);not null;default:pending;index" json:"status"`
+	// DesignatedApproverID 指定审批人（提交时固定：优先该集群被授权的 cluster_admin，否则 super_admin，均取 user_id 最小的活跃账号）
+	DesignatedApproverID *int64 `gorm:"column:designated_approver_id" json:"designated_approver_id"`
 	ApproverID   *int64      `gorm:"column:approver_id" json:"approver_id"`
 	ApproveRemark string     `gorm:"column:approve_remark;type:text" json:"approve_remark"`
 	// Result 执行结果摘要 JSON（跳过项、创建明细等），不含凭证
@@ -56,6 +58,11 @@ type Ticket struct {
 	CompletedAt      *time.Time `gorm:"column:completed_at" json:"completed_at"`
 	CreatedAt        time.Time  `gorm:"column:created_at;not null;autoCreateTime" json:"created_at"`
 	UpdatedAt        time.Time  `gorm:"column:updated_at;not null;autoUpdateTime" json:"updated_at"`
+
+	// 以下为非数据库字段，查询时填充用户名（工单列表/详情展示用）
+	ApplicantName          string `gorm:"-" json:"applicant_name,omitempty"`
+	ApproverName           string `gorm:"-" json:"approver_name,omitempty"`
+	DesignatedApproverName string `gorm:"-" json:"designated_approver_name,omitempty"`
 }
 
 // TableName 指定表名

@@ -10,13 +10,14 @@ import (
 
 // TicketListFilter 工单列表过滤条件
 type TicketListFilter struct {
-	ApplicantID *int64  // 按申请人过滤
-	ClusterIDs  []int64 // 按集群集合过滤（空切片表示无匹配，nil 表示不过滤）
-	Status      string
-	Type        string
-	ClusterID   *int64
-	Offset      int
-	Limit       int
+	ApplicantID         *int64  // 按申请人过滤
+	DesignatedApproverID *int64 // 按指定审批人过滤
+	ClusterIDs          []int64 // 按集群集合过滤（空切片表示无匹配，nil 表示不过滤）
+	Status              string
+	Type                string
+	ClusterID           *int64
+	Offset              int
+	Limit               int
 }
 
 // TicketRepository 工单仓库接口
@@ -65,6 +66,9 @@ func (r *ticketRepository) List(ctx context.Context, filter *TicketListFilter) (
 
 	if filter.ApplicantID != nil {
 		query = query.Where("applicant_id = ?", *filter.ApplicantID)
+	}
+	if filter.DesignatedApproverID != nil {
+		query = query.Where("designated_approver_id = ?", *filter.DesignatedApproverID)
 	}
 	if filter.ClusterIDs != nil {
 		if len(filter.ClusterIDs) == 0 {

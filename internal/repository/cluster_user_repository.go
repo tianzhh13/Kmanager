@@ -14,6 +14,7 @@ type ClusterUserRepository interface {
 	Delete(ctx context.Context, clusterID, userID int64) error
 	HasAccess(ctx context.Context, clusterID, userID int64) (bool, error)
 	ListUsersByCluster(ctx context.Context, clusterID int64) ([]*models.User, error)
+	ListAdminsByCluster(ctx context.Context, clusterID int64) ([]*models.User, error)
 	ListClustersByUser(ctx context.Context, userID int64) ([]*models.Cluster, error)
 	DeleteByCluster(ctx context.Context, clusterID int64) error
 	DeleteByUser(ctx context.Context, userID int64) error
@@ -57,6 +58,18 @@ func (r *clusterUserRepository) ListUsersByCluster(ctx context.Context, clusterI
 		Table("user").
 		Joins("INNER JOIN cluster_user_relation ON user.user_id = cluster_user_relation.user_id").
 		Where("cluster_user_relation.cluster_id = ?", clusterID).
+		Find(&users).Error
+	return users, err
+}
+
+// ListAdminsByCluster 获取集群授权用户中的集群管理员（user_id 升序，工单指定审批人用）
+func (r *clusterUserRepository) ListAdminsByCluster(ctx context.Context, clusterID int64) ([]*models.User, error) {
+	var users []*models.User
+	err := r.db.WithContext(ctx).
+		Table("user").
+		Joins("INNER JOIN cluster_user_relation ON user.user_id = cluster_user_relation.user_id").
+		Where("cluster_user_relation.cluster_id = ? AND user.role = ? AND user.status = ?", clusterID, models.RoleClusterAdmin, models.UserStatusActive).
+		Order("user.user_id ASC").
 		Find(&users).Error
 	return users, err
 }

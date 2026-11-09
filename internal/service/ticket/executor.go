@@ -80,6 +80,18 @@ func (e *executor) executeTopicCreate(ctx context.Context, ticket *models.Ticket
 
 	result := &executeResult{}
 
+	// 提交与执行之间集群可能有变化，执行前再查一次 Kafka 实际 topic 列表
+	// （已存在 → 幂等跳过；存在仅 '.' 与 '_' 差异的同名冲突 → 失败，防止 Kafka 指标命名冲突）
+	if check, checkErr := e.topicSvc.CheckTopicNameAvailable(ctx, ticket.ClusterID, form.TopicName); checkErr == nil {
+		if check.Exists {
+			result.addSkipped(fmt.Sprintf("topic %s 已存在，跳过创建", form.TopicName))
+			return result.toJSON(), nil
+		}
+		if check.ConflictWith != "" {
+			return "", fmt.Errorf("topic 名称 %s 与既有 topic %s 仅存在 '.' 与 '_' 的差异（Kafka 指标命名冲突）", form.TopicName, check.ConflictWith)
+		}
+	}
+
 	// 申请人信息由平台自动写入 topic 描述
 	config := make(map[string]string)
 	if form.RetentionDays > 0 {

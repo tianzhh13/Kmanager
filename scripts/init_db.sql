@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS `ticket` (
     `title` VARCHAR(128) NOT NULL,
     `form` TEXT NOT NULL COMMENT '申请表单 JSON',
     `status` VARCHAR(32) NOT NULL DEFAULT 'pending' COMMENT '状态：pending/executing/succeeded/failed/rejected/cancelled',
+    `designated_approver_id` BIGINT COMMENT '指定审批人ID（提交时固定：优先该集群的集群管理员，否则超级管理员）',
     `approver_id` BIGINT COMMENT '审批人ID',
     `approve_remark` TEXT COMMENT '审批备注/驳回原因',
     `result` TEXT COMMENT '执行结果摘要 JSON',

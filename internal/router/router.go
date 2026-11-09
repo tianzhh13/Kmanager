@@ -101,7 +101,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	userSvc := user.NewService(userRepo)
 	scramSvc := scram.NewService(scramUserRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
 	dashboardSvc := dashboard.NewService(clusterRepo, topicRepo, userRepo, monitorSvc)
-	ticketSvc := ticket.NewService(ticketRepo, clusterRepo, topicRepo, scramUserRepo, userRepo, permissionSvc, auditSvc, encryptionSvc, topicSvc, scramSvc, aclSvc)
+	ticketSvc := ticket.NewService(ticketRepo, clusterRepo, scramUserRepo, clusterUserRepo, userRepo, permissionSvc, auditSvc, encryptionSvc, topicSvc, scramSvc, aclSvc)
 
 	// 初始化 Token 黑名单缓存（内存 + 数据库双写）
 	memoryCache := cache.NewMemoryCache(24 * time.Hour)
@@ -206,6 +206,8 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			// 集群路由
 			clusters := authenticated.Group("/clusters")
 			{
+				// 集群基础信息（所有登录用户可见，工单申请选择集群用），需在 /:id 之前注册
+				clusters.GET("/options", clusterHandler.ListClusterOptions)
 				clusters.GET("", clusterHandler.ListClusters)
 				clusters.POST("", permissionMiddleware.RequireSuperAdmin(), clusterHandler.CreateCluster)
 				clusters.GET("/:id", clusterPermissionMiddleware.RequireClusterAccess(), clusterHandler.GetCluster)

@@ -16,6 +16,10 @@ export interface Ticket {
   title: string
   form: string
   status: TicketStatus
+  designated_approver_id: number | null
+  designated_approver_name?: string
+  applicant_name?: string
+  approver_name?: string
   approver_id: number | null
   approve_remark: string
   result: string | null

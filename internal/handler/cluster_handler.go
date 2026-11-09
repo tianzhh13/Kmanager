@@ -195,6 +195,16 @@ func (h *ClusterHandler) GetCluster(c *gin.Context) {
 	c.JSON(200, resp)
 }
 
+// ListClusterOptions 集群基础信息（所有登录用户可见，工单申请选择集群用，不含连接与认证细节）
+func (h *ClusterHandler) ListClusterOptions(c *gin.Context) {
+	options, err := h.clusterSvc.ListClusterOptions(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": options})
+}
+
 // ListClusters 获取集群列表
 func (h *ClusterHandler) ListClusters(c *gin.Context) {
 	// 获取分页参数

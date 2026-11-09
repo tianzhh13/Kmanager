@@ -1,21 +1,120 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Button, Form, Input, InputNumber, Radio, Select, message } from 'antd'
-import { ArrowLeftOutlined, ClusterOutlined, KeyOutlined } from '@ant-design/icons'
+import { Button, Form, Input, InputNumber, Radio, Select, Upload, message } from 'antd'
+import { ArrowLeftOutlined, ClusterOutlined, KeyOutlined, DownloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { ticketService, TicketType, TopicCreateForm, PermissionGrantForm, expandACLPreview } from '../services/ticket'
-import { clusterAPI, Cluster } from '../services/cluster'
+import { clusterAPI, ClusterOption } from '../services/cluster'
 import { scramUserService, ScramUser } from '../services/scramUser'
 import { LabelTag } from '../components/bento'
+
+// 批量导入 CSV 固定格式（列顺序固定，首行为表头；UTF-8 BOM 保证 Excel 打开中文不乱码）
+const CSV_TEMPLATE =
+  '\ufefftopic_name,partitions,replication_factor,retention_days,business_desc\n' +
+  'trade.ods.order-created,6,3,3,订单创建事件流，供风控和实时大盘消费\n' +
+  'trade.ods.order-paid,6,3,3,订单支付事件流，供下游实时计算消费\n'
+
+const MAX_BATCH_ROWS = 100
+
+// 批量导入行（含校验结果）
+interface BatchRow {
+  line: number
+  topic_name: string
+  partitions: number
+  replication_factor: number
+  retention_days: number
+  business_desc: string
+  errors: string[]
+}
+
+interface BatchResult {
+  row: BatchRow
+  ok: boolean
+  ticketNo?: string
+  error?: string
+}
+
+// 解析单行 CSV（支持引号包裹的字段，业务说明含逗号时需用引号包裹）
+function parseCSVLine(line: string): string[] {
+  const fields: string[] = []
+  let current = ''
+  let inQuotes = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          current += '"'
+          i++
+        } else {
+          inQuotes = false
+        }
+      } else {
+        current += ch
+      }
+    } else if (ch === '"') {
+      inQuotes = true
+    } else if (ch === ',') {
+      fields.push(current)
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  fields.push(current)
+  return fields.map(f => f.trim())
+}
+
+const topicNameRegex = /^[a-zA-Z0-9._-]{1,249}$/
+
+// 校验批量行（规则与单个申请/后端一致）
+function validateBatchRow(fields: string[], line: number, seen: Set<string>): BatchRow {
+  const row: BatchRow = {
+    line,
+    topic_name: fields[0] || '',
+    partitions: parseInt(fields[1] || '', 10),
+    replication_factor: parseInt(fields[2] || '', 10),
+    retention_days: fields[3] === '' || fields[3] === undefined ? 3 : parseInt(fields[3], 10),
+    business_desc: fields[4] || '',
+    errors: [],
+  }
+  if (!topicNameRegex.test(row.topic_name) || row.topic_name === '.' || row.topic_name === '..') {
+    row.errors.push('topic 名称不合法')
+  }
+  if (seen.has(row.topic_name)) {
+    row.errors.push('文件内重复')
+  }
+  if (!Number.isInteger(row.partitions) || row.partitions < 1 || row.partitions > 200) {
+    row.errors.push('分区数需为 1-200')
+  }
+  if (!Number.isInteger(row.replication_factor) || row.replication_factor < 1 || row.replication_factor > 5) {
+    row.errors.push('副本数需为 1-5')
+  }
+  if (!Number.isInteger(row.retention_days) || row.retention_days < 0 || row.retention_days > 3650) {
+    row.errors.push('保留天数需为 0-3650')
+  }
+  if (!row.business_desc) {
+    row.errors.push('业务说明不能为空')
+  }
+  if (topicNameRegex.test(row.topic_name)) {
+    seen.add(row.topic_name)
+  }
+  return row
+}
 
 const TicketCreate: React.FC = () => {
   const navigate = useNavigate()
   const [form] = Form.useForm()
 
   const [type, setType] = useState<TicketType | null>(null)
-  const [clusters, setClusters] = useState<Cluster[]>([])
+  const [clusters, setClusters] = useState<ClusterOption[]>([])
   const [clusterId, setClusterId] = useState<number | null>(null)
   const [scramUsers, setScramUsers] = useState<ScramUser[]>([])
   const [submitting, setSubmitting] = useState(false)
+
+  // topic 工单填写模式：单个申请 / 批量导入
+  const [topicMode, setTopicMode] = useState<'single' | 'batch'>('single')
+  const [batchRows, setBatchRows] = useState<BatchRow[]>([])
+  const [batchResults, setBatchResults] = useState<BatchResult[] | null>(null)
 
   // 表单相关状态（ACL 预览需要实时值）
   const [mode, setMode] = useState<'new_user' | 'existing_user'>('new_user')
@@ -27,9 +126,9 @@ const TicketCreate: React.FC = () => {
   const [groupPrefixTouched, setGroupPrefixTouched] = useState(false)
   const [extras, setExtras] = useState<string[]>([])
 
-  // 拉取集群列表
+  // 拉取集群列表（options 接口不做权限过滤，所有登录用户可见）
   useEffect(() => {
-    clusterAPI.list(1, 200).then((res: { data: Cluster[] }) => setClusters(res.data || [])).catch(() => message.error('获取集群列表失败'))
+    clusterAPI.options().then(setClusters).catch(() => message.error('获取集群列表失败'))
   }, [])
 
   const selectedCluster = clusters.find(c => c.cluster_id === clusterId)
@@ -69,6 +168,9 @@ const TicketCreate: React.FC = () => {
     setGroupPrefix('')
     setGroupPrefixTouched(false)
     setExtras([])
+    setTopicMode('single')
+    setBatchRows([])
+    setBatchResults(null)
   }
 
   // 提交前 ACL 预览
@@ -86,6 +188,99 @@ const TicketCreate: React.FC = () => {
     })
   }, [type, mode, username, permission, topics, topicPattern, groupPrefix, extras])
 
+  // ============ 批量导入 ============
+  const downloadTemplate = () => {
+    const blob = new Blob([CSV_TEMPLATE], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'topic_batch_template.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleCSVFile = async (file: File) => {
+    setBatchResults(null)
+    const text = await file.text()
+    const lines = text.replace(/^\ufeff/, '').split(/\r?\n/).filter(l => l.trim() !== '')
+    if (lines.length === 0) {
+      message.error('文件为空')
+      return
+    }
+    const header = parseCSVLine(lines[0]).map(h => h.toLowerCase())
+    if (header.join(',') !== 'topic_name,partitions,replication_factor,retention_days,business_desc') {
+      message.error('表头不符合模板格式，请下载模板后按列填写')
+      return
+    }
+    if (lines.length - 1 > MAX_BATCH_ROWS) {
+      message.error(`单次最多导入 ${MAX_BATCH_ROWS} 行`)
+      return
+    }
+    const seen = new Set<string>()
+    const rows: BatchRow[] = []
+    for (let i = 1; i < lines.length; i++) {
+      const fields = parseCSVLine(lines[i])
+      if (fields.length !== 5) {
+        rows.push({
+          line: i + 1,
+          topic_name: fields[0] || '',
+          partitions: NaN,
+          replication_factor: NaN,
+          retention_days: NaN,
+          business_desc: '',
+          errors: [`列数错误（${fields.length} 列，应为 5 列）`],
+        })
+        continue
+      }
+      rows.push(validateBatchRow(fields, i + 1, seen))
+    }
+    setBatchRows(rows)
+    const invalid = rows.filter(r => r.errors.length > 0).length
+    if (invalid > 0) {
+      message.warning(`解析完成：${rows.length} 行，其中 ${invalid} 行校验不通过（见预览标红行）`)
+    } else {
+      message.success(`解析完成：${rows.length} 行，全部校验通过`)
+    }
+  }
+
+  const batchInvalidCount = batchRows.filter(r => r.errors.length > 0).length
+
+  const handleBatchSubmit = async () => {
+    if (!clusterId || batchInvalidCount > 0) return
+    const validRows = batchRows.filter(r => r.errors.length === 0)
+    setSubmitting(true)
+    setBatchResults(null)
+    const results: BatchResult[] = []
+    // 逐行串行提交（每行一张工单，复用后端全部校验：Kafka 存在性 / '.' 与 '_' 冲突 / 审批人确定 / 审计）
+    for (const row of validRows) {
+      try {
+        const t = await ticketService.submit({
+          type: 'topic_create',
+          cluster_id: clusterId,
+          form: {
+            topic_name: row.topic_name,
+            partitions: row.partitions,
+            replication_factor: row.replication_factor,
+            retention_days: row.retention_days,
+            business_desc: row.business_desc,
+          },
+        })
+        results.push({ row, ok: true, ticketNo: t.ticket_no })
+      } catch (error: any) {
+        results.push({ row, ok: false, error: error?.response?.data?.error || '提交失败' })
+      }
+    }
+    setBatchResults(results)
+    setSubmitting(false)
+    const okCount = results.filter(r => r.ok).length
+    const failCount = results.length - okCount
+    if (failCount === 0) {
+      message.success(`${okCount} 张工单全部提交成功`)
+    } else {
+      message.warning(`提交完成：成功 ${okCount} 张、失败 ${failCount} 张（详见结果列表）`)
+    }
+  }
+
   // ============ 提交 ============
   const handleSubmit = async () => {
     if (!type || !clusterId) {
@@ -100,7 +295,7 @@ const TicketCreate: React.FC = () => {
           topic_name: values.topic_name,
           partitions: values.partitions,
           replication_factor: values.replication_factor,
-          retention_days: values.retention_days || 0,
+          retention_days: values.retention_days ?? 3,
           business_desc: values.business_desc,
         }
       } else {
@@ -143,7 +338,7 @@ const TicketCreate: React.FC = () => {
           <ClusterOutlined style={{ fontSize: 28, color: 'var(--brand, #f97316)' }} />
           <div style={{ fontWeight: 600, fontSize: 15, marginTop: 12 }}>申请 Topic</div>
           <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
-            在目标集群创建新 Topic，申请人信息将自动写入 Topic 描述
+            在目标集群创建新 Topic（支持批量导入），申请人信息将自动写入 Topic 描述
           </div>
         </div>
       </div>
@@ -165,37 +360,133 @@ const TicketCreate: React.FC = () => {
 
   // ============ 申请 Topic 表单 ============
   const renderTopicForm = () => (
-    <Form form={form} layout="vertical" style={{ maxWidth: 720 }}>
-      <Form.Item
-        name="topic_name"
-        label="Topic 名称"
-        rules={[
-          { required: true, message: '请输入 topic 名称' },
-          { pattern: /^[a-zA-Z0-9._-]{1,249}$/, message: '仅允许字母、数字、.、_、-' },
-        ]}
-        extra="建议按 团队.应用.事件 分层命名，如 trade.ods.order-created"
-      >
-        <Input placeholder="例如：trade.ods.order-created" />
+    <Form form={form} layout="vertical" style={{ maxWidth: 860 }}>
+      <Form.Item label="填写方式">
+        <Radio.Group value={topicMode} onChange={e => { setTopicMode(e.target.value); setBatchResults(null) }}>
+          <Radio.Button value="single">单个申请</Radio.Button>
+          <Radio.Button value="batch">批量导入</Radio.Button>
+        </Radio.Group>
       </Form.Item>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-        <Form.Item name="partitions" label="分区数" initialValue={6} rules={[{ required: true, message: '请输入分区数' }]}>
-          <InputNumber min={1} max={200} style={{ width: '100%' }} />
-        </Form.Item>
-        <Form.Item name="replication_factor" label="副本数" initialValue={3} rules={[{ required: true, message: '请输入副本数' }]}>
-          <InputNumber min={1} max={5} style={{ width: '100%' }} />
-        </Form.Item>
-        <Form.Item name="retention_days" label="保留天数" initialValue={0} extra="0 = 集群默认">
-          <InputNumber min={0} max={3650} style={{ width: '100%' }} />
-        </Form.Item>
-      </div>
-      <Form.Item
-        name="business_desc"
-        label="业务说明"
-        rules={[{ required: true, message: '请填写业务说明' }]}
-        extra="申请人信息由平台自动拼接进 Topic 描述，无需手写"
-      >
-        <Input.TextArea rows={3} placeholder="例如：订单创建事件流，供风控和实时大盘消费" />
-      </Form.Item>
+
+      {topicMode === 'single' ? (
+        <>
+          <Form.Item
+            name="topic_name"
+            label="Topic 名称"
+            rules={[
+              { required: true, message: '请输入 topic 名称' },
+              { pattern: topicNameRegex, message: '仅允许字母、数字、.、_、-' },
+            ]}
+            extra="建议按 团队.应用.事件 分层命名；提交时将校验集群内是否重名及 '.' 与 '_' 的命名冲突"
+          >
+            <Input placeholder="例如：trade.ods.order-created" />
+          </Form.Item>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            <Form.Item name="partitions" label="分区数" initialValue={6} rules={[{ required: true, message: '请输入分区数' }]}>
+              <InputNumber min={1} max={200} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item name="replication_factor" label="副本数" initialValue={3} rules={[{ required: true, message: '请输入副本数' }]}>
+              <InputNumber min={1} max={5} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item name="retention_days" label="保留天数" initialValue={3} extra="0 = 集群默认，默认 3 天">
+              <InputNumber min={0} max={3650} style={{ width: '100%' }} />
+            </Form.Item>
+          </div>
+          <Form.Item
+            name="business_desc"
+            label="业务说明"
+            rules={[{ required: true, message: '请填写业务说明' }]}
+            extra="申请人信息由平台自动拼接进 Topic 描述，无需手写"
+          >
+            <Input.TextArea rows={3} placeholder="例如：订单创建事件流，供风控和实时大盘消费" />
+          </Form.Item>
+        </>
+      ) : (
+        <div>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+            <Button icon={<DownloadOutlined />} onClick={downloadTemplate}>下载 CSV 模板</Button>
+            <Upload accept=".csv" showUploadList={false} beforeUpload={(file) => { handleCSVFile(file); return false }}>
+              <Button icon={<UploadOutlined />}>上传 CSV 文件</Button>
+            </Upload>
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>
+            固定 5 列：topic_name, partitions, replication_factor, retention_days, business_desc；最多 {MAX_BATCH_ROWS} 行；
+            保留天数默认 3（0 = 集群默认）；业务说明含逗号时请用英文引号包裹。每行将提交为一张独立工单。
+          </div>
+
+          {batchRows.length > 0 && (
+            <div className="bento-card" style={{ marginBottom: 16 }}>
+              <div className="bento-card-inner">
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                  预览（共 {batchRows.length} 行，{batchInvalidCount > 0 ? <span style={{ color: 'var(--status-danger, #dc2626)' }}>{batchInvalidCount} 行校验不通过</span> : '全部校验通过'}）
+                </div>
+                <div style={{ maxHeight: 320, overflow: 'auto' }}>
+                  <table className="bento-table">
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'center' }}>行号</th>
+                        <th>Topic 名称</th>
+                        <th style={{ textAlign: 'center' }}>分区</th>
+                        <th style={{ textAlign: 'center' }}>副本</th>
+                        <th style={{ textAlign: 'center' }}>保留天数</th>
+                        <th>业务说明</th>
+                        <th>校验</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {batchRows.map(r => (
+                        <tr key={r.line} style={r.errors.length > 0 ? { background: 'rgba(220, 38, 38, 0.05)' } : undefined}>
+                          <td style={{ textAlign: 'center' }}>{r.line}</td>
+                          <td><code>{r.topic_name}</code></td>
+                          <td style={{ textAlign: 'center' }}>{r.partitions}</td>
+                          <td style={{ textAlign: 'center' }}>{r.replication_factor}</td>
+                          <td style={{ textAlign: 'center' }}>{r.retention_days}</td>
+                          <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.business_desc}</td>
+                          <td style={{ color: r.errors.length > 0 ? 'var(--status-danger, #dc2626)' : 'var(--status-success, #16a34a)', fontSize: 13 }}>
+                            {r.errors.length > 0 ? r.errors.join('；') : '通过'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {batchResults && (
+            <div className="bento-card" style={{ marginBottom: 16 }}>
+              <div className="bento-card-inner">
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                  提交结果（成功 {batchResults.filter(r => r.ok).length} / 失败 {batchResults.filter(r => !r.ok).length}）
+                </div>
+                <div style={{ maxHeight: 240, overflow: 'auto' }}>
+                  <table className="bento-table">
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'center' }}>行号</th>
+                        <th>Topic 名称</th>
+                        <th>结果</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {batchResults.map((r, i) => (
+                        <tr key={i}>
+                          <td style={{ textAlign: 'center' }}>{r.row.line}</td>
+                          <td><code>{r.row.topic_name}</code></td>
+                          <td style={{ fontSize: 13, color: r.ok ? 'var(--status-success, #16a34a)' : 'var(--status-danger, #dc2626)' }}>
+                            {r.ok ? `已提交（${r.ticketNo}）` : r.error}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </Form>
   )
 
@@ -390,9 +681,21 @@ const TicketCreate: React.FC = () => {
       {/* 提交 */}
       {type && clusterId && (
         <div style={{ display: 'flex', gap: 12 }}>
-          <Button type="primary" size="large" loading={submitting} onClick={handleSubmit}>
-            提交工单
-          </Button>
+          {type === 'topic_create' && topicMode === 'batch' ? (
+            <Button
+              type="primary"
+              size="large"
+              loading={submitting}
+              disabled={batchRows.length === 0 || batchInvalidCount > 0}
+              onClick={handleBatchSubmit}
+            >
+              批量提交（{batchRows.length - batchInvalidCount} 张工单）
+            </Button>
+          ) : (
+            <Button type="primary" size="large" loading={submitting} onClick={handleSubmit}>
+              提交工单
+            </Button>
+          )}
           <Button size="large" onClick={() => navigate('/tickets')}>取消</Button>
         </div>
       )}

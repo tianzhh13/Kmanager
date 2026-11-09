@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS ticket (
     title VARCHAR(128) NOT NULL,
     form TEXT NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    designated_approver_id BIGINT,
     approver_id BIGINT,
     approve_remark TEXT,
     result TEXT,

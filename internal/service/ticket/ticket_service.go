@@ -44,23 +44,24 @@ const (
 
 // Service 工单服务
 type Service struct {
-	ticketRepo    repository.TicketRepository
-	clusterRepo   repository.ClusterRepository
-	topicRepo     repository.TopicRepository
-	scramUserRepo repository.ScramUserRepository
-	userRepo      repository.UserRepository
-	permissionSvc *auth.PermissionService
-	auditSvc      *audit.Service
-	encryptSvc    *encryption.Service
-	exec          *executor
+	ticketRepo      repository.TicketRepository
+	clusterRepo     repository.ClusterRepository
+	scramUserRepo   repository.ScramUserRepository
+	clusterUserRepo repository.ClusterUserRepository
+	userRepo        repository.UserRepository
+	permissionSvc   *auth.PermissionService
+	auditSvc        *audit.Service
+	encryptSvc      *encryption.Service
+	topicSvc        *topic.Service
+	exec            *executor
 }
 
 // NewService 创建工单服务实例
 func NewService(
 	ticketRepo repository.TicketRepository,
 	clusterRepo repository.ClusterRepository,
-	topicRepo repository.TopicRepository,
 	scramUserRepo repository.ScramUserRepository,
+	clusterUserRepo repository.ClusterUserRepository,
 	userRepo repository.UserRepository,
 	permissionSvc *auth.PermissionService,
 	auditSvc *audit.Service,
@@ -70,15 +71,16 @@ func NewService(
 	aclSvc *acl.Service,
 ) *Service {
 	return &Service{
-		ticketRepo:    ticketRepo,
-		clusterRepo:   clusterRepo,
-		topicRepo:     topicRepo,
-		scramUserRepo: scramUserRepo,
-		userRepo:      userRepo,
-		permissionSvc: permissionSvc,
-		auditSvc:      auditSvc,
-		encryptSvc:    encryptSvc,
-		exec:          newExecutor(topicSvc, scramSvc, aclSvc, encryptSvc),
+		ticketRepo:      ticketRepo,
+		clusterRepo:     clusterRepo,
+		scramUserRepo:   scramUserRepo,
+		clusterUserRepo: clusterUserRepo,
+		userRepo:        userRepo,
+		permissionSvc:   permissionSvc,
+		auditSvc:        auditSvc,
+		encryptSvc:      encryptSvc,
+		topicSvc:        topicSvc,
+		exec:            newExecutor(topicSvc, scramSvc, aclSvc, encryptSvc),
 	}
 }
 
@@ -116,12 +118,8 @@ func (s *Service) Submit(ctx context.Context, userID int64, username, role strin
 		return nil, fmt.Errorf("集群已停用，无法提交工单")
 	}
 
-	// 非超级管理员只能对被授权的集群提交工单
-	if role != string(models.RoleSuperAdmin) {
-		if err := s.checkClusterAccess(ctx, userID, req.ClusterID); err != nil {
-			return nil, err
-		}
-	}
+	// 任何登录用户均可为任意集群提交工单（是否放行由审批人决定，这正是工单流程的意义）
+	// 集群基础信息对所有用户可见（GET /clusters/options），无需先被授权
 
 	var title string
 	switch req.Type {
@@ -130,12 +128,17 @@ func (s *Service) Submit(ctx context.Context, userID int64, username, role strin
 		if err != nil {
 			return nil, err
 		}
-		exists, err := s.topicRepo.Exists(ctx, req.ClusterID, form.TopicName)
+		// 查询 Kafka 集群实际 topic 列表：存在性 + '.' 与 '_' 命名冲突校验
+		// （Kafka 指标名把 '.' 替换为 '_'，仅这两种字符差异的 topic 会产生指标冲突）
+		check, err := s.topicSvc.CheckTopicNameAvailable(ctx, req.ClusterID, form.TopicName)
 		if err != nil {
-			return nil, fmt.Errorf("检查 topic 是否存在失败: %w", err)
+			return nil, fmt.Errorf("检查集群 topic 列表失败: %w", err)
 		}
-		if exists {
-			return nil, fmt.Errorf("topic %s 在该集群已存在", form.TopicName)
+		if check.Exists {
+			return nil, fmt.Errorf("topic %s 已存在于该集群", form.TopicName)
+		}
+		if check.ConflictWith != "" {
+			return nil, fmt.Errorf("topic 名称 %s 与既有 topic %s 仅存在 '.' 与 '_' 的差异（Kafka 指标命名冲突），请更换名称", form.TopicName, check.ConflictWith)
 		}
 		title = fmt.Sprintf("申请创建 Topic %s", form.TopicName)
 
@@ -170,15 +173,25 @@ func (s *Service) Submit(ctx context.Context, userID int64, username, role strin
 		return nil, fmt.Errorf("生成工单号失败: %w", err)
 	}
 
+	// 固定审批人规则：优先该集群被授权的集群管理员（user_id 最小），否则超级管理员（user_id 最小）
+	designated, err := s.selectDesignatedApprover(ctx, req.ClusterID)
+	if err != nil {
+		return nil, fmt.Errorf("确定审批人失败: %w", err)
+	}
+	if designated == nil {
+		return nil, fmt.Errorf("系统缺少可用的审批人（无活跃的集群管理员/超级管理员），请联系平台管理员")
+	}
+
 	ticket := &models.Ticket{
-		TicketNo:    ticketNo,
-		Type:        req.Type,
-		ClusterID:   req.ClusterID,
-		ApplicantID: userID,
-		Title:       title,
-		Form:        string(req.Form),
-		Status:      models.TicketStatusPending,
-		AppliedAt:   now,
+		TicketNo:             ticketNo,
+		Type:                 req.Type,
+		ClusterID:            req.ClusterID,
+		ApplicantID:          userID,
+		Title:                title,
+		Form:                 string(req.Form),
+		Status:               models.TicketStatusPending,
+		DesignatedApproverID: designated,
+		AppliedAt:            now,
 	}
 	if err := s.ticketRepo.Create(ctx, ticket); err != nil {
 		return nil, fmt.Errorf("保存工单失败: %w", err)
@@ -210,16 +223,9 @@ func (s *Service) List(ctx context.Context, userID int64, role string, req *List
 	switch {
 	case req.Scope == ScopePending && isAdmin:
 		filter.Status = string(models.TicketStatusPending)
-		// 集群管理员只能看到自己名下集群的待审批工单
+		// 固定审批人规则：集群管理员的待办 = 指定给自己的工单；超级管理员兜底可见全部待审批
 		if role == string(models.RoleClusterAdmin) {
-			clusterIDs, err := s.permissionSvc.GetAllowedClusters(ctx, userID)
-			if err != nil {
-				return nil, fmt.Errorf("获取授权集群失败: %w", err)
-			}
-			if clusterIDs == nil {
-				clusterIDs = []int64{}
-			}
-			filter.ClusterIDs = clusterIDs
+			filter.DesignatedApproverID = &userID
 		}
 	case req.Scope == ScopeAll && isAdmin:
 		if role == string(models.RoleClusterAdmin) {
@@ -241,6 +247,7 @@ func (s *Service) List(ctx context.Context, userID int64, role string, req *List
 	if err != nil {
 		return nil, fmt.Errorf("查询工单失败: %w", err)
 	}
+	s.enrichTicketNames(ctx, tickets)
 	return &ListResponse{Data: tickets, Total: total}, nil
 }
 
@@ -256,6 +263,7 @@ func (s *Service) Get(ctx context.Context, userID int64, role string, ticketID i
 			return nil, ErrPermissionDenied
 		}
 	}
+	s.enrichTicketNames(ctx, []*models.Ticket{ticket})
 	return ticket, nil
 }
 
@@ -268,7 +276,7 @@ func (s *Service) Approve(ctx context.Context, userID int64, username, role stri
 	if ticket.Status != models.TicketStatusPending {
 		return nil, ErrInvalidStatus
 	}
-	if err := s.checkApprover(ctx, userID, ticket.ClusterID, role); err != nil {
+	if err := s.checkApprover(userID, role, ticket); err != nil {
 		return nil, err
 	}
 
@@ -299,7 +307,7 @@ func (s *Service) Reject(ctx context.Context, userID int64, username, role strin
 	if ticket.Status != models.TicketStatusPending {
 		return nil, ErrInvalidStatus
 	}
-	if err := s.checkApprover(ctx, userID, ticket.ClusterID, role); err != nil {
+	if err := s.checkApprover(userID, role, ticket); err != nil {
 		return nil, err
 	}
 
@@ -352,7 +360,7 @@ func (s *Service) Retry(ctx context.Context, userID int64, username, role string
 	if ticket.Status != models.TicketStatusFailed {
 		return nil, ErrInvalidStatus
 	}
-	if err := s.checkApprover(ctx, userID, ticket.ClusterID, role); err != nil {
+	if err := s.checkApprover(userID, role, ticket); err != nil {
 		return nil, err
 	}
 
@@ -460,33 +468,74 @@ func (s *Service) execute(ctx context.Context, ticket *models.Ticket, operatorUs
 	s.audit(ctx, approverID, operatorUsername, action, ticket.TicketNo, details, status, &ticket.ClusterID)
 }
 
-// checkApprover 校验审批人权限：超级管理员全部，集群管理员限其名下集群
-func (s *Service) checkApprover(ctx context.Context, userID, clusterID int64, role string) error {
-	ok, err := s.permissionSvc.CheckClusterPermission(ctx, userID, clusterID, role)
-	if err != nil {
-		return fmt.Errorf("校验审批权限失败: %w", err)
-	}
-	if !ok {
-		return ErrPermissionDenied
-	}
-	return nil
-}
-
-// checkClusterAccess 校验用户对集群的访问权限
-func (s *Service) checkClusterAccess(ctx context.Context, userID, clusterID int64) error {
-	clusterIDs, err := s.permissionSvc.GetAllowedClusters(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("获取授权集群失败: %w", err)
-	}
-	if clusterIDs == nil {
+// checkApprover 校验审批人权限：超级管理员兜底可审任意工单，集群管理员仅可审指定给自己的工单
+func (s *Service) checkApprover(userID int64, role string, ticket *models.Ticket) error {
+	if role == string(models.RoleSuperAdmin) {
 		return nil
 	}
-	for _, id := range clusterIDs {
-		if id == clusterID {
-			return nil
-		}
+	if ticket.DesignatedApproverID != nil && *ticket.DesignatedApproverID == userID {
+		return nil
 	}
 	return ErrPermissionDenied
+}
+
+// selectDesignatedApprover 选定指定审批人（固定规则）：
+// 优先该集群被授权的活跃 cluster_admin（user_id 最小），没有则取 user_id 最小的活跃 super_admin
+func (s *Service) selectDesignatedApprover(ctx context.Context, clusterID int64) (*int64, error) {
+	admins, err := s.clusterUserRepo.ListAdminsByCluster(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	if len(admins) > 0 {
+		id := admins[0].UserID
+		return &id, nil
+	}
+	superAdmins, err := s.userRepo.ListByRole(ctx, models.RoleSuperAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if len(superAdmins) > 0 {
+		id := superAdmins[0].UserID
+		return &id, nil
+	}
+	return nil, nil
+}
+
+// enrichTicketNames 填充申请人/审批人/指定审批人用户名（查询失败仅记录日志，不影响主流程）
+func (s *Service) enrichTicketNames(ctx context.Context, tickets []*models.Ticket) {
+	if len(tickets) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(tickets)*3)
+	for _, t := range tickets {
+		ids = append(ids, t.ApplicantID)
+		if t.ApproverID != nil {
+			ids = append(ids, *t.ApproverID)
+		}
+		if t.DesignatedApproverID != nil {
+			ids = append(ids, *t.DesignatedApproverID)
+		}
+	}
+	users, err := s.userRepo.FindByIDs(ctx, ids)
+	if err != nil {
+		logger.Error("ticket: failed to load user names", "error", err)
+		return
+	}
+	for _, t := range tickets {
+		if u, ok := users[t.ApplicantID]; ok {
+			t.ApplicantName = u.Username
+		}
+		if t.ApproverID != nil {
+			if u, ok := users[*t.ApproverID]; ok {
+				t.ApproverName = u.Username
+			}
+		}
+		if t.DesignatedApproverID != nil {
+			if u, ok := users[*t.DesignatedApproverID]; ok {
+				t.DesignatedApproverName = u.Username
+			}
+		}
+	}
 }
 
 // getTicket 查询工单

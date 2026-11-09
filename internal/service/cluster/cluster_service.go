@@ -549,6 +549,34 @@ func (s *Service) ListClusters(ctx context.Context, userID int64, role models.Us
 	return s.clusterRepo.ListByUser(ctx, userID, role, offset, limit)
 }
 
+// ClusterOption 集群基础信息（工单申请选择集群用，所有登录用户可见，不含连接与认证细节）
+type ClusterOption struct {
+	ClusterID     int64               `json:"cluster_id"`
+	ClusterName   string              `json:"cluster_name"`
+	AuthType      models.AuthType     `json:"auth_type"`
+	SASLMechanism string              `json:"sasl_mechanism"`
+	Status        models.ClusterStatus `json:"status"`
+}
+
+// ListClusterOptions 返回全部集群的基础信息（不做用户权限过滤）
+func (s *Service) ListClusterOptions(ctx context.Context) ([]*ClusterOption, error) {
+	clusters, _, err := s.clusterRepo.List(ctx, 0, 1000)
+	if err != nil {
+		return nil, err
+	}
+	options := make([]*ClusterOption, 0, len(clusters))
+	for _, c := range clusters {
+		options = append(options, &ClusterOption{
+			ClusterID:     c.ClusterID,
+			ClusterName:   c.ClusterName,
+			AuthType:      c.AuthType,
+			SASLMechanism: c.SASLMechanism,
+			Status:        c.Status,
+		})
+	}
+	return options, nil
+}
+
 // GrantClusterAccess 授予用户集群访问权限
 func (s *Service) GrantClusterAccess(ctx context.Context, clusterID, userID int64) error {
 	relation := &models.ClusterUserRelation{

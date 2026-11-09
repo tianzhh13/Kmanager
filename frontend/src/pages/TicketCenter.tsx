@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Button, Tabs, Drawer, Modal, Input, Select, message } from 'antd'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { ticketService, Ticket, TicketStatus, TicketType, TicketExecuteResult, expandACLPreview, PermissionGrantForm, TopicCreateForm } from '../services/ticket'
-import { clusterAPI, Cluster } from '../services/cluster'
+import { clusterAPI, ClusterOption } from '../services/cluster'
 import { StatCard, LabelTag, LabelColor } from '../components/bento'
 import { useAppSelector } from '../store/hooks'
 
@@ -43,15 +43,15 @@ const TicketCenter: React.FC = () => {
   const [pageSize] = useState(20)
   const [scope, setScope] = useState<'mine' | 'pending' | 'all'>('mine')
   const [statusFilter, setStatusFilter] = useState('')
-  const [clusters, setClusters] = useState<Cluster[]>([])
+  const [clusters, setClusters] = useState<ClusterOption[]>([])
   const [detail, setDetail] = useState<Ticket | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [rejectModal, setRejectModal] = useState<{ open: boolean; remark: string }>({ open: false, remark: '' })
   const [credentialModal, setCredentialModal] = useState<{ open: boolean; data: { username: string; password: string; mechanism: string } | null }>({ open: false, data: null })
 
-  // 拉取集群列表（用于展示集群名）
+  // 拉取集群基础信息（options 接口对所有用户可见，用于展示集群名）
   useEffect(() => {
-    clusterAPI.list(1, 200).then((res: { data: Cluster[] }) => setClusters(res.data || [])).catch(() => { /* 集群列表加载失败不影响工单展示 */ })
+    clusterAPI.options().then(setClusters).catch(() => { /* 集群列表加载失败不影响工单展示 */ })
   }, [])
 
   const fetchTickets = useCallback(async () => {
@@ -405,9 +405,19 @@ const TicketCenter: React.FC = () => {
                 <tr><td style={{ width: 100, color: 'var(--text-muted)' }}>类型</td><td>{renderTypeTag(detail.type)}</td></tr>
                 <tr><td style={{ color: 'var(--text-muted)' }}>集群</td><td>{clusterName(detail.cluster_id)}</td></tr>
                 <tr><td style={{ color: 'var(--text-muted)' }}>标题</td><td>{detail.title}</td></tr>
+                <tr>
+                  <td style={{ color: 'var(--text-muted)' }}>指定审批人</td>
+                  <td>
+                    {detail.designated_approver_name || '-'}
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 8 }}>
+                      （规则：优先该集群的集群管理员，无则超级管理员兜底；超级管理员随时可审）
+                    </span>
+                  </td>
+                </tr>
+                <tr><td style={{ color: 'var(--text-muted)' }}>申请人</td><td>{detail.applicant_name || `用户#${detail.applicant_id}`}</td></tr>
                 <tr><td style={{ color: 'var(--text-muted)' }}>申请时间</td><td>{new Date(detail.applied_at).toLocaleString()}</td></tr>
                 {detail.approved_at && (
-                  <tr><td style={{ color: 'var(--text-muted)' }}>审批时间</td><td>{new Date(detail.approved_at).toLocaleString()}</td></tr>
+                  <tr><td style={{ color: 'var(--text-muted)' }}>审批时间</td><td>{new Date(detail.approved_at).toLocaleString()}{detail.approver_name ? `（${detail.approver_name}）` : ''}</td></tr>
                 )}
                 {detail.completed_at && (
                   <tr><td style={{ color: 'var(--text-muted)' }}>完成时间</td><td>{new Date(detail.completed_at).toLocaleString()}</td></tr>

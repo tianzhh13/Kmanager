@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/models"
@@ -158,6 +159,63 @@ func (s *Service) CreateTopic(ctx context.Context, req *CreateTopicRequest) erro
 	}
 
 	return nil
+}
+
+// TopicNameCheckResult topic 名称可用性检查结果
+type TopicNameCheckResult struct {
+	// Exists 集群中已存在同名 topic
+	Exists bool
+	// ConflictWith 与目标名称仅存在 '.' 与 '_' 差异的既有 topic（Kafka 指标名把 '.' 替换为 '_'，二者会产生指标冲突）
+	ConflictWith string
+}
+
+// CheckTopicNameAvailable 查询 Kafka 集群实际 topic 列表，校验名称是否可用
+func (s *Service) CheckTopicNameAvailable(ctx context.Context, clusterID int64, topicName string) (*TopicNameCheckResult, error) {
+	// 获取集群配置
+	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster: %w", err)
+	}
+
+	// 解密认证配置
+	var authConfigJSON string
+	if cluster.AuthConfig != "" {
+		decrypted, err := s.encryptionSvc.DecryptString(cluster.AuthConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt auth config: %w", err)
+		}
+		authConfigJSON = decrypted
+	}
+
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kafka admin client: %w", err)
+	}
+	defer adminClient.Close()
+
+	topicDetails, err := adminClient.ListTopics()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list topics from kafka: %w", err)
+	}
+
+	result := &TopicNameCheckResult{}
+	normalized := normalizeTopicMetricName(topicName)
+	for existing := range topicDetails {
+		if existing == topicName {
+			result.Exists = true
+			continue
+		}
+		if normalizeTopicMetricName(existing) == normalized {
+			result.ConflictWith = existing
+		}
+	}
+	return result, nil
+}
+
+// normalizeTopicMetricName Kafka 指标名中 '.' 会被替换为 '_'，名称冲突按此规则归一化判断
+func normalizeTopicMetricName(name string) string {
+	return strings.ReplaceAll(name, ".", "_")
 }
 
 // DeleteTopic 删除 Topic

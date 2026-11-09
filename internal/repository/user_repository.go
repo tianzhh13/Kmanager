@@ -15,8 +15,10 @@ type UserRepository interface {
 	Update(ctx context.Context, user *models.User) error
 	Delete(ctx context.Context, userID int64) error
 	FindByID(ctx context.Context, userID int64) (*models.User, error)
+	FindByIDs(ctx context.Context, userIDs []int64) (map[int64]*models.User, error)
 	FindByUsername(ctx context.Context, username string) (*models.User, error)
 	List(ctx context.Context, offset, limit int) ([]*models.User, int64, error)
+	ListByRole(ctx context.Context, role models.UserRole) ([]*models.User, error)
 	Search(ctx context.Context, keyword string, offset, limit int) ([]*models.User, int64, error)
 	CountActive(ctx context.Context) (int64, error)
 	CountByRole(ctx context.Context) (map[string]int64, error)
@@ -57,6 +59,29 @@ func (r *userRepository) FindByID(ctx context.Context, userID int64) (*models.Us
 		return nil, err
 	}
 	return &user, nil
+}
+
+// FindByIDs 根据 ID 集合批量查找用户（工单列表填充申请人/审批人名称用）
+func (r *userRepository) FindByIDs(ctx context.Context, userIDs []int64) (map[int64]*models.User, error) {
+	result := make(map[int64]*models.User)
+	if len(userIDs) == 0 {
+		return result, nil
+	}
+	var users []*models.User
+	if err := r.db.WithContext(ctx).Where("user_id IN ?", userIDs).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	for _, u := range users {
+		result[u.UserID] = u
+	}
+	return result, nil
+}
+
+// ListByRole 按角色列出用户（user_id 升序，保证指定审批人的确定性）
+func (r *userRepository) ListByRole(ctx context.Context, role models.UserRole) ([]*models.User, error) {
+	var users []*models.User
+	err := r.db.WithContext(ctx).Where("role = ? AND status = ?", role, models.UserStatusActive).Order("user_id ASC").Find(&users).Error
+	return users, err
 }
 
 // FindByUsername 根据用户名查找用户
