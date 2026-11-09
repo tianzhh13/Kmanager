@@ -14,6 +14,7 @@ export interface Topic {
 export interface CreateTopicRequest {
   cluster_id: number
   topic_name: string
+  description?: string
   partitions: number
   replication_factor: number
   config?: Record<string, string>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button, Modal, Form, Select, Input, message } from 'antd'
 import { PlusOutlined, DeleteOutlined, SyncOutlined, EyeOutlined, KeyOutlined } from '@ant-design/icons'
@@ -45,11 +45,16 @@ const RESOURCE_OPERATIONS: Record<string, { value: string; label: string }[]> = 
 
 const AVATAR_COLORS = ['#f97316', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b']
 
+// 仅 SASL 机制为 SCRAM 的集群支持 SCRAM 用户与 ACL 管理
+const isScramCluster = (c: Cluster) => c.sasl_mechanism === 'SCRAM-SHA-256' || c.sasl_mechanism === 'SCRAM-SHA-512'
+
 const ClusterACLs: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const [loading, setLoading] = useState(false)
   const [users, setUsers] = useState<ScramUser[]>([])
   const [clusters, setClusters] = useState<Cluster[]>([])
+  // URL 指向非 SCRAM 集群时的提示（该集群无 ACL 管理）
+  const [nonScramClusterName, setNonScramClusterName] = useState<string | null>(null)
   const [selectedClusterId, setSelectedClusterId] = useState<number | null>(() => {
     const cid = searchParams.get('clusterId')
     return cid ? parseInt(cid) : null
@@ -66,6 +71,9 @@ const ClusterACLs: React.FC = () => {
   const [viewAclUsername, setViewAclUsername] = useState<string>('')
   const [userAcls, setUserAcls] = useState<UserACLInfo[]>([])
   const [viewAclLoading, setViewAclLoading] = useState(false)
+  // 查看权限弹窗筛选：资源类型 / 资源名称
+  const [viewFilterType, setViewFilterType] = useState<string>('all')
+  const [viewFilterName, setViewFilterName] = useState<string>('all')
   const [searchText, setSearchText] = useState('')
   const [expandedUser, setExpandedUser] = useState<string | null>(null)
   const [expandedAcls, setExpandedAcls] = useState<UserACLInfo[]>([])
@@ -84,15 +92,24 @@ const ClusterACLs: React.FC = () => {
     const loadClusters = async () => {
       try {
         const res = await clusterAPI.list(1, 100)
-        const clusterList = res.data || []
-        const scramClusters = clusterList.filter((c: Cluster) =>
-          c.sasl_mechanism === 'SCRAM-SHA-256' || c.sasl_mechanism === 'SCRAM-SHA-512'
-        )
+        const clusterList: Cluster[] = res.data || []
+        const scramClusters = clusterList.filter(isScramCluster)
         setClusters(scramClusters)
         const cid = searchParams.get('clusterId')
-        if (cid && scramClusters.find((c: Cluster) => c.cluster_id === parseInt(cid))) {
-          setSelectedClusterId(parseInt(cid))
-        } else if (scramClusters.length > 0 && !selectedClusterId) {
+        if (cid) {
+          const urlCluster = clusterList.find((c: Cluster) => c.cluster_id === parseInt(cid))
+          if (urlCluster && !isScramCluster(urlCluster)) {
+            // URL 指向非 SCRAM 集群：不加载任何数据，页面提示后可从右上角切换集群
+            setNonScramClusterName(urlCluster.cluster_name)
+            setSelectedClusterId(null)
+            return
+          }
+          if (urlCluster) {
+            setSelectedClusterId(urlCluster.cluster_id)
+            return
+          }
+        }
+        if (scramClusters.length > 0 && !selectedClusterId) {
           setSelectedClusterId(scramClusters[0].cluster_id)
         }
       } catch (err) {
@@ -183,6 +200,8 @@ const ClusterACLs: React.FC = () => {
     setViewAclUsername(username)
     setViewAclLoading(true)
     setViewAclVisible(true)
+    setViewFilterType('all')
+    setViewFilterName('all')
     try {
       const acls = await getUserACLsFromKafka(selectedClusterId!, `User:${username}`)
       setUserAcls(acls)
@@ -243,6 +262,20 @@ const ClusterACLs: React.FC = () => {
   const filteredUsers = users.filter(u => !searchText || u.username.toLowerCase().includes(searchText.toLowerCase()))
   const gridCols = '2fr 1fr 1.2fr 1.2fr 240px'
 
+  // 查看权限弹窗：名称下拉选项（跟随类型筛选）与过滤结果
+  const viewAclNameOptions = useMemo(() => {
+    const names = new Set<string>()
+    userAcls.forEach(a => {
+      if (viewFilterType === 'all' || a.resource_type === viewFilterType) names.add(a.resource_name)
+    })
+    return Array.from(names).sort()
+  }, [userAcls, viewFilterType])
+
+  const filteredViewAcls = useMemo(() => userAcls.filter(a =>
+    (viewFilterType === 'all' || a.resource_type === viewFilterType) &&
+    (viewFilterName === 'all' || a.resource_name === viewFilterName)
+  ), [userAcls, viewFilterType, viewFilterName])
+
   const getResourceTypeColor = (type: string): 'orange' | 'blue' | 'purple' => {
     if (type === 'Topic') return 'orange'
     if (type === 'Group') return 'blue'
@@ -259,7 +292,7 @@ const ClusterACLs: React.FC = () => {
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <Select showSearch placeholder="选择集群" value={selectedClusterId}
-              onChange={(value) => setSelectedClusterId(value)} style={{ width: 200 }}
+              onChange={(value) => { setNonScramClusterName(null); setSelectedClusterId(value) }} style={{ width: 200 }}
               optionFilterProp="children" filterOption={(input, option) => (option?.children ?? '').toString().toLowerCase().includes(input.toLowerCase())}>
               {clusters.map(c => (<Select.Option key={c.cluster_id} value={c.cluster_id}>{c.cluster_name}</Select.Option>))}
             </Select>
@@ -275,14 +308,28 @@ const ClusterACLs: React.FC = () => {
         <StatCard label="SCRAM-SHA-512" value={scram512Count} />
       </div>
 
-      {clusters.length === 0 && (
+      {clusters.length === 0 && !nonScramClusterName && (
         <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-3)' }}>
           暂无支持 SCRAM 用户管理的集群<br />
           <span style={{ fontSize: 12 }}>仅支持 SASL 机制为 SCRAM-SHA-256 或 SCRAM-SHA-512 的集群</span>
         </div>
       )}
 
-      {clusters.length > 0 && (
+      {nonScramClusterName && (
+        <div className="bento-card">
+          <div className="bento-card-inner" style={{ textAlign: 'center', padding: '48px 24px' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>非 SCRAM 集群，无 ACL 管理</div>
+            <div style={{ fontSize: 13, color: 'var(--text-3)' }}>
+              集群「{nonScramClusterName}」未启用 SCRAM 认证（PLAINTEXT / 无认证集群没有用户与 ACL 的概念）。
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 4 }}>
+              请从右上角选择 SCRAM 认证的集群，或前往集群列表查看该集群的 Topic。
+            </div>
+          </div>
+        </div>
+      )}
+
+      {clusters.length > 0 && !nonScramClusterName && (
         <>
           <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
             <SearchBar value={searchText} onChange={setSearchText} placeholder="搜索用户名..." />
@@ -323,7 +370,7 @@ const ClusterACLs: React.FC = () => {
                           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--card)', borderRadius: 8, border: acl.permission_type === 'Deny' ? '1px solid rgba(239,68,68,0.15)' : 'none' }}>
                             <LabelTag text={acl.resource_type} color={getResourceTypeColor(acl.resource_type)} />
                             <LabelTag text={acl.resource_pattern === 'prefixed' ? 'Prefix' : 'Literal'} color={acl.resource_pattern === 'prefixed' ? 'warning' : 'neutral'} />
-                            <span style={{ fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-mono)', flex: 1 }}>{acl.resource_name}</span>
+                            <span style={{ fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-mono)', flex: 1, minWidth: 0, wordBreak: 'break-all' }}>{acl.resource_name}</span>
                             <span style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 600 }}>{acl.operation}</span>
                             <LabelTag text={acl.permission_type} color={acl.permission_type === 'Allow' ? 'green' : 'red'} />
                             <span style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>{acl.host}</span>
@@ -359,24 +406,64 @@ const ClusterACLs: React.FC = () => {
         </Form>
       </Modal>
 
-      <Modal title={`用户权限 - ${viewAclUsername}`} open={viewAclVisible} onCancel={() => { setViewAclVisible(false); setUserAcls([]) }} footer={[<Button key="close" onClick={() => setViewAclVisible(false)}>关闭</Button>]} width={850}>
-        <div className="bento-table-header" style={{ gridTemplateColumns: '90px minmax(130px, 1.5fr) 70px 100px 70px 100px 70px' }}>
-          <div>资源类型</div><div>资源名称</div><div>匹配</div><div>操作</div><div>权限</div><div>Host</div><div style={{ textAlign: 'right' }}>操作</div>
+      <Modal title={`用户权限 - ${viewAclUsername}`} open={viewAclVisible} onCancel={() => { setViewAclVisible(false); setUserAcls([]) }} footer={[<Button key="close" onClick={() => setViewAclVisible(false)}>关闭</Button>]} width={920}>
+        {/* 筛选：资源类型 / 资源名称 */}
+        <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
+          <Select
+            style={{ width: 140 }}
+            value={viewFilterType}
+            onChange={(v) => { setViewFilterType(v); setViewFilterName('all') }}
+            options={[
+              { value: 'all', label: '全部类型' },
+              { value: 'Topic', label: 'Topic' },
+              { value: 'Group', label: 'Group' },
+              { value: 'Cluster', label: 'Cluster' },
+            ]}
+          />
+          <Select
+            style={{ width: 300 }}
+            showSearch
+            optionFilterProp="label"
+            value={viewFilterName}
+            onChange={setViewFilterName}
+            options={[
+              { value: 'all', label: '全部名称' },
+              ...viewAclNameOptions.map(n => ({ value: n, label: n })),
+            ]}
+          />
+          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>共 {filteredViewAcls.length} / {userAcls.length} 条</span>
         </div>
-        <div className="bento-table-body">
-          {viewAclLoading && <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>加载中...</div>}
-          {!viewAclLoading && userAcls.length === 0 && <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-3)' }}>该用户暂无权限规则</div>}
-          {!viewAclLoading && userAcls.map((acl, index) => (
-            <div key={`${acl.resource_type}-${acl.resource_name}-${acl.operation}-${index}`} className="bento-table-row" style={{ gridTemplateColumns: '90px minmax(130px, 1.5fr) 70px 100px 70px 100px 70px' }}>
-              <LabelTag text={acl.resource_type} color={getResourceTypeColor(acl.resource_type)} />
-              <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }} title={acl.resource_name}>{acl.resource_name}</span>
-              <LabelTag text={acl.resource_pattern === 'prefixed' ? 'Prefix' : 'Literal'} color={acl.resource_pattern === 'prefixed' ? 'warning' : 'neutral'} />
-              <span style={{ fontSize: 12 }} title={acl.operation}>{acl.operation}</span>
-              <LabelTag text={acl.permission_type} color={acl.permission_type === 'Allow' ? 'green' : 'red'} />
-              <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }} title={acl.host}>{acl.host}</span>
-              <div style={{ textAlign: 'right' }}><button className="bento-action-btn bento-action-btn--danger" style={{ fontSize: 10 }} onClick={() => handleDeleteAcl(acl)}>删除</button></div>
-            </div>
-          ))}
+        <div style={{ maxHeight: 420, overflow: 'auto' }}>
+          <table className="bento-table">
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'center' }}>资源类型</th>
+                <th>资源名称</th>
+                <th style={{ textAlign: 'center' }}>匹配</th>
+                <th style={{ textAlign: 'center' }}>操作</th>
+                <th style={{ textAlign: 'center' }}>权限</th>
+                <th style={{ textAlign: 'center' }}>Host</th>
+                <th style={{ textAlign: 'right' }}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {viewAclLoading ? (
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32 }}>加载中...</td></tr>
+              ) : filteredViewAcls.length === 0 ? (
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32, color: 'var(--text-3)' }}>{userAcls.length === 0 ? '该用户暂无权限规则' : '当前筛选条件下无权限规则'}</td></tr>
+              ) : filteredViewAcls.map((acl, index) => (
+                <tr key={`${acl.resource_type}-${acl.resource_name}-${acl.operation}-${index}`}>
+                  <td style={{ textAlign: 'center' }}><LabelTag text={acl.resource_type} color={getResourceTypeColor(acl.resource_type)} /></td>
+                  <td style={{ maxWidth: 340, wordBreak: 'break-all', fontFamily: 'var(--font-mono)', fontSize: 12 }}>{acl.resource_name}</td>
+                  <td style={{ textAlign: 'center' }}><LabelTag text={acl.resource_pattern === 'prefixed' ? 'Prefix' : 'Literal'} color={acl.resource_pattern === 'prefixed' ? 'warning' : 'neutral'} /></td>
+                  <td style={{ textAlign: 'center', fontSize: 12 }}>{acl.operation}</td>
+                  <td style={{ textAlign: 'center' }}><LabelTag text={acl.permission_type} color={acl.permission_type === 'Allow' ? 'green' : 'red'} /></td>
+                  <td style={{ textAlign: 'center', fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }}>{acl.host}</td>
+                  <td style={{ textAlign: 'right' }}><button className="bento-action-btn bento-action-btn--danger" style={{ fontSize: 10 }} onClick={() => handleDeleteAcl(acl)}>删除</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </Modal>
 

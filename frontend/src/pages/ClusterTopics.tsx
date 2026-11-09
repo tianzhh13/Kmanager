@@ -1,12 +1,20 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { Select, Button, Modal, Form, Input, InputNumber, message, Spin } from 'antd'
-import { PlusOutlined, DeleteOutlined, SyncOutlined, SettingOutlined, TeamOutlined } from '@ant-design/icons'
+import { Select, Button, Modal, Form, Input, InputNumber, Radio, Upload, message, Spin } from 'antd'
+import { PlusOutlined, DeleteOutlined, SyncOutlined, SettingOutlined, TeamOutlined, DownloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchTopics, createTopic, deleteTopic } from '../store/slices/topicSlice'
 import { clusterAPI } from '../services/cluster'
 import { topicService } from '../services/topic'
+import { MAX_TOPIC_BATCH_ROWS, TopicBatchRow, parseTopicBatchCSV, downloadTopicTemplate } from '../utils/topicBatch'
 import { StatCard, LabelTag, SearchBar } from '../components/bento'
+
+// 批量导入提交结果（每行一个 Topic）
+interface TopicBatchResult {
+  row: TopicBatchRow
+  ok: boolean
+  error?: string
+}
 
 interface Cluster {
   cluster_id: number
@@ -22,6 +30,11 @@ const ClusterTopics: React.FC = () => {
   const isNormalUser = user?.role === 'normal_user'
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [form] = Form.useForm()
+  // 创建 Topic 弹窗：单个创建 / 批量导入（与工单申请同一 CSV 模板）
+  const [createMode, setCreateMode] = useState<'single' | 'batch'>('single')
+  const [batchRows, setBatchRows] = useState<TopicBatchRow[]>([])
+  const [batchResults, setBatchResults] = useState<TopicBatchResult[] | null>(null)
+  const [batchSubmitting, setBatchSubmitting] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [clusters, setClusters] = useState<Cluster[]>([])
@@ -86,6 +99,9 @@ const ClusterTopics: React.FC = () => {
       message.warning('请先选择集群')
       return
     }
+    setCreateMode('single')
+    setBatchRows([])
+    setBatchResults(null)
     setIsModalVisible(true)
   }
 
@@ -93,13 +109,73 @@ const ClusterTopics: React.FC = () => {
     if (isModalVisible && selectedClusterId) {
       form.setFieldsValue({
         cluster_id: selectedClusterId,
-        partitions: 1,
-        replication_factor: 1,
+        partitions: 3,
+        replication_factor: 2,
       })
     }
   }, [isModalVisible, selectedClusterId, form])
 
+  // ============ 批量导入（与工单申请同一 CSV 模板） ============
+  const handleBatchCSVFile = async (file: File) => {
+    setBatchResults(null)
+    const text = await file.text()
+    const { rows, error } = parseTopicBatchCSV(text)
+    if (error) {
+      message.error(error)
+      return
+    }
+    setBatchRows(rows)
+    const invalid = rows.filter(r => r.errors.length > 0).length
+    if (invalid > 0) {
+      message.warning(`解析完成：${rows.length} 行，其中 ${invalid} 行校验不通过（见预览标红行）`)
+    } else {
+      message.success(`解析完成：${rows.length} 行，全部校验通过`)
+    }
+  }
+
+  const batchInvalidCount = batchRows.filter(r => r.errors.length > 0).length
+
+  const handleBatchCreate = async () => {
+    if (!selectedClusterId || batchInvalidCount > 0) return
+    const validRows = batchRows.filter(r => r.errors.length === 0)
+    setBatchSubmitting(true)
+    setBatchResults(null)
+    const results: TopicBatchResult[] = []
+    // 逐行串行创建（每行独立调用创建接口，重名等错误仅影响该行）
+    for (const row of validRows) {
+      try {
+        await topicService.create({
+          cluster_id: selectedClusterId,
+          topic_name: row.topic_name,
+          description: row.business_desc,
+          partitions: row.partitions,
+          replication_factor: row.replication_factor,
+          config: row.retention_days > 0 ? { 'retention.ms': String(row.retention_days * 24 * 3600 * 1000) } : undefined,
+        })
+        results.push({ row, ok: true })
+      } catch (error: any) {
+        results.push({ row, ok: false, error: error?.response?.data?.error || '创建失败' })
+      }
+    }
+    setBatchResults(results)
+    setBatchSubmitting(false)
+    const okCount = results.filter(r => r.ok).length
+    const failCount = results.length - okCount
+    if (failCount === 0) {
+      message.success(`${okCount} 个 Topic 全部创建成功`)
+    } else {
+      message.warning(`批量创建完成：成功 ${okCount} 个、失败 ${failCount} 个（详见结果列表）`)
+    }
+    if (selectedClusterId && okCount > 0) {
+      dispatch(fetchTopics({ page, pageSize, clusterId: selectedClusterId }))
+    }
+  }
+
   const handleCreate = async () => {
+    if (createMode === 'batch') {
+      await handleBatchCreate()
+      return
+    }
     try {
       const values = await form.validateFields()
       const clusterId = Number(values.cluster_id)
@@ -348,23 +424,132 @@ const ClusterTopics: React.FC = () => {
       )}
 
       {/* Create Topic Modal */}
-      <Modal title="创建 Topic" open={isModalVisible} onOk={handleCreate} onCancel={() => { setIsModalVisible(false); form.resetFields() }} destroyOnClose width={600}>
+      <Modal
+        title="创建 Topic"
+        open={isModalVisible}
+        onOk={handleCreate}
+        onCancel={() => { setIsModalVisible(false); form.resetFields() }}
+        destroyOnClose
+        width={createMode === 'batch' ? 880 : 600}
+        okText={createMode === 'batch' ? `批量创建（${batchRows.length - batchInvalidCount} 个）` : '创建'}
+        okButtonProps={createMode === 'batch' ? { disabled: batchRows.length === 0 || batchInvalidCount > 0 } : undefined}
+        confirmLoading={batchSubmitting}
+      >
         <Form form={form} layout="vertical">
-          <Form.Item name="cluster_id" label="所属集群" rules={[{ required: true }]}>
+          <Form.Item label="创建方式">
+            <Radio.Group value={createMode} onChange={e => { setCreateMode(e.target.value); setBatchResults(null) }}>
+              <Radio.Button value="single">单个创建</Radio.Button>
+              <Radio.Button value="batch">批量导入</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item name="cluster_id" label="所属集群" rules={[{ required: true }]} style={{ display: createMode === 'single' ? undefined : 'none' }}>
             <Select placeholder="请选择集群" disabled>
               {clusters.map(c => (<Select.Option key={c.cluster_id} value={c.cluster_id}>{c.cluster_name}</Select.Option>))}
             </Select>
           </Form.Item>
-          <Form.Item name="topic_name" label="Topic 名称" rules={[{ required: true, message: '请输入 Topic 名称' }]}>
-            <Input placeholder="请输入 Topic 名称" />
-          </Form.Item>
-          <Form.Item name="description" label="描述"><Input placeholder="请输入描述（可选，用于标识 Topic 用途）" /></Form.Item>
-          <Form.Item name="partitions" label="分区数" rules={[{ required: true, message: '请输入分区数' }]} initialValue={1}>
-            <InputNumber min={1} max={100} style={{ width: '100%' }} placeholder="请输入分区数" />
-          </Form.Item>
-          <Form.Item name="replication_factor" label="副本数" rules={[{ required: true, message: '请输入副本数' }]} initialValue={1}>
-            <InputNumber min={1} max={10} style={{ width: '100%' }} placeholder="请输入副本数" />
-          </Form.Item>
+
+          {createMode === 'single' ? (
+            <>
+              <Form.Item name="topic_name" label="Topic 名称" rules={[{ required: true, message: '请输入 Topic 名称' }]}>
+                <Input placeholder="请输入 Topic 名称" />
+              </Form.Item>
+              <Form.Item name="description" label="描述"><Input placeholder="请输入描述（可选，用于标识 Topic 用途）" /></Form.Item>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <Form.Item name="partitions" label="分区数" rules={[{ required: true, message: '请输入分区数' }]} initialValue={3}>
+                  <InputNumber min={1} max={200} style={{ width: '100%' }} placeholder="请输入分区数" />
+                </Form.Item>
+                <Form.Item name="replication_factor" label="副本数" rules={[{ required: true, message: '请输入副本数' }]} initialValue={2}>
+                  <InputNumber min={1} max={10} style={{ width: '100%' }} placeholder="请输入副本数" />
+                </Form.Item>
+              </div>
+            </>
+          ) : (
+            <div>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+                <Button icon={<DownloadOutlined />} onClick={downloadTopicTemplate}>下载 CSV 模板</Button>
+                <Upload accept=".csv" showUploadList={false} beforeUpload={(file) => { handleBatchCSVFile(file); return false }}>
+                  <Button icon={<UploadOutlined />}>上传 CSV 文件</Button>
+                </Upload>
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>
+                与工单申请使用同一模板：固定 5 列 topic_name, partitions, replication_factor, retention_days, business_desc，
+                最多 {MAX_TOPIC_BATCH_ROWS} 行；业务说明作为 Topic 描述，保留天数写入 retention.ms（0 = 集群默认）。
+              </div>
+
+              {batchRows.length > 0 && (
+                <div className="bento-card" style={{ marginBottom: 16 }}>
+                  <div className="bento-card-inner">
+                    <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                      预览（共 {batchRows.length} 行，{batchInvalidCount > 0 ? <span style={{ color: 'var(--status-danger, #dc2626)' }}>{batchInvalidCount} 行校验不通过</span> : '全部校验通过'}）
+                    </div>
+                    <div style={{ maxHeight: 300, overflow: 'auto' }}>
+                      <table className="bento-table">
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign: 'center' }}>行号</th>
+                            <th>Topic 名称</th>
+                            <th style={{ textAlign: 'center' }}>分区</th>
+                            <th style={{ textAlign: 'center' }}>副本</th>
+                            <th style={{ textAlign: 'center' }}>保留天数</th>
+                            <th>业务说明</th>
+                            <th>校验</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {batchRows.map(r => (
+                            <tr key={r.line} style={r.errors.length > 0 ? { background: 'rgba(220, 38, 38, 0.05)' } : undefined}>
+                              <td style={{ textAlign: 'center' }}>{r.line}</td>
+                              <td><code>{r.topic_name}</code></td>
+                              <td style={{ textAlign: 'center' }}>{r.partitions}</td>
+                              <td style={{ textAlign: 'center' }}>{r.replication_factor}</td>
+                              <td style={{ textAlign: 'center' }}>{r.retention_days}</td>
+                              <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.business_desc}</td>
+                              <td style={{ color: r.errors.length > 0 ? 'var(--status-danger, #dc2626)' : 'var(--status-success, #16a34a)', fontSize: 13 }}>
+                                {r.errors.length > 0 ? r.errors.join('；') : '通过'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {batchResults && (
+                <div className="bento-card">
+                  <div className="bento-card-inner">
+                    <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                      创建结果（成功 {batchResults.filter(r => r.ok).length} / 失败 {batchResults.filter(r => !r.ok).length}）
+                    </div>
+                    <div style={{ maxHeight: 220, overflow: 'auto' }}>
+                      <table className="bento-table">
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign: 'center' }}>行号</th>
+                            <th>Topic 名称</th>
+                            <th>结果</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {batchResults.map((r, i) => (
+                            <tr key={i}>
+                              <td style={{ textAlign: 'center' }}>{r.row.line}</td>
+                              <td><code>{r.row.topic_name}</code></td>
+                              <td style={{ fontSize: 13, color: r.ok ? 'var(--status-success, #16a34a)' : 'var(--status-danger, #dc2626)' }}>
+                                {r.ok ? '创建成功' : r.error}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </Form>
       </Modal>
 

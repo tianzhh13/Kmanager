@@ -5,100 +5,15 @@ import { ArrowLeftOutlined, ClusterOutlined, KeyOutlined, DownloadOutlined, Uplo
 import { ticketService, TicketType, TopicCreateForm, PermissionGrantForm, expandACLPreview } from '../services/ticket'
 import { clusterAPI, ClusterOption } from '../services/cluster'
 import { scramUserService, ScramUser } from '../services/scramUser'
+import { TOPIC_NAME_REGEX, MAX_TOPIC_BATCH_ROWS, TopicBatchRow, parseTopicBatchCSV, downloadTopicTemplate } from '../utils/topicBatch'
 import { LabelTag } from '../components/bento'
 
-// 批量导入 CSV 固定格式（列顺序固定，首行为表头；UTF-8 BOM 保证 Excel 打开中文不乱码）
-const CSV_TEMPLATE =
-  '\ufefftopic_name,partitions,replication_factor,retention_days,business_desc\n' +
-  'trade.ods.order-created,6,3,3,订单创建事件流，供风控和实时大盘消费\n' +
-  'trade.ods.order-paid,6,3,3,订单支付事件流，供下游实时计算消费\n'
-
-const MAX_BATCH_ROWS = 100
-
-// 批量导入行（含校验结果）
-interface BatchRow {
-  line: number
-  topic_name: string
-  partitions: number
-  replication_factor: number
-  retention_days: number
-  business_desc: string
-  errors: string[]
-}
-
+// 批量导入提交结果（每行一张工单）
 interface BatchResult {
-  row: BatchRow
+  row: TopicBatchRow
   ok: boolean
   ticketNo?: string
   error?: string
-}
-
-// 解析单行 CSV（支持引号包裹的字段，业务说明含逗号时需用引号包裹）
-function parseCSVLine(line: string): string[] {
-  const fields: string[] = []
-  let current = ''
-  let inQuotes = false
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]
-    if (inQuotes) {
-      if (ch === '"') {
-        if (line[i + 1] === '"') {
-          current += '"'
-          i++
-        } else {
-          inQuotes = false
-        }
-      } else {
-        current += ch
-      }
-    } else if (ch === '"') {
-      inQuotes = true
-    } else if (ch === ',') {
-      fields.push(current)
-      current = ''
-    } else {
-      current += ch
-    }
-  }
-  fields.push(current)
-  return fields.map(f => f.trim())
-}
-
-const topicNameRegex = /^[a-zA-Z0-9._-]{1,249}$/
-
-// 校验批量行（规则与单个申请/后端一致）
-function validateBatchRow(fields: string[], line: number, seen: Set<string>): BatchRow {
-  const row: BatchRow = {
-    line,
-    topic_name: fields[0] || '',
-    partitions: parseInt(fields[1] || '', 10),
-    replication_factor: parseInt(fields[2] || '', 10),
-    retention_days: fields[3] === '' || fields[3] === undefined ? 3 : parseInt(fields[3], 10),
-    business_desc: fields[4] || '',
-    errors: [],
-  }
-  if (!topicNameRegex.test(row.topic_name) || row.topic_name === '.' || row.topic_name === '..') {
-    row.errors.push('topic 名称不合法')
-  }
-  if (seen.has(row.topic_name)) {
-    row.errors.push('文件内重复')
-  }
-  if (!Number.isInteger(row.partitions) || row.partitions < 1 || row.partitions > 200) {
-    row.errors.push('分区数需为 1-200')
-  }
-  if (!Number.isInteger(row.replication_factor) || row.replication_factor < 1 || row.replication_factor > 5) {
-    row.errors.push('副本数需为 1-5')
-  }
-  if (!Number.isInteger(row.retention_days) || row.retention_days < 0 || row.retention_days > 3650) {
-    row.errors.push('保留天数需为 0-3650')
-  }
-  if (!row.business_desc) {
-    row.errors.push('业务说明不能为空')
-  }
-  if (topicNameRegex.test(row.topic_name)) {
-    seen.add(row.topic_name)
-  }
-  return row
 }
 
 const TicketCreate: React.FC = () => {
@@ -113,7 +28,7 @@ const TicketCreate: React.FC = () => {
 
   // topic 工单填写模式：单个申请 / 批量导入
   const [topicMode, setTopicMode] = useState<'single' | 'batch'>('single')
-  const [batchRows, setBatchRows] = useState<BatchRow[]>([])
+  const [batchRows, setBatchRows] = useState<TopicBatchRow[]>([])
   const [batchResults, setBatchResults] = useState<BatchResult[] | null>(null)
 
   // 表单相关状态（ACL 预览需要实时值）
@@ -189,50 +104,13 @@ const TicketCreate: React.FC = () => {
   }, [type, mode, username, permission, topics, topicPattern, groupPrefix, extras])
 
   // ============ 批量导入 ============
-  const downloadTemplate = () => {
-    const blob = new Blob([CSV_TEMPLATE], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'topic_batch_template.csv'
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
   const handleCSVFile = async (file: File) => {
     setBatchResults(null)
     const text = await file.text()
-    const lines = text.replace(/^\ufeff/, '').split(/\r?\n/).filter(l => l.trim() !== '')
-    if (lines.length === 0) {
-      message.error('文件为空')
+    const { rows, error } = parseTopicBatchCSV(text)
+    if (error) {
+      message.error(error)
       return
-    }
-    const header = parseCSVLine(lines[0]).map(h => h.toLowerCase())
-    if (header.join(',') !== 'topic_name,partitions,replication_factor,retention_days,business_desc') {
-      message.error('表头不符合模板格式，请下载模板后按列填写')
-      return
-    }
-    if (lines.length - 1 > MAX_BATCH_ROWS) {
-      message.error(`单次最多导入 ${MAX_BATCH_ROWS} 行`)
-      return
-    }
-    const seen = new Set<string>()
-    const rows: BatchRow[] = []
-    for (let i = 1; i < lines.length; i++) {
-      const fields = parseCSVLine(lines[i])
-      if (fields.length !== 5) {
-        rows.push({
-          line: i + 1,
-          topic_name: fields[0] || '',
-          partitions: NaN,
-          replication_factor: NaN,
-          retention_days: NaN,
-          business_desc: '',
-          errors: [`列数错误（${fields.length} 列，应为 5 列）`],
-        })
-        continue
-      }
-      rows.push(validateBatchRow(fields, i + 1, seen))
     }
     setBatchRows(rows)
     const invalid = rows.filter(r => r.errors.length > 0).length
@@ -375,7 +253,7 @@ const TicketCreate: React.FC = () => {
             label="Topic 名称"
             rules={[
               { required: true, message: '请输入 topic 名称' },
-              { pattern: topicNameRegex, message: '仅允许字母、数字、.、_、-' },
+              { pattern: TOPIC_NAME_REGEX, message: '仅允许字母、数字、.、_、-' },
             ]}
             extra="建议按 团队.应用.事件 分层命名；提交时将校验集群内是否重名及 '.' 与 '_' 的命名冲突"
           >
@@ -404,13 +282,13 @@ const TicketCreate: React.FC = () => {
       ) : (
         <div>
           <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-            <Button icon={<DownloadOutlined />} onClick={downloadTemplate}>下载 CSV 模板</Button>
+            <Button icon={<DownloadOutlined />} onClick={downloadTopicTemplate}>下载 CSV 模板</Button>
             <Upload accept=".csv" showUploadList={false} beforeUpload={(file) => { handleCSVFile(file); return false }}>
               <Button icon={<UploadOutlined />}>上传 CSV 文件</Button>
             </Upload>
           </div>
           <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>
-            固定 5 列：topic_name, partitions, replication_factor, retention_days, business_desc；最多 {MAX_BATCH_ROWS} 行；
+            固定 5 列：topic_name, partitions, replication_factor, retention_days, business_desc；最多 {MAX_TOPIC_BATCH_ROWS} 行；
             保留天数默认 3（0 = 集群默认）；业务说明含逗号时请用英文引号包裹。每行将提交为一张独立工单。
           </div>
 
