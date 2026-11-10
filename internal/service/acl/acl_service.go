@@ -332,13 +332,13 @@ func (s *Service) ListUserACLsFromKafka(ctx context.Context, clusterID int64, pr
 	for _, resourceACL := range kafkaACLs {
 		for _, acl := range resourceACL.Acls {
 			info := &UserACLInfo{
-				ResourceType:    string(s.convertResourceTypeFromSarama(resourceACL.ResourceType)),
+				ResourceType:    string(ConvertResourceTypeFromSarama(resourceACL.ResourceType)),
 				ResourceName:    resourceACL.ResourceName,
-				ResourcePattern: string(s.convertPatternTypeFromSarama(resourceACL.ResourcePatternType)),
+				ResourcePattern: string(ConvertPatternTypeFromSarama(resourceACL.ResourcePatternType)),
 				Principal:       acl.Principal,
 				Host:            acl.Host,
-				Operation:       string(s.convertOperationFromSarama(acl.Operation)),
-				PermissionType:  string(s.convertPermissionTypeFromSarama(acl.PermissionType)),
+				Operation:       string(ConvertOperationFromSarama(acl.Operation)),
+				PermissionType:  string(ConvertPermissionTypeFromSarama(acl.PermissionType)),
 			}
 			result = append(result, info)
 		}
@@ -471,24 +471,24 @@ func (s *Service) SyncACLs(ctx context.Context, clusterID int64) error {
 		logger.Info("SyncACLs: processing resource", "type", resourceACL.ResourceType, "name", resourceACL.ResourceName, "pattern", resourceACL.ResourcePatternType)
 		for _, acl := range resourceACL.Acls {
 			key := fmt.Sprintf("%s-%s-%s-%s-%s-%s",
-				s.convertResourceTypeFromSarama(resourceACL.ResourceType),
+				ConvertResourceTypeFromSarama(resourceACL.ResourceType),
 				resourceACL.ResourceName,
 				acl.Principal,
 				acl.Host,
-				s.convertOperationFromSarama(acl.Operation),
-				s.convertPermissionTypeFromSarama(acl.PermissionType))
+				ConvertOperationFromSarama(acl.Operation),
+				ConvertPermissionTypeFromSarama(acl.PermissionType))
 
 			if _, exists := dbACLMap[key]; !exists {
 				// 新 ACL，插入数据库
 				newACL := &models.ACL{
 					ClusterID:       clusterID,
-					ResourceType:    s.convertResourceTypeFromSarama(resourceACL.ResourceType),
+					ResourceType:    ConvertResourceTypeFromSarama(resourceACL.ResourceType),
 					ResourceName:    resourceACL.ResourceName,
-					ResourcePattern: s.convertPatternTypeFromSarama(resourceACL.ResourcePatternType),
+					ResourcePattern: ConvertPatternTypeFromSarama(resourceACL.ResourcePatternType),
 					Principal:       acl.Principal,
 					Host:            acl.Host,
-					Operation:       s.convertOperationFromSarama(acl.Operation),
-					PermissionType:  s.convertPermissionTypeFromSarama(acl.PermissionType),
+					Operation:       ConvertOperationFromSarama(acl.Operation),
+					PermissionType:  ConvertPermissionTypeFromSarama(acl.PermissionType),
 					SyncStatus:      "synced",
 				}
 				if err := s.aclRepo.Create(ctx, newACL); err != nil {
@@ -536,7 +536,11 @@ func (s *Service) convertResourceType(rt models.ResourceType) sarama.AclResource
 	}
 }
 
-func (s *Service) convertResourceTypeFromSarama(rt sarama.AclResourceType) models.ResourceType {
+// 类型转换辅助函数。
+// FromSarama 系列导出为包级函数：sync worker 从 Kafka 同步 ACL 元数据到库时同样需要
+// （sarama 枚举是 int，直接 models.ResourceType(x) 会得到 rune 字符串而非 "topic"）
+
+func ConvertResourceTypeFromSarama(rt sarama.AclResourceType) models.ResourceType {
 	switch rt {
 	case sarama.AclResourceTopic:
 		return models.ResourceTypeTopic
@@ -560,7 +564,7 @@ func (s *Service) convertPatternType(pt models.PatternType) sarama.AclResourcePa
 	}
 }
 
-func (s *Service) convertPatternTypeFromSarama(pt sarama.AclResourcePatternType) models.PatternType {
+func ConvertPatternTypeFromSarama(pt sarama.AclResourcePatternType) models.PatternType {
 	switch pt {
 	case sarama.AclPatternLiteral:
 		return models.PatternTypeLiteral
@@ -600,7 +604,7 @@ func (s *Service) convertOperation(op models.OperationType) sarama.AclOperation 
 	}
 }
 
-func (s *Service) convertOperationFromSarama(op sarama.AclOperation) models.OperationType {
+func ConvertOperationFromSarama(op sarama.AclOperation) models.OperationType {
 	switch op {
 	case sarama.AclOperationRead:
 		return models.OperationRead
@@ -640,7 +644,7 @@ func (s *Service) convertPermissionType(pt models.PermissionType) sarama.AclPerm
 	}
 }
 
-func (s *Service) convertPermissionTypeFromSarama(pt sarama.AclPermissionType) models.PermissionType {
+func ConvertPermissionTypeFromSarama(pt sarama.AclPermissionType) models.PermissionType {
 	switch pt {
 	case sarama.AclPermissionAllow:
 		return models.PermissionTypeAllow

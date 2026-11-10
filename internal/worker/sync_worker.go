@@ -10,6 +10,7 @@ import (
 	"kafka-management-platform/internal/logger"
 	"kafka-management-platform/internal/models"
 	"kafka-management-platform/internal/repository"
+	"kafka-management-platform/internal/service/acl"
 	"kafka-management-platform/pkg/encryption"
 	"kafka-management-platform/pkg/kafka"
 
@@ -367,7 +368,19 @@ func (w *SyncWorker) syncACLs(ctx context.Context, adminClient *kafka.AdminClien
 	// 处理 Kafka 中的 ACLs
 	for _, resourceACL := range kafkaACLs {
 		for _, kafkaACL := range resourceACL.Acls {
-			key := buildKafkaACLKeyFromResourceAndAcl(&resourceACL.Resource, kafkaACL)
+			// sarama 枚举是 int 常量，必须经 acl 包转换成平台字符串值
+			// （直接 models.ResourceType(x) 会得到 "\x02" 这类 rune 字符串写入数据库）
+			acl := &models.ACL{
+				ClusterID:       clusterID,
+				ResourceType:    acl.ConvertResourceTypeFromSarama(resourceACL.ResourceType),
+				ResourceName:    resourceACL.ResourceName,
+				ResourcePattern: acl.ConvertPatternTypeFromSarama(resourceACL.ResourcePatternType),
+				Principal:       kafkaACL.Principal,
+				Host:            kafkaACL.Host,
+				Operation:       acl.ConvertOperationFromSarama(kafkaACL.Operation),
+				PermissionType:  acl.ConvertPermissionTypeFromSarama(kafkaACL.PermissionType),
+			}
+			key := buildACLKey(acl)
 
 			if existing, exists := dbACLMap[key]; exists {
 				// 更新同步状态
@@ -379,18 +392,8 @@ func (w *SyncWorker) syncACLs(ctx context.Context, adminClient *kafka.AdminClien
 				delete(dbACLMap, key)
 			} else {
 				// 创建新 ACL
-				acl := &models.ACL{
-					ClusterID:       clusterID,
-					ResourceType:    models.ResourceType(resourceACL.ResourceType),
-					ResourceName:    resourceACL.ResourceName,
-					ResourcePattern: models.PatternType(resourceACL.ResourcePatternType),
-					Principal:       kafkaACL.Principal,
-					Host:            kafkaACL.Host,
-					Operation:       models.OperationType(kafkaACL.Operation),
-					PermissionType:  models.PermissionType(kafkaACL.PermissionType),
-					SyncStatus:      models.SyncStatusSynced,
-					LastSyncAt:      &now,
-				}
+				acl.SyncStatus = models.SyncStatusSynced
+				acl.LastSyncAt = &now
 				if err := w.aclRepo.Create(ctx, acl); err != nil {
 					logger.Error("Failed to create ACL", "error", err)
 				}
@@ -408,14 +411,10 @@ func (w *SyncWorker) syncACLs(ctx context.Context, adminClient *kafka.AdminClien
 	return nil
 }
 
-// buildACLKey 构建 ACL 唯一键（7 字段完整匹配，含 ResourcePattern）
+// buildACLKey 构建 ACL 唯一键（7 字段完整匹配，含 ResourcePattern）。
+// Kafka 侧与数据库侧都先归一为 models.ACL 后再构建，保证两侧 key 可比
 func buildACLKey(acl *models.ACL) string {
 	return fmt.Sprintf("%s:%s:%s:%s:%s:%s:%s", acl.ResourceType, acl.ResourceName, acl.ResourcePattern, acl.Principal, acl.Host, acl.Operation, acl.PermissionType)
-}
-
-// buildKafkaACLKeyFromResourceAndAcl 构建 Kafka ACL 唯一键（7 字段完整匹配，含 ResourcePatternType）
-func buildKafkaACLKeyFromResourceAndAcl(resource *sarama.Resource, acl *sarama.Acl) string {
-	return fmt.Sprintf("%s:%s:%s:%s:%s:%s:%s", resource.ResourceType, resource.ResourceName, resource.ResourcePatternType, acl.Principal, acl.Host, acl.Operation, acl.PermissionType)
 }
 
 // cleanupLogs 清理日志
