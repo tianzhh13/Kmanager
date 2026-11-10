@@ -76,4 +76,16 @@ export const topicService = {
       params: { cluster_id: clusterId },
     })
   },
+
+  // 批量校验 topic 名称（存在性 + '.'/'_' 命名冲突），工单批量导入预检使用
+  checkNames: async (clusterId: number, names: string[]): Promise<Record<string, TopicNameCheckResult>> => {
+    const response = await api.post('/topics/check-names', { cluster_id: clusterId, names })
+    return response.data.results || {}
+  },
+}
+
+// topic 名称校验结果（与后端 TopicNameCheckResult 对应）
+export interface TopicNameCheckResult {
+  exists: boolean
+  conflict_with: string
 }

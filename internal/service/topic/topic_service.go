@@ -164,9 +164,9 @@ func (s *Service) CreateTopic(ctx context.Context, req *CreateTopicRequest) erro
 // TopicNameCheckResult topic 名称可用性检查结果
 type TopicNameCheckResult struct {
 	// Exists 集群中已存在同名 topic
-	Exists bool
+	Exists bool `json:"exists"`
 	// ConflictWith 与目标名称仅存在 '.' 与 '_' 差异的既有 topic（Kafka 指标名把 '.' 替换为 '_'，二者会产生指标冲突）
-	ConflictWith string
+	ConflictWith string `json:"conflict_with"`
 }
 
 // CheckTopicNamesAvailable 批量校验多个 topic 名称是否可用。

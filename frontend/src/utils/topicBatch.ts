@@ -17,7 +17,10 @@ export interface TopicBatchRow {
   replication_factor: number
   retention_days: number
   business_desc: string
+  // 格式校验错误（名称/分区数/副本数等，与集群无关）
   errors: string[]
+  // 集群校验结果（已存在 / '.'_' 命名冲突），切换集群后需重新校验
+  cluster_error?: string
 }
 
 export const TOPIC_NAME_REGEX = /^[a-zA-Z0-9._-]{1,249}$/

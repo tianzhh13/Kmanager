@@ -237,6 +237,8 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				topics.DELETE("/:name", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.DeleteTopic)
 				topics.PUT("/:name/config", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.UpdateTopicConfig)
 				topics.POST("/sync/:id", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.SyncTopics)
+				// 批量名称预检：工单批量导入使用，提交工单仅要求登录，故不做集群授权校验
+				topics.POST("/check-names", topicHandler.CheckTopicNames)
 			}
 
 			// ACL 路由

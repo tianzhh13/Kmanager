@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Form, Input, InputNumber, Radio, Select, Upload, message } from 'antd'
-import { ArrowLeftOutlined, ClusterOutlined, KeyOutlined, DownloadOutlined, UploadOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, ClusterOutlined, KeyOutlined, DownloadOutlined, UploadOutlined, DeleteOutlined } from '@ant-design/icons'
 import { ticketService, TicketType, TopicCreateForm, PermissionGrantForm, expandACLPreview } from '../services/ticket'
+import { topicService } from '../services/topic'
 import { clusterAPI, ClusterOption } from '../services/cluster'
 import { scramUserService, ScramUser } from '../services/scramUser'
 import { TOPIC_NAME_REGEX, MAX_TOPIC_BATCH_ROWS, TopicBatchRow, parseTopicBatchCSV, downloadTopicTemplate, readCSVFileAsText } from '../utils/topicBatch'
@@ -21,6 +22,7 @@ const TicketCreate: React.FC = () => {
   // topic 工单填写模式：单个申请 / 批量导入
   const [topicMode, setTopicMode] = useState<'single' | 'batch'>('single')
   const [batchRows, setBatchRows] = useState<TopicBatchRow[]>([])
+  const [batchChecking, setBatchChecking] = useState(false)
 
   // 表单相关状态（ACL 预览需要实时值）
   const [mode, setMode] = useState<'new_user' | 'existing_user'>('new_user')
@@ -94,6 +96,28 @@ const TicketCreate: React.FC = () => {
   }, [type, mode, username, permission, topics, topicPattern, groupPrefix, extras])
 
   // ============ 批量导入 ============
+  // 集群校验：调后端一次 ListTopics，返回 topic_name -> 错误信息 映射
+  //（已存在 / '.'与'_' 命名冲突）。接口失败不阻断流程，提交时后端会再校验一次
+  const fetchClusterErrors = async (rows: TopicBatchRow[], cid: number): Promise<Record<string, string>> => {
+    const names = rows.filter(r => r.errors.length === 0).map(r => r.topic_name)
+    if (names.length === 0) return {}
+    try {
+      const results = await topicService.checkNames(cid, names)
+      const errorMap: Record<string, string> = {}
+      for (const [name, check] of Object.entries(results)) {
+        if (check.exists) {
+          errorMap[name] = '集群中已存在同名 topic'
+        } else if (check.conflict_with) {
+          errorMap[name] = `与 ${check.conflict_with} 仅 '.'/'_' 之差（指标命名冲突）`
+        }
+      }
+      return errorMap
+    } catch {
+      message.error('集群 topic 名称校验失败，请手动确认或稍后重试')
+      return {}
+    }
+  }
+
   const handleCSVFile = async (file: File) => {
     const text = await readCSVFileAsText(file)
     const { rows, error } = parseTopicBatchCSV(text)
@@ -102,7 +126,15 @@ const TicketCreate: React.FC = () => {
       return
     }
     setBatchRows(rows)
-    const invalid = rows.filter(r => r.errors.length > 0).length
+    if (!clusterId) {
+      return
+    }
+    // 函数式合并 cluster_error：校验期间用户删除的行不会被复活
+    setBatchChecking(true)
+    const errorMap = await fetchClusterErrors(rows, clusterId)
+    setBatchRows(prev => prev.map(r => ({ ...r, cluster_error: errorMap[r.topic_name] })))
+    setBatchChecking(false)
+    const invalid = rows.filter(r => r.errors.length > 0 || errorMap[r.topic_name]).length
     if (invalid > 0) {
       message.warning(`解析完成：${rows.length} 行，其中 ${invalid} 行校验不通过（见预览标红行）`)
     } else {
@@ -110,12 +142,26 @@ const TicketCreate: React.FC = () => {
     }
   }
 
-  const batchInvalidCount = batchRows.filter(r => r.errors.length > 0).length
+  // 切换集群后重新校验已导入的行（格式校验与集群无关，只更新 cluster_error）
+  const recheckBatchRows = async (cid: number) => {
+    if (batchRows.length === 0) return
+    setBatchChecking(true)
+    const errorMap = await fetchClusterErrors(batchRows, cid)
+    setBatchRows(prev => prev.map(r => ({ ...r, cluster_error: errorMap[r.topic_name] })))
+    setBatchChecking(false)
+  }
+
+  // 删除预览中的行（写多了 / 已存在时直接页面删除，无需改 CSV 重传）
+  const removeBatchRow = (line: number) => {
+    setBatchRows(prev => prev.filter(r => r.line !== line))
+  }
+
+  const batchInvalidCount = batchRows.filter(r => r.errors.length > 0 || r.cluster_error).length
 
   // 批量导入合并为一张工单提交（后端整单校验重名/命名冲突，审批通过后逐个幂等创建）
   const handleBatchSubmit = async () => {
     if (!clusterId || batchInvalidCount > 0) return
-    const validRows = batchRows.filter(r => r.errors.length === 0)
+    const validRows = batchRows.filter(r => r.errors.length === 0 && !r.cluster_error)
     setSubmitting(true)
     try {
       const t = await ticketService.submit({
@@ -271,13 +317,14 @@ const TicketCreate: React.FC = () => {
           <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>
             固定 5 列：topic_name, partitions, replication_factor, retention_days, business_desc；最多 {MAX_TOPIC_BATCH_ROWS} 行；
             保留天数默认 3（0 = 集群默认）；业务说明含逗号时请用英文引号包裹。全部行将合并为一张工单，审批通过后一次性创建。
+            上传后将自动校验集群内重名与命名冲突，写多的行可直接在预览中删除。
           </div>
 
           {batchRows.length > 0 && (
             <div className="bento-card" style={{ marginBottom: 16 }}>
               <div className="bento-card-inner">
                 <div style={{ fontWeight: 600, marginBottom: 8 }}>
-                  预览（共 {batchRows.length} 行，{batchInvalidCount > 0 ? <span style={{ color: 'var(--status-danger, #dc2626)' }}>{batchInvalidCount} 行校验不通过</span> : '全部校验通过'}）
+                  预览（共 {batchRows.length} 行，{batchInvalidCount > 0 ? <span style={{ color: 'var(--status-danger, #dc2626)' }}>{batchInvalidCount} 行校验不通过</span> : '全部校验通过'}{batchChecking ? '，正在校验集群...' : ''}）
                 </div>
                 <div style={{ maxHeight: 320, overflow: 'auto' }}>
                   <table className="bento-table" style={{ width: '100%', tableLayout: 'fixed' }}>
@@ -290,19 +337,23 @@ const TicketCreate: React.FC = () => {
                         <th style={{ width: 72 }}>保留天数</th>
                         <th>业务说明</th>
                         <th style={{ width: 170 }}>校验</th>
+                        <th style={{ width: 56 }}>操作</th>
                       </tr>
                     </thead>
                     <tbody>
                       {batchRows.map(r => (
-                        <tr key={r.line} style={r.errors.length > 0 ? { background: 'rgba(220, 38, 38, 0.05)' } : undefined}>
+                        <tr key={r.line} style={r.errors.length > 0 || r.cluster_error ? { background: 'rgba(220, 38, 38, 0.05)' } : undefined}>
                           <td>{r.line}</td>
                           <td style={{ wordBreak: 'break-all' }}><code>{r.topic_name}</code></td>
                           <td>{r.partitions}</td>
                           <td>{r.replication_factor}</td>
                           <td>{r.retention_days}</td>
                           <td style={{ wordBreak: 'break-word' }}>{r.business_desc}</td>
-                          <td style={{ wordBreak: 'break-word', color: r.errors.length > 0 ? 'var(--status-danger, #dc2626)' : 'var(--status-success, #16a34a)', fontSize: 13 }}>
-                            {r.errors.length > 0 ? r.errors.join('；') : '通过'}
+                          <td style={{ wordBreak: 'break-word', color: r.errors.length > 0 || r.cluster_error ? 'var(--status-danger, #dc2626)' : 'var(--status-success, #16a34a)', fontSize: 13 }}>
+                            {r.errors.length > 0 ? r.errors.join('；') : r.cluster_error || '通过'}
+                          </td>
+                          <td>
+                            <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => removeBatchRow(r.line)} />
                           </td>
                         </tr>
                       ))}
@@ -486,7 +537,7 @@ const TicketCreate: React.FC = () => {
                 style={{ width: 360 }}
                 placeholder="选择集群"
                 value={clusterId}
-                onChange={(v) => { setClusterId(v); form.resetFields(['mechanism']) }}
+                onChange={(v) => { setClusterId(v); form.resetFields(['mechanism']); recheckBatchRows(v) }}
                 options={availableClusters.map(c => ({
                   value: c.cluster_id,
                   label: `${c.cluster_name}（${c.auth_type}${c.sasl_mechanism ? ` / ${c.sasl_mechanism}` : ''}）`,
@@ -513,7 +564,7 @@ const TicketCreate: React.FC = () => {
               type="primary"
               size="large"
               loading={submitting}
-              disabled={batchRows.length === 0 || batchInvalidCount > 0}
+              disabled={batchRows.length === 0 || batchInvalidCount > 0 || batchChecking}
               onClick={handleBatchSubmit}
             >
               提交工单（共 {batchRows.length - batchInvalidCount} 个 Topic，合并为一张工单）

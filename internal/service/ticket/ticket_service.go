@@ -122,11 +122,19 @@ func (s *Service) Submit(ctx context.Context, userID int64, username, role strin
 	// 集群基础信息对所有用户可见（GET /clusters/options），无需先被授权
 
 	var title string
+	// normalizedForm 存储服务端解析后的规范 JSON（默认值已固化），
+	// 详情渲染与执行器都以此为准，不依赖前端 payload 的具体形态
+	var normalizedForm string
 	switch req.Type {
 	case models.TicketTypeTopicCreate:
 		form, err := ParseTopicCreateForm(string(req.Form))
 		if err != nil {
 			return nil, err
+		}
+		if b, marshalErr := json.Marshal(form); marshalErr == nil {
+			normalizedForm = string(b)
+		} else {
+			normalizedForm = string(req.Form)
 		}
 		// 查询 Kafka 集群实际 topic 列表：存在性 + '.' 与 '_' 命名冲突校验
 		// （Kafka 指标名把 '.' 替换为 '_'，仅这两种字符差异的 topic 会产生指标冲突）
@@ -171,6 +179,11 @@ func (s *Service) Submit(ctx context.Context, userID int64, username, role strin
 		if err != nil {
 			return nil, err
 		}
+		if b, marshalErr := json.Marshal(form); marshalErr == nil {
+			normalizedForm = string(b)
+		} else {
+			normalizedForm = string(req.Form)
+		}
 		exists, err := s.scramUserRepo.Exists(ctx, req.ClusterID, form.Username)
 		if err != nil {
 			return nil, fmt.Errorf("检查 SCRAM 用户失败: %w", err)
@@ -208,7 +221,7 @@ func (s *Service) Submit(ctx context.Context, userID int64, username, role strin
 		ClusterID:            req.ClusterID,
 		ApplicantID:          userID,
 		Title:                title,
-		Form:                 string(req.Form),
+		Form:                 normalizedForm,
 		Status:               models.TicketStatusPending,
 		DesignatedApproverID: designated,
 		AppliedAt:            now,

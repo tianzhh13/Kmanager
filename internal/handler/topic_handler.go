@@ -26,6 +26,29 @@ func NewTopicHandler(topicSvc *topic.Service, permissionSvc *auth.PermissionServ
 	}
 }
 
+// CheckTopicNamesRequest 批量校验 topic 名称请求
+type CheckTopicNamesRequest struct {
+	ClusterID int64    `json:"cluster_id" binding:"required"`
+	Names     []string `json:"names" binding:"required,min=1,max=200"`
+}
+
+// CheckTopicNames 批量校验 topic 名称（存在性 + '.'/'_' 命名冲突）。
+// 工单批量导入的提交前预检使用：提交工单只需登录、不要求集群授权，故此处同样仅登录即可
+func (h *TopicHandler) CheckTopicNames(c *gin.Context) {
+	var req CheckTopicNamesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
+		return
+	}
+
+	results, err := h.topicSvc.CheckTopicNamesAvailable(c.Request.Context(), req.ClusterID, req.Names)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"results": results})
+}
+
 // CreateTopic 创建 Topic
 func (h *TopicHandler) CreateTopic(c *gin.Context) {
 	var req topic.CreateTopicRequest
