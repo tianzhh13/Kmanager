@@ -7,6 +7,7 @@ import { Dayjs } from 'dayjs'
 import ClusterOverview from './monitor/ClusterOverview'
 import BrokerMonitor from './monitor/BrokerMonitor'
 import TopicMonitor from './monitor/TopicMonitor'
+import Messages from './monitor/Messages'
 import MonitorControls from './monitor/MonitorControls'
 
 interface ClusterOption {
@@ -30,16 +31,18 @@ const ClusterMonitor: React.FC = () => {
 
 	  // tab 唯一数据源：直接从 URL 计算，保证 URL 与展示始终一致
 	  const tabParam = searchParams.get('tab')
-	  const activeTab = tabParam && ['overview', 'broker', 'topic'].includes(tabParam) ? tabParam : 'overview'
+	  const activeTab = tabParam && ['overview', 'broker', 'topic', 'messages'].includes(tabParam) ? tabParam : 'overview'
 
 	  const setActiveTab = (tab: string) => {
 	    const params = new URLSearchParams(searchParams)
 	    params.set('tab', tab)
-	    // 切换到非 topic 标签时，清除 topicName/consumerGroup 参数，避免残留干扰后续操作
-	    if (tab !== 'topic') {
-	      params.delete('topicName')
-	      params.delete('consumerGroup')
-	    }
+    // 切换到非 topic/消息查询标签时，清除 topicName/consumerGroup 参数，避免残留干扰后续操作
+    if (tab !== 'topic' && tab !== 'messages') {
+      params.delete('topicName')
+      params.delete('consumerGroup')
+    } else if (tab !== 'topic') {
+      params.delete('consumerGroup')
+    }
 	    setSearchParams(params, { replace: true })
 	  }
 
@@ -94,6 +97,7 @@ const ClusterMonitor: React.FC = () => {
     { key: 'overview', label: '集群概览' },
     { key: 'broker', label: 'Broker 监控' },
     { key: 'topic', label: 'Topic 监控' },
+    { key: 'messages', label: '消息查询' },
   ]
 
   return (
@@ -153,6 +157,9 @@ const ClusterMonitor: React.FC = () => {
             customRange={customRange} metrics={metrics} activeTab={activeTab}
             jmxAvailable={metrics?.jmx_exporter_available ?? false}
             initialTopic={topicNameParam} initialConsumerGroup={consumerGroupParam} />
+        )}
+        {activeTab === 'messages' && selectedCluster && (
+          <Messages cluster={selectedCluster} initialTopic={topicNameParam} />
         )}
       </Spin>
     </div>

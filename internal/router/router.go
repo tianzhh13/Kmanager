@@ -18,6 +18,7 @@ import (
 	"kafka-management-platform/internal/service/cluster"
 	"kafka-management-platform/internal/service/dashboard"
 	"kafka-management-platform/internal/service/hostmapping"
+	"kafka-management-platform/internal/service/message"
 	"kafka-management-platform/internal/service/monitor"
 	"kafka-management-platform/internal/service/scram"
 	"kafka-management-platform/internal/service/ticket"
@@ -95,6 +96,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	permissionSvc := auth.NewPermissionService(userRepo, clusterUserRepo, topicPermRepo)
 	clusterSvc := cluster.NewService(clusterRepo, clusterUserRepo, topicRepo, encryptionSvc, kerberosMgr)
 	topicSvc := topic.NewService(topicRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
+	messageSvc := message.NewService(clusterRepo, encryptionSvc, permissionSvc, kerberosBaseDir)
 	aclSvc := acl.NewService(aclRepo, clusterRepo, encryptionSvc, kerberosBaseDir)
 	auditSvc := audit.NewService(auditLogRepo)
 	monitorSvc := monitor.NewService(clusterRepo, encryptionSvc, vmClient, kerberosBaseDir)
@@ -119,6 +121,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	authHandler := handler.NewAuthHandler(authSvc, tokenBlacklistCache, auditSvc, &cfg.Cookie)
 	clusterHandler := handler.NewClusterHandler(clusterSvc, permissionSvc, monitorSvc)
 	topicHandler := handler.NewTopicHandler(topicSvc, permissionSvc)
+	messageHandler := handler.NewMessageHandler(messageSvc)
 	aclHandler := handler.NewACLHandler(aclSvc)
 	userHandler := handler.NewUserHandler(userSvc)
 	auditLogHandler := audit.NewHandler(auditSvc)
@@ -233,6 +236,8 @@ func Setup(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				topics.GET("/:name", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.GetTopic)
 				topics.GET("/:name/config", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.GetTopicConfig)
 				topics.GET("/:name/consumer-groups", clusterPermissionMiddleware.RequireClusterAccess(), topicHandler.GetTopicConsumerGroups)
+				// 消息查询（只读排障：按 offset/时间戳/key 查消息并预览）
+				topics.POST("/:name/messages", clusterPermissionMiddleware.RequireClusterAccess(), messageHandler.QueryMessages)
 				topics.PUT("/:name/description", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.UpdateTopicDescription)
 				topics.DELETE("/:name", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.DeleteTopic)
 				topics.PUT("/:name/config", clusterPermissionMiddleware.RequireClusterWriteAccess(), topicHandler.UpdateTopicConfig)

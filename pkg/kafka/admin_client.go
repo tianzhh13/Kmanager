@@ -706,3 +706,224 @@ func (c *AdminClient) CalculateConsumerGroupLagSeconds(topic string, partition i
 
 	return lagSeconds, nil
 }
+
+// MessageHeader 消息头
+type MessageHeader struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// MessageRecord 消息记录
+type MessageRecord struct {
+	Partition int32           `json:"partition"`
+	Offset    int64           `json:"offset"`
+	Timestamp int64           `json:"timestamp"` // unix milliseconds
+	Key       string          `json:"key"`
+	Value     []byte          `json:"value"`
+	Headers   []MessageHeader `json:"headers"`
+}
+
+// GetPartitionOffsets 获取指定分区的起始（最旧）和结束（最新）offset
+func (c *AdminClient) GetPartitionOffsets(topic string, partition int32) (start, end int64, err error) {
+	start, err = c.client.GetOffset(topic, partition, sarama.OffsetOldest)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get oldest offset: %w", err)
+	}
+	end, err = c.client.GetOffset(topic, partition, sarama.OffsetNewest)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get newest offset: %w", err)
+	}
+	return start, end, nil
+}
+
+// OffsetForTime 根据时间戳（毫秒）查找分区上第一个 timestamp >= ts 的 offset
+func (c *AdminClient) OffsetForTime(topic string, partition int32, tsMilli int64) (int64, error) {
+	offset, err := c.client.GetOffset(topic, partition, tsMilli)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get offset for time: %w", err)
+	}
+	return offset, nil
+}
+
+// FetchMessages 从指定分区的 startOffset 开始拉取最多 maxCount 条消息。
+// 只读：使用 FetchRequest，不创建消费者组、不提交 offset。
+// 遇到分区末尾或空批次时停止。
+func (c *AdminClient) FetchMessages(topic string, partition int32, startOffset, maxCount int64) ([]MessageRecord, error) {
+	leader, err := c.client.Leader(topic, partition)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get leader: %w", err)
+	}
+
+	var records []MessageRecord
+	currentOffset := startOffset
+
+	for int64(len(records)) < maxCount {
+		fetchRequest := &sarama.FetchRequest{
+			MinBytes:    1,
+			MaxWaitTime: 1000, // 1s
+			MaxBytes:    1024 * 1024,
+			Version:     4,
+		}
+		fetchRequest.AddBlock(topic, partition, currentOffset, 1024*1024, -1)
+
+		response, err := leader.Fetch(fetchRequest)
+		if err != nil {
+			return records, fmt.Errorf("failed to fetch: %w", err)
+		}
+
+		block := response.GetBlock(topic, partition)
+		if block == nil {
+			break
+		}
+		if block.Err != sarama.ErrNoError {
+			// offset 越界视为结束
+			if block.Err == sarama.ErrOffsetOutOfRange {
+				break
+			}
+			return records, fmt.Errorf("fetch error: %s", block.Err)
+		}
+
+		// 本轮是否拉到了消息
+		fetchedThisRound := false
+		lastOffset := currentOffset
+
+		for _, recs := range block.RecordsSet {
+			if recs == nil {
+				continue
+			}
+
+			// 新版本格式 (RecordBatch)
+			if recs.RecordBatch != nil && len(recs.RecordBatch.Records) > 0 {
+				batch := recs.RecordBatch
+				for _, r := range batch.Records {
+					if r == nil {
+						continue
+					}
+					recOffset := batch.FirstOffset + r.OffsetDelta
+					ts := batch.FirstTimestamp.Add(r.TimestampDelta)
+					rec := MessageRecord{
+						Partition: partition,
+						Offset:    recOffset,
+						Timestamp: ts.UnixMilli(),
+						Key:       string(r.Key),
+						Value:     append([]byte(nil), r.Value...),
+						Headers:   convertHeaders(r.Headers),
+					}
+					records = append(records, rec)
+					if recOffset > lastOffset {
+						lastOffset = recOffset
+					}
+					fetchedThisRound = true
+					if int64(len(records)) >= maxCount {
+						break
+					}
+				}
+			}
+
+			// 旧版本格式 (MessageSet)
+			if recs.MsgSet != nil {
+				for _, msgBlock := range recs.MsgSet.Messages {
+					if msgBlock == nil || msgBlock.Msg == nil {
+						continue
+					}
+					rec := MessageRecord{
+						Partition: partition,
+						Offset:    msgBlock.Offset,
+						Timestamp: msgBlock.Msg.Timestamp.UnixMilli(),
+						Key:       string(msgBlock.Msg.Key),
+						Value:     append([]byte(nil), msgBlock.Msg.Value...),
+					}
+					records = append(records, rec)
+					if msgBlock.Offset > lastOffset {
+						lastOffset = msgBlock.Offset
+					}
+					fetchedThisRound = true
+					if int64(len(records)) >= maxCount {
+						break
+					}
+				}
+			}
+		}
+
+		// 兼容 deprecated Records 字段
+		if !fetchedThisRound && block.Records != nil {
+			if block.Records.RecordBatch != nil {
+				batch := block.Records.RecordBatch
+				for _, r := range batch.Records {
+					if r == nil {
+						continue
+					}
+					recOffset := batch.FirstOffset + r.OffsetDelta
+					ts := batch.FirstTimestamp.Add(r.TimestampDelta)
+					records = append(records, MessageRecord{
+						Partition: partition,
+						Offset:    recOffset,
+						Timestamp: ts.UnixMilli(),
+						Key:       string(r.Key),
+						Value:     append([]byte(nil), r.Value...),
+						Headers:   convertHeaders(r.Headers),
+					})
+					if recOffset > lastOffset {
+						lastOffset = recOffset
+					}
+					fetchedThisRound = true
+					if int64(len(records)) >= maxCount {
+						break
+					}
+				}
+			}
+			if block.Records.MsgSet != nil {
+				for _, msgBlock := range block.Records.MsgSet.Messages {
+					if msgBlock == nil || msgBlock.Msg == nil {
+						continue
+					}
+					records = append(records, MessageRecord{
+						Partition: partition,
+						Offset:    msgBlock.Offset,
+						Timestamp: msgBlock.Msg.Timestamp.UnixMilli(),
+						Key:       string(msgBlock.Msg.Key),
+						Value:     append([]byte(nil), msgBlock.Msg.Value...),
+					})
+					if msgBlock.Offset > lastOffset {
+						lastOffset = msgBlock.Offset
+					}
+					fetchedThisRound = true
+					if int64(len(records)) >= maxCount {
+						break
+					}
+				}
+			}
+		}
+
+		// 没拉到消息：到达分区末尾或空批次，停止
+		if !fetchedThisRound {
+			break
+		}
+
+		// 推进 offset；若未推进（防死循环）
+		if lastOffset+1 <= currentOffset {
+			break
+		}
+		currentOffset = lastOffset + 1
+	}
+
+	return records, nil
+}
+
+// convertHeaders 将 sarama RecordHeader 转为 MessageHeader
+func convertHeaders(headers []*sarama.RecordHeader) []MessageHeader {
+	if len(headers) == 0 {
+		return nil
+	}
+	result := make([]MessageHeader, 0, len(headers))
+	for _, h := range headers {
+		if h == nil {
+			continue
+		}
+		result = append(result, MessageHeader{
+			Key:   string(h.Key),
+			Value: string(h.Value),
+		})
+	}
+	return result
+}
