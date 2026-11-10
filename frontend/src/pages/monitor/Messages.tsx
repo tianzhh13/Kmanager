@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Select, InputNumber, Input, Button, Spin, message, Drawer, Radio, Empty, Tag } from 'antd'
+import { Select, InputNumber, Input, Button, Spin, message, Drawer, Radio, Empty, Tag, Pagination } from 'antd'
 import { SearchOutlined, ReloadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { topicService, Topic } from '../../services/topic'
@@ -17,11 +17,11 @@ interface MessagesProps {
 }
 
 const QUERY_MODE_OPTIONS: { label: string; value: MessageQueryType }[] = [
-  { label: '按 Offset 范围', value: 'offset' },
-  { label: '按时间戳', value: 'timestamp' },
-  { label: '按 Key 过滤', value: 'key' },
   { label: '最新 N 条', value: 'latest' },
   { label: '最旧 N 条', value: 'earliest' },
+  { label: '按 Offset 范围', value: 'offset' },
+  { label: '按时间戳', value: 'timestamp' },
+  { label: '按关键词过滤', value: 'key' },
 ]
 
 // 后端 Value []byte 经 gin JSON 序列化为 base64 字符串
@@ -81,6 +81,12 @@ const Messages: React.FC<MessagesProps> = ({ cluster, initialTopic }) => {
   const [loading, setLoading] = useState(false)
   const [records, setRecords] = useState<MessageRecord[]>([])
   const [partitionOffsets, setPartitionOffsets] = useState<{ start: number; end: number } | null>(null)
+  const [scanned, setScanned] = useState(0)
+
+  // 分页（offset / timestamp 模式）：pageBase 是第一页实际起始 offset，翻页在其基础上推进
+  const [page, setPage] = useState(1)
+  const [pageBase, setPageBase] = useState<number | null>(null)
+  const [pageTotal, setPageTotal] = useState(0)
 
   const [detailRecord, setDetailRecord] = useState<MessageRecord | null>(null)
   const [detailView, setDetailView] = useState<'json' | 'plain' | 'hex'>('json')
@@ -118,38 +124,71 @@ const Messages: React.FC<MessagesProps> = ({ cluster, initialTopic }) => {
     }
   }, [selectedTopic, topics])
 
-  // 执行查询
-  const handleQuery = async () => {
+  // 执行查询；pageNum > 1 时以第一页基准 offset 翻页（offset/timestamp 模式）
+  const handleQuery = async (pageNum: number = 1) => {
     if (!selectedTopic || !cluster?.cluster_id) return
     setLoading(true)
     try {
+      const pageSize = Math.min(maxCount, 500)
       const req: QueryMessagesRequest = {
         partition,
         query_type: queryMode,
-        max_count: Math.min(maxCount, 500),
+        max_count: pageSize,
       }
+
       if (queryMode === 'offset') {
-        req.start_offset = startOffset
+        if (pageNum === 1) {
+          req.start_offset = startOffset
+        } else {
+          req.start_offset = (pageBase ?? startOffset) + (pageNum - 1) * pageSize
+        }
         req.end_offset = endOffset
       } else if (queryMode === 'timestamp') {
-        const ts = dayjs(timestamp).valueOf()
-        if (!ts || isNaN(ts)) {
-          message.warning('请输入有效的时间')
-          setLoading(false)
-          return
+        if (pageNum === 1) {
+          const ts = dayjs(timestamp).valueOf()
+          if (!ts || isNaN(ts)) {
+            message.warning('请输入有效的时间')
+            setLoading(false)
+            return
+          }
+          req.timestamp = ts
+        } else {
+          // 翻页：时间戳已在第一页解析为 offset，改走 offset 语义往后翻
+          req.query_type = 'offset'
+          req.start_offset = (pageBase ?? 0) + (pageNum - 1) * pageSize
+          req.end_offset = 0 // 0 = 到分区最新
         }
-        req.timestamp = ts
       } else if (queryMode === 'key') {
         req.key = keyFilter
-        req.start_offset = startOffset
-        req.end_offset = endOffset > 0 ? endOffset : 0
       }
 
       const res = await messageService.query(selectedTopic, cluster.cluster_id, req)
       setRecords(res.data || [])
       setPartitionOffsets(res.partition_offsets)
+      setScanned(res.scanned || 0)
+      setPage(pageNum)
+
+      // 第一页记录分页基准和总数
+      if (pageNum === 1) {
+        const from = res.fetched_from ?? 0
+        setPageBase(from)
+        if (queryMode === 'offset') {
+          const end = res.partition_offsets?.end ?? 0
+          const userEnd = endOffset > 0 ? Math.min(endOffset, end) : end
+          setPageTotal(Math.max(0, userEnd - from))
+        } else if (queryMode === 'timestamp') {
+          setPageTotal(Math.max(0, (res.partition_offsets?.end ?? 0) - from))
+        } else {
+          setPageTotal(0)
+        }
+      }
+
       if ((res.data || []).length === 0) {
-        message.info('该范围内没有消息')
+        if (queryMode === 'key' && (res.scanned || 0) > 0) {
+          message.info(`已扫描最早的 ${res.scanned} 条消息，未找到包含该关键词的消息`)
+        } else {
+          message.info('该范围内没有消息')
+        }
       }
     } catch (err: any) {
       const status = err?.response?.status
@@ -239,7 +278,7 @@ const Messages: React.FC<MessagesProps> = ({ cluster, initialTopic }) => {
           {queryMode === 'offset' && (
             <>
               <InputNumber
-                style={{ width: 120 }}
+                style={{ width: 130 }}
                 placeholder="起始 offset"
                 value={startOffset}
                 onChange={v => setStartOffset(v ?? 0)}
@@ -247,8 +286,8 @@ const Messages: React.FC<MessagesProps> = ({ cluster, initialTopic }) => {
               />
               <span style={{ color: 'var(--text-3)' }}>~</span>
               <InputNumber
-                style={{ width: 120 }}
-                placeholder="结束 offset"
+                style={{ width: 150 }}
+                placeholder="结束 offset(0=最新)"
                 value={endOffset}
                 onChange={v => setEndOffset(v ?? 0)}
                 min={0}
@@ -270,30 +309,14 @@ const Messages: React.FC<MessagesProps> = ({ cluster, initialTopic }) => {
           )}
 
           {queryMode === 'key' && (
-            <>
-              <Input
-                style={{ width: 180 }}
-                placeholder="输入 Key（子串匹配）"
-                value={keyFilter}
-                onChange={e => setKeyFilter(e.target.value)}
-                prefix={<SearchOutlined />}
-                allowClear
-              />
-              <InputNumber
-                style={{ width: 120 }}
-                placeholder="扫描起始 offset"
-                value={startOffset}
-                onChange={v => setStartOffset(v ?? 0)}
-                min={0}
-              />
-              <InputNumber
-                style={{ width: 120 }}
-                placeholder="扫描结束 offset (0=最新)"
-                value={endOffset}
-                onChange={v => setEndOffset(v ?? 0)}
-                min={0}
-              />
-            </>
+            <Input
+              style={{ width: 220 }}
+              placeholder="关键词，匹配 Key 或消息内容"
+              value={keyFilter}
+              onChange={e => setKeyFilter(e.target.value)}
+              prefix={<SearchOutlined />}
+              allowClear
+            />
           )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -307,10 +330,10 @@ const Messages: React.FC<MessagesProps> = ({ cluster, initialTopic }) => {
             />
           </div>
 
-          <Button type="primary" icon={<SearchOutlined />} loading={loading} onClick={handleQuery}>
+          <Button type="primary" icon={<SearchOutlined />} loading={loading} onClick={() => handleQuery(1)}>
             查询
           </Button>
-          <Button icon={<ReloadOutlined />} onClick={handleQuery} disabled={loading}>刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => handleQuery(page)} disabled={loading}>刷新</Button>
         </div>
 
         {partitionOffsets && (
@@ -354,8 +377,21 @@ const Messages: React.FC<MessagesProps> = ({ cluster, initialTopic }) => {
                 </div>
               ))}
             </div>
-            <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-3)' }}>
-              共 {records.length} 条消息 · 点击任意行查看完整内容
+            <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                共 {records.length} 条消息 · 点击任意行查看完整内容
+                {queryMode === 'key' ? `（在最早的 ${scanned} 条消息中匹配 Key 和消息内容）` : ''}
+              </span>
+              {(queryMode === 'offset' || queryMode === 'timestamp') && pageTotal > Math.min(maxCount, 500) && (
+                <Pagination
+                  current={page}
+                  pageSize={Math.min(maxCount, 500)}
+                  total={pageTotal}
+                  showSizeChanger={false}
+                  size="small"
+                  onChange={(p) => handleQuery(p)}
+                />
+              )}
             </div>
           </>
         ) : (

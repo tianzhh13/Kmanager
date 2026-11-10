@@ -26,6 +26,9 @@ const (
 // MaxMessageCount 单次查询条数上限
 const MaxMessageCount = 500
 
+// KeyScanLimit 关键词过滤模式的扫描窗口上限（从分区最早消息开始扫描的条数）
+const KeyScanLimit = 5000
+
 var (
 	// ErrPermissionDenied 无权限访问该 topic
 	ErrPermissionDenied = errors.New("permission denied: no access to this topic")
@@ -48,7 +51,11 @@ type QueryMessagesRequest struct {
 type QueryMessagesResponse struct {
 	Data             []kafka.MessageRecord `json:"data"`
 	PartitionOffsets PartitionOffsets       `json:"partition_offsets"`
-	Total            int                    `json:"total"`
+	// FetchedFrom 本页实际拉取的起始 offset（时间戳模式翻页/关键词模式扫描范围的基准）
+	FetchedFrom int64 `json:"fetched_from"`
+	// Scanned 关键词模式实际扫描的条数（其他模式为 0）
+	Scanned int `json:"scanned"`
+	Total   int `json:"total"`
 }
 
 // PartitionOffsets 分区 offset 信息
@@ -128,6 +135,7 @@ func (s *Service) QueryMessages(ctx context.Context, userID int64, role string, 
 		return &QueryMessagesResponse{
 			Data:             []kafka.MessageRecord{},
 			PartitionOffsets: PartitionOffsets{Start: partStart, End: partEnd},
+			FetchedFrom:      partStart,
 			Total:            0,
 		}, nil
 	}
@@ -150,6 +158,7 @@ func (s *Service) QueryMessages(ctx context.Context, userID int64, role string, 
 		return &QueryMessagesResponse{
 			Data:             []kafka.MessageRecord{},
 			PartitionOffsets: PartitionOffsets{Start: partStart, End: partEnd},
+			FetchedFrom:      fetchStart,
 			Total:            0,
 		}, nil
 	}
@@ -160,20 +169,29 @@ func (s *Service) QueryMessages(ctx context.Context, userID int64, role string, 
 		return nil, fmt.Errorf("failed to fetch messages: %w", err)
 	}
 
-	// 8. key 模式：客户端按 key 子串过滤
-	if req.QueryType == QueryTypeKey && req.Key != "" {
-		filtered := records[:0]
-		for _, r := range records {
-			if strings.Contains(r.Key, req.Key) {
-				filtered = append(filtered, r)
+	// 8. 关键词模式：按 key 或 value 文本匹配过滤（value 常为 JSON，复制任意片段均可命中）
+	scanned := 0
+	if req.QueryType == QueryTypeKey {
+		scanned = len(records)
+		if req.Key != "" {
+			filtered := make([]kafka.MessageRecord, 0)
+			for _, r := range records {
+				if strings.Contains(r.Key, req.Key) || strings.Contains(string(r.Value), req.Key) {
+					filtered = append(filtered, r)
+					if len(filtered) >= int(req.MaxCount) {
+						break
+					}
+				}
 			}
+			records = filtered
 		}
-		records = filtered
 	}
 
 	return &QueryMessagesResponse{
 		Data:             records,
 		PartitionOffsets: PartitionOffsets{Start: partStart, End: partEnd},
+		FetchedFrom:      fetchStart,
+		Scanned:          scanned,
 		Total:            len(records),
 	}, nil
 }
@@ -195,16 +213,9 @@ func computeFetchRange(req *QueryMessagesRequest, partStart, partEnd int64) (int
 		return start, count
 
 	case QueryTypeKey:
-		// 在 [start_offset, end_offset) 范围内扫描并按 key 过滤
-		start := max64(req.StartOffset, partStart)
-		end := req.EndOffset
-		if end <= 0 || end > partEnd {
-			end = partEnd
-		}
-		if start >= end {
-			return 0, 0
-		}
-		return start, min64(req.MaxCount, end-start)
+		// 关键词过滤：固定从分区最早消息开始扫描（不依赖调用方传 offset 范围），
+		// 扫描窗口为 KeyScanLimit 条，service 层过滤后返回前 MaxCount 条匹配
+		return partStart, min64(KeyScanLimit, partEnd-partStart)
 
 	case QueryTypeOffset:
 		fallthrough

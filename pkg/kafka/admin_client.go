@@ -748,6 +748,8 @@ func (c *AdminClient) OffsetForTime(topic string, partition int32, tsMilli int64
 // FetchMessages 从指定分区的 startOffset 开始拉取最多 maxCount 条消息。
 // 只读：使用 FetchRequest，不创建消费者组、不提交 offset。
 // 遇到分区末尾或空批次时停止。
+// 注意：一轮 fetch 响应可能包含多个 RecordBatch/MessageSet，
+// 每条 append 前必须检查容量，否则会超出 maxCount。
 func (c *AdminClient) FetchMessages(topic string, partition int32, startOffset, maxCount int64) ([]MessageRecord, error) {
 	leader, err := c.client.Leader(topic, partition)
 	if err != nil {
@@ -787,116 +789,38 @@ func (c *AdminClient) FetchMessages(topic string, partition int32, startOffset, 
 		fetchedThisRound := false
 		lastOffset := currentOffset
 
+		full := false
 		for _, recs := range block.RecordsSet {
 			if recs == nil {
 				continue
 			}
-
-			// 新版本格式 (RecordBatch)
-			if recs.RecordBatch != nil && len(recs.RecordBatch.Records) > 0 {
-				batch := recs.RecordBatch
-				for _, r := range batch.Records {
-					if r == nil {
-						continue
-					}
-					recOffset := batch.FirstOffset + r.OffsetDelta
-					ts := batch.FirstTimestamp.Add(r.TimestampDelta)
-					rec := MessageRecord{
-						Partition: partition,
-						Offset:    recOffset,
-						Timestamp: ts.UnixMilli(),
-						Key:       string(r.Key),
-						Value:     append([]byte(nil), r.Value...),
-						Headers:   convertHeaders(r.Headers),
-					}
-					records = append(records, rec)
-					if recOffset > lastOffset {
-						lastOffset = recOffset
-					}
-					fetchedThisRound = true
-					if int64(len(records)) >= maxCount {
-						break
-					}
-				}
+			var added bool
+			records, added, lastOffset = appendRecordsFromSet(recs, records, partition, maxCount, lastOffset)
+			if added {
+				fetchedThisRound = true
 			}
-
-			// 旧版本格式 (MessageSet)
-			if recs.MsgSet != nil {
-				for _, msgBlock := range recs.MsgSet.Messages {
-					if msgBlock == nil || msgBlock.Msg == nil {
-						continue
-					}
-					rec := MessageRecord{
-						Partition: partition,
-						Offset:    msgBlock.Offset,
-						Timestamp: msgBlock.Msg.Timestamp.UnixMilli(),
-						Key:       string(msgBlock.Msg.Key),
-						Value:     append([]byte(nil), msgBlock.Msg.Value...),
-					}
-					records = append(records, rec)
-					if msgBlock.Offset > lastOffset {
-						lastOffset = msgBlock.Offset
-					}
-					fetchedThisRound = true
-					if int64(len(records)) >= maxCount {
-						break
-					}
-				}
+			if int64(len(records)) >= maxCount {
+				full = true
+				break
 			}
 		}
 
 		// 兼容 deprecated Records 字段
-		if !fetchedThisRound && block.Records != nil {
-			if block.Records.RecordBatch != nil {
-				batch := block.Records.RecordBatch
-				for _, r := range batch.Records {
-					if r == nil {
-						continue
-					}
-					recOffset := batch.FirstOffset + r.OffsetDelta
-					ts := batch.FirstTimestamp.Add(r.TimestampDelta)
-					records = append(records, MessageRecord{
-						Partition: partition,
-						Offset:    recOffset,
-						Timestamp: ts.UnixMilli(),
-						Key:       string(r.Key),
-						Value:     append([]byte(nil), r.Value...),
-						Headers:   convertHeaders(r.Headers),
-					})
-					if recOffset > lastOffset {
-						lastOffset = recOffset
-					}
-					fetchedThisRound = true
-					if int64(len(records)) >= maxCount {
-						break
-					}
-				}
-			}
-			if block.Records.MsgSet != nil {
-				for _, msgBlock := range block.Records.MsgSet.Messages {
-					if msgBlock == nil || msgBlock.Msg == nil {
-						continue
-					}
-					records = append(records, MessageRecord{
-						Partition: partition,
-						Offset:    msgBlock.Offset,
-						Timestamp: msgBlock.Msg.Timestamp.UnixMilli(),
-						Key:       string(msgBlock.Msg.Key),
-						Value:     append([]byte(nil), msgBlock.Msg.Value...),
-					})
-					if msgBlock.Offset > lastOffset {
-						lastOffset = msgBlock.Offset
-					}
-					fetchedThisRound = true
-					if int64(len(records)) >= maxCount {
-						break
-					}
-				}
+		if !fetchedThisRound && !full && block.Records != nil {
+			var added bool
+			records, added, lastOffset = appendRecordsFromSet(block.Records, records, partition, maxCount, lastOffset)
+			if added {
+				fetchedThisRound = true
 			}
 		}
 
 		// 没拉到消息：到达分区末尾或空批次，停止
 		if !fetchedThisRound {
+			break
+		}
+
+		// 已拿满，停止
+		if full {
 			break
 		}
 
@@ -908,6 +832,65 @@ func (c *AdminClient) FetchMessages(topic string, partition int32, startOffset, 
 	}
 
 	return records, nil
+}
+
+// appendRecordsFromSet 从单个 Records（RecordBatch 或 MessageSet）解析记录并追加到 out，
+// 每条 append 前检查容量（maxCount），确保最终不超过 maxCount。
+// 返回追加后的切片、是否追加了记录、以及见到的最大 offset。
+func appendRecordsFromSet(recs *sarama.Records, out []MessageRecord, partition int32, maxCount int64, lastOffset int64) ([]MessageRecord, bool, int64) {
+	added := false
+
+	// 新版本格式 (RecordBatch)
+	if recs.RecordBatch != nil {
+		batch := recs.RecordBatch
+		for _, r := range batch.Records {
+			if r == nil {
+				continue
+			}
+			if int64(len(out)) >= maxCount {
+				return out, added, lastOffset
+			}
+			recOffset := batch.FirstOffset + r.OffsetDelta
+			ts := batch.FirstTimestamp.Add(r.TimestampDelta)
+			out = append(out, MessageRecord{
+				Partition: partition,
+				Offset:    recOffset,
+				Timestamp: ts.UnixMilli(),
+				Key:       string(r.Key),
+				Value:     append([]byte(nil), r.Value...),
+				Headers:   convertHeaders(r.Headers),
+			})
+			if recOffset > lastOffset {
+				lastOffset = recOffset
+			}
+			added = true
+		}
+	}
+
+	// 旧版本格式 (MessageSet)
+	if recs.MsgSet != nil {
+		for _, msgBlock := range recs.MsgSet.Messages {
+			if msgBlock == nil || msgBlock.Msg == nil {
+				continue
+			}
+			if int64(len(out)) >= maxCount {
+				return out, added, lastOffset
+			}
+			out = append(out, MessageRecord{
+				Partition: partition,
+				Offset:    msgBlock.Offset,
+				Timestamp: msgBlock.Msg.Timestamp.UnixMilli(),
+				Key:       string(msgBlock.Msg.Key),
+				Value:     append([]byte(nil), msgBlock.Msg.Value...),
+			})
+			if msgBlock.Offset > lastOffset {
+				lastOffset = msgBlock.Offset
+			}
+			added = true
+		}
+	}
+
+	return out, added, lastOffset
 }
 
 // convertHeaders 将 sarama RecordHeader 转为 MessageHeader

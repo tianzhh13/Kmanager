@@ -37,6 +37,10 @@ export interface QueryMessagesResponse {
     start: number
     end: number
   }
+  // 本页实际拉取的起始 offset（时间戳模式翻页的基准）
+  fetched_from: number
+  // 关键词模式实际扫描的条数（其他模式为 0）
+  scanned: number
   total: number
 }
 
