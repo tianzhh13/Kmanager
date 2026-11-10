@@ -34,13 +34,44 @@ var (
 	groupNameRegex  = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,200}$`)
 )
 
-// TopicCreateForm 申请 Topic 工单表单
-type TopicCreateForm struct {
+// TopicCreateItem 批量申请 Topic 时的单个条目（与单个申请字段一致）
+type TopicCreateItem struct {
 	TopicName         string `json:"topic_name"`
 	Partitions        int32  `json:"partitions"`
 	ReplicationFactor int16  `json:"replication_factor"`
 	RetentionDays     int64  `json:"retention_days"` // 可选，0 表示使用集群默认
 	BusinessDesc      string `json:"business_desc"`
+}
+
+// TopicCreateForm 申请 Topic 工单表单。
+// 单个申请填 TopicName 等字段；批量导入填 Items（两者互斥，Items 优先）
+type TopicCreateForm struct {
+	TopicName         string            `json:"topic_name"`
+	Partitions        int32             `json:"partitions"`
+	ReplicationFactor int16             `json:"replication_factor"`
+	RetentionDays     int64             `json:"retention_days"` // 可选，0 表示使用集群默认
+	BusinessDesc      string            `json:"business_desc"`
+	Items             []TopicCreateItem `json:"items"`
+}
+
+// MaxTopicBatchItems 单张批量工单最多申请的 topic 数（与前端 CSV 行数上限一致）
+const MaxTopicBatchItems = 100
+
+// IsBatch 是否批量申请（批量导入合并为一张工单提交）
+func (f *TopicCreateForm) IsBatch() bool {
+	return len(f.Items) > 0
+}
+
+// TopicNames 返回申请的全部 topic 名（批量按 Items 顺序，单个仅一个）
+func (f *TopicCreateForm) TopicNames() []string {
+	if !f.IsBatch() {
+		return []string{f.TopicName}
+	}
+	names := make([]string, 0, len(f.Items))
+	for _, item := range f.Items {
+		names = append(names, item.TopicName)
+	}
+	return names
 }
 
 // PermissionGrantForm 申请权限工单表单
@@ -63,29 +94,72 @@ type ACLRule struct {
 	Operation       string `json:"operation"`
 }
 
-// ParseTopicCreateForm 解析并校验申请 Topic 表单
+// ParseTopicCreateForm 解析并校验申请 Topic 表单（单个 / 批量共用一个入口，Items 优先）
 func ParseTopicCreateForm(formJSON string) (*TopicCreateForm, error) {
 	var form TopicCreateForm
 	if err := json.Unmarshal([]byte(formJSON), &form); err != nil {
 		return nil, fmt.Errorf("表单格式错误: %w", err)
 	}
 
-	if !topicNameRegex.MatchString(form.TopicName) || form.TopicName == "." || form.TopicName == ".." {
-		return nil, fmt.Errorf("topic 名称不合法（仅允许字母、数字、.、_、-，长度 1-249）")
+	if form.IsBatch() {
+		if err := validateTopicCreateItems(form.Items); err != nil {
+			return nil, err
+		}
+		return &form, nil
 	}
-	if form.Partitions < 1 || form.Partitions > 200 {
-		return nil, fmt.Errorf("分区数需在 1-200 之间")
+
+	single := TopicCreateItem{
+		TopicName:         form.TopicName,
+		Partitions:        form.Partitions,
+		ReplicationFactor: form.ReplicationFactor,
+		RetentionDays:     form.RetentionDays,
+		BusinessDesc:      form.BusinessDesc,
 	}
-	if form.ReplicationFactor < 1 || form.ReplicationFactor > 5 {
-		return nil, fmt.Errorf("副本数需在 1-5 之间")
-	}
-	if form.RetentionDays < 0 || form.RetentionDays > 3650 {
-		return nil, fmt.Errorf("保留天数需在 0-3650 之间（0 表示使用集群默认）")
-	}
-	if strings.TrimSpace(form.BusinessDesc) == "" {
-		return nil, fmt.Errorf("业务说明不能为空")
+	if err := validateTopicCreateItem(&single); err != nil {
+		return nil, err
 	}
 	return &form, nil
+}
+
+// validateTopicCreateItems 校验批量条目：逐条校验 + 条目间不重名
+func validateTopicCreateItems(items []TopicCreateItem) error {
+	if len(items) == 0 {
+		return fmt.Errorf("批量申请至少包含 1 个 topic")
+	}
+	if len(items) > MaxTopicBatchItems {
+		return fmt.Errorf("单张工单最多申请 %d 个 topic", MaxTopicBatchItems)
+	}
+	seen := make(map[string]bool, len(items))
+	for i := range items {
+		if err := validateTopicCreateItem(&items[i]); err != nil {
+			return fmt.Errorf("第 %d 个 topic: %w", i+1, err)
+		}
+		if seen[items[i].TopicName] {
+			return fmt.Errorf("topic 重复: %s", items[i].TopicName)
+		}
+		seen[items[i].TopicName] = true
+	}
+	return nil
+}
+
+// validateTopicCreateItem 校验单个 topic 申请条目
+func validateTopicCreateItem(item *TopicCreateItem) error {
+	if !topicNameRegex.MatchString(item.TopicName) || item.TopicName == "." || item.TopicName == ".." {
+		return fmt.Errorf("topic 名称不合法（仅允许字母、数字、.、_、-，长度 1-249）")
+	}
+	if item.Partitions < 1 || item.Partitions > 200 {
+		return fmt.Errorf("分区数需在 1-200 之间")
+	}
+	if item.ReplicationFactor < 1 || item.ReplicationFactor > 5 {
+		return fmt.Errorf("副本数需在 1-5 之间")
+	}
+	if item.RetentionDays < 0 || item.RetentionDays > 3650 {
+		return fmt.Errorf("保留天数需在 0-3650 之间（0 表示使用集群默认）")
+	}
+	if strings.TrimSpace(item.BusinessDesc) == "" {
+		return fmt.Errorf("业务说明不能为空")
+	}
+	return nil
 }
 
 // ParsePermissionGrantForm 解析并校验申请权限表单

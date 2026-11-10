@@ -5,16 +5,8 @@ import { ArrowLeftOutlined, ClusterOutlined, KeyOutlined, DownloadOutlined, Uplo
 import { ticketService, TicketType, TopicCreateForm, PermissionGrantForm, expandACLPreview } from '../services/ticket'
 import { clusterAPI, ClusterOption } from '../services/cluster'
 import { scramUserService, ScramUser } from '../services/scramUser'
-import { TOPIC_NAME_REGEX, MAX_TOPIC_BATCH_ROWS, TopicBatchRow, parseTopicBatchCSV, downloadTopicTemplate } from '../utils/topicBatch'
+import { TOPIC_NAME_REGEX, MAX_TOPIC_BATCH_ROWS, TopicBatchRow, parseTopicBatchCSV, downloadTopicTemplate, readCSVFileAsText } from '../utils/topicBatch'
 import { LabelTag } from '../components/bento'
-
-// 批量导入提交结果（每行一张工单）
-interface BatchResult {
-  row: TopicBatchRow
-  ok: boolean
-  ticketNo?: string
-  error?: string
-}
 
 const TicketCreate: React.FC = () => {
   const navigate = useNavigate()
@@ -29,7 +21,6 @@ const TicketCreate: React.FC = () => {
   // topic 工单填写模式：单个申请 / 批量导入
   const [topicMode, setTopicMode] = useState<'single' | 'batch'>('single')
   const [batchRows, setBatchRows] = useState<TopicBatchRow[]>([])
-  const [batchResults, setBatchResults] = useState<BatchResult[] | null>(null)
 
   // 表单相关状态（ACL 预览需要实时值）
   const [mode, setMode] = useState<'new_user' | 'existing_user'>('new_user')
@@ -85,7 +76,6 @@ const TicketCreate: React.FC = () => {
     setExtras([])
     setTopicMode('single')
     setBatchRows([])
-    setBatchResults(null)
   }
 
   // 提交前 ACL 预览
@@ -105,8 +95,7 @@ const TicketCreate: React.FC = () => {
 
   // ============ 批量导入 ============
   const handleCSVFile = async (file: File) => {
-    setBatchResults(null)
-    const text = await file.text()
+    const text = await readCSVFileAsText(file)
     const { rows, error } = parseTopicBatchCSV(text)
     if (error) {
       message.error(error)
@@ -123,39 +112,31 @@ const TicketCreate: React.FC = () => {
 
   const batchInvalidCount = batchRows.filter(r => r.errors.length > 0).length
 
+  // 批量导入合并为一张工单提交（后端整单校验重名/命名冲突，审批通过后逐个幂等创建）
   const handleBatchSubmit = async () => {
     if (!clusterId || batchInvalidCount > 0) return
     const validRows = batchRows.filter(r => r.errors.length === 0)
     setSubmitting(true)
-    setBatchResults(null)
-    const results: BatchResult[] = []
-    // 逐行串行提交（每行一张工单，复用后端全部校验：Kafka 存在性 / '.' 与 '_' 冲突 / 审批人确定 / 审计）
-    for (const row of validRows) {
-      try {
-        const t = await ticketService.submit({
-          type: 'topic_create',
-          cluster_id: clusterId,
-          form: {
-            topic_name: row.topic_name,
-            partitions: row.partitions,
-            replication_factor: row.replication_factor,
-            retention_days: row.retention_days,
-            business_desc: row.business_desc,
-          },
-        })
-        results.push({ row, ok: true, ticketNo: t.ticket_no })
-      } catch (error: any) {
-        results.push({ row, ok: false, error: error?.response?.data?.error || '提交失败' })
-      }
-    }
-    setBatchResults(results)
-    setSubmitting(false)
-    const okCount = results.filter(r => r.ok).length
-    const failCount = results.length - okCount
-    if (failCount === 0) {
-      message.success(`${okCount} 张工单全部提交成功`)
-    } else {
-      message.warning(`提交完成：成功 ${okCount} 张、失败 ${failCount} 张（详见结果列表）`)
+    try {
+      const t = await ticketService.submit({
+        type: 'topic_create',
+        cluster_id: clusterId,
+        form: {
+          items: validRows.map(r => ({
+            topic_name: r.topic_name,
+            partitions: r.partitions,
+            replication_factor: r.replication_factor,
+            retention_days: r.retention_days,
+            business_desc: r.business_desc,
+          })),
+        },
+      })
+      message.success(`工单 ${t.ticket_no} 提交成功（共 ${validRows.length} 个 Topic），等待审批`)
+      navigate('/tickets')
+    } catch (error: any) {
+      message.error(error?.response?.data?.error || '提交失败')
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -240,7 +221,7 @@ const TicketCreate: React.FC = () => {
   const renderTopicForm = () => (
     <Form form={form} layout="vertical" style={{ maxWidth: 860 }}>
       <Form.Item label="填写方式">
-        <Radio.Group value={topicMode} onChange={e => { setTopicMode(e.target.value); setBatchResults(null) }}>
+        <Radio.Group value={topicMode} onChange={e => setTopicMode(e.target.value)}>
           <Radio.Button value="single">单个申请</Radio.Button>
           <Radio.Button value="batch">批量导入</Radio.Button>
         </Radio.Group>
@@ -289,7 +270,7 @@ const TicketCreate: React.FC = () => {
           </div>
           <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>
             固定 5 列：topic_name, partitions, replication_factor, retention_days, business_desc；最多 {MAX_TOPIC_BATCH_ROWS} 行；
-            保留天数默认 3（0 = 集群默认）；业务说明含逗号时请用英文引号包裹。每行将提交为一张独立工单。
+            保留天数默认 3（0 = 集群默认）；业务说明含逗号时请用英文引号包裹。全部行将合并为一张工单，审批通过后一次性创建。
           </div>
 
           {batchRows.length > 0 && (
@@ -299,61 +280,29 @@ const TicketCreate: React.FC = () => {
                   预览（共 {batchRows.length} 行，{batchInvalidCount > 0 ? <span style={{ color: 'var(--status-danger, #dc2626)' }}>{batchInvalidCount} 行校验不通过</span> : '全部校验通过'}）
                 </div>
                 <div style={{ maxHeight: 320, overflow: 'auto' }}>
-                  <table className="bento-table">
+                  <table className="bento-table" style={{ width: '100%', tableLayout: 'fixed' }}>
                     <thead>
                       <tr>
-                        <th style={{ textAlign: 'center' }}>行号</th>
-                        <th>Topic 名称</th>
-                        <th style={{ textAlign: 'center' }}>分区</th>
-                        <th style={{ textAlign: 'center' }}>副本</th>
-                        <th style={{ textAlign: 'center' }}>保留天数</th>
+                        <th style={{ width: 52 }}>行号</th>
+                        <th style={{ width: 190 }}>Topic 名称</th>
+                        <th style={{ width: 56 }}>分区</th>
+                        <th style={{ width: 56 }}>副本</th>
+                        <th style={{ width: 72 }}>保留天数</th>
                         <th>业务说明</th>
-                        <th>校验</th>
+                        <th style={{ width: 170 }}>校验</th>
                       </tr>
                     </thead>
                     <tbody>
                       {batchRows.map(r => (
                         <tr key={r.line} style={r.errors.length > 0 ? { background: 'rgba(220, 38, 38, 0.05)' } : undefined}>
-                          <td style={{ textAlign: 'center' }}>{r.line}</td>
-                          <td><code>{r.topic_name}</code></td>
-                          <td style={{ textAlign: 'center' }}>{r.partitions}</td>
-                          <td style={{ textAlign: 'center' }}>{r.replication_factor}</td>
-                          <td style={{ textAlign: 'center' }}>{r.retention_days}</td>
-                          <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.business_desc}</td>
-                          <td style={{ color: r.errors.length > 0 ? 'var(--status-danger, #dc2626)' : 'var(--status-success, #16a34a)', fontSize: 13 }}>
+                          <td>{r.line}</td>
+                          <td style={{ wordBreak: 'break-all' }}><code>{r.topic_name}</code></td>
+                          <td>{r.partitions}</td>
+                          <td>{r.replication_factor}</td>
+                          <td>{r.retention_days}</td>
+                          <td style={{ wordBreak: 'break-word' }}>{r.business_desc}</td>
+                          <td style={{ wordBreak: 'break-word', color: r.errors.length > 0 ? 'var(--status-danger, #dc2626)' : 'var(--status-success, #16a34a)', fontSize: 13 }}>
                             {r.errors.length > 0 ? r.errors.join('；') : '通过'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {batchResults && (
-            <div className="bento-card" style={{ marginBottom: 16 }}>
-              <div className="bento-card-inner">
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>
-                  提交结果（成功 {batchResults.filter(r => r.ok).length} / 失败 {batchResults.filter(r => !r.ok).length}）
-                </div>
-                <div style={{ maxHeight: 240, overflow: 'auto' }}>
-                  <table className="bento-table">
-                    <thead>
-                      <tr>
-                        <th style={{ textAlign: 'center' }}>行号</th>
-                        <th>Topic 名称</th>
-                        <th>结果</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {batchResults.map((r, i) => (
-                        <tr key={i}>
-                          <td style={{ textAlign: 'center' }}>{r.row.line}</td>
-                          <td><code>{r.row.topic_name}</code></td>
-                          <td style={{ fontSize: 13, color: r.ok ? 'var(--status-success, #16a34a)' : 'var(--status-danger, #dc2626)' }}>
-                            {r.ok ? `已提交（${r.ticketNo}）` : r.error}
                           </td>
                         </tr>
                       ))}
@@ -567,7 +516,7 @@ const TicketCreate: React.FC = () => {
               disabled={batchRows.length === 0 || batchInvalidCount > 0}
               onClick={handleBatchSubmit}
             >
-              批量提交（{batchRows.length - batchInvalidCount} 张工单）
+              提交工单（共 {batchRows.length - batchInvalidCount} 个 Topic，合并为一张工单）
             </Button>
           ) : (
             <Button type="primary" size="large" loading={submitting} onClick={handleSubmit}>

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 
 	"kafka-management-platform/internal/models"
 
@@ -124,13 +125,14 @@ func (r *ticketRepository) CountByStatus(ctx context.Context, applicantID *int64
 }
 
 func (r *ticketRepository) MaxTicketNoByPrefix(ctx context.Context, prefix string) (string, error) {
-	var ticketNo string
+	// 当天首张工单时 MAX() 返回 NULL，必须用可空类型接收
+	var maxNo sql.NullString
 	err := r.db.WithContext(ctx).Model(&models.Ticket{}).
 		Where("ticket_no LIKE ?", prefix+"%").
 		Select("MAX(ticket_no)").
-		Scan(&ticketNo).Error
+		Scan(&maxNo).Error
 	if err != nil {
 		return "", err
 	}
-	return ticketNo, nil
+	return maxNo.String, nil
 }

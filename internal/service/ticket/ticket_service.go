@@ -130,17 +130,37 @@ func (s *Service) Submit(ctx context.Context, userID int64, username, role strin
 		}
 		// 查询 Kafka 集群实际 topic 列表：存在性 + '.' 与 '_' 命名冲突校验
 		// （Kafka 指标名把 '.' 替换为 '_'，仅这两种字符差异的 topic 会产生指标冲突）
-		check, err := s.topicSvc.CheckTopicNameAvailable(ctx, req.ClusterID, form.TopicName)
-		if err != nil {
-			return nil, fmt.Errorf("检查集群 topic 列表失败: %w", err)
+		if form.IsBatch() {
+			checks, err := s.topicSvc.CheckTopicNamesAvailable(ctx, req.ClusterID, form.TopicNames())
+			if err != nil {
+				return nil, fmt.Errorf("检查集群 topic 列表失败: %w", err)
+			}
+			for _, name := range form.TopicNames() {
+				check := checks[name]
+				if check == nil {
+					continue
+				}
+				if check.Exists {
+					return nil, fmt.Errorf("topic %s 已存在于该集群", name)
+				}
+				if check.ConflictWith != "" {
+					return nil, fmt.Errorf("topic 名称 %s 与既有 topic %s 仅存在 '.' 与 '_' 的差异（Kafka 指标命名冲突），请更换名称", name, check.ConflictWith)
+				}
+			}
+			title = fmt.Sprintf("批量申请创建 %d 个 Topic（%s）", len(form.Items), truncateTopicNames(form.TopicNames()))
+		} else {
+			check, err := s.topicSvc.CheckTopicNameAvailable(ctx, req.ClusterID, form.TopicName)
+			if err != nil {
+				return nil, fmt.Errorf("检查集群 topic 列表失败: %w", err)
+			}
+			if check.Exists {
+				return nil, fmt.Errorf("topic %s 已存在于该集群", form.TopicName)
+			}
+			if check.ConflictWith != "" {
+				return nil, fmt.Errorf("topic 名称 %s 与既有 topic %s 仅存在 '.' 与 '_' 的差异（Kafka 指标命名冲突），请更换名称", form.TopicName, check.ConflictWith)
+			}
+			title = fmt.Sprintf("申请创建 Topic %s", form.TopicName)
 		}
-		if check.Exists {
-			return nil, fmt.Errorf("topic %s 已存在于该集群", form.TopicName)
-		}
-		if check.ConflictWith != "" {
-			return nil, fmt.Errorf("topic 名称 %s 与既有 topic %s 仅存在 '.' 与 '_' 的差异（Kafka 指标命名冲突），请更换名称", form.TopicName, check.ConflictWith)
-		}
-		title = fmt.Sprintf("申请创建 Topic %s", form.TopicName)
 
 	case models.TicketTypePermissionGrant:
 		// 权限工单仅适用于 SCRAM 集群（PLAINTEXT 无认证、Kerberos 用户在 KDC 管理）
@@ -438,6 +458,10 @@ func (s *Service) execute(ctx context.Context, ticket *models.Ticket, operatorUs
 		logExecuteFailure(ticket, err)
 		ticket.Status = models.TicketStatusFailed
 		ticket.ErrorMsg = err.Error()
+		// 批量执行可能部分成功，保留已创建/跳过明细供审批人查看（重试时会再次汇总）
+		if resultJSON != "" {
+			ticket.Result = resultJSON
+		}
 	} else {
 		ticket.Status = models.TicketStatusSucceeded
 		ticket.Result = resultJSON
@@ -597,4 +621,13 @@ func permissionLabel(permission string) string {
 	default:
 		return permission
 	}
+}
+
+// truncateTopicNames 批量工单标题里的 topic 名列表，超长截断（title 列为 varchar(128)）
+func truncateTopicNames(names []string) string {
+	joined := strings.Join(names, "、")
+	if runes := []rune(joined); len(runes) > 80 {
+		joined = string(runes[:80]) + "..."
+	}
+	return joined
 }

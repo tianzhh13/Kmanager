@@ -169,6 +169,63 @@ type TopicNameCheckResult struct {
 	ConflictWith string
 }
 
+// CheckTopicNamesAvailable 批量校验多个 topic 名称是否可用。
+// 只建立一次 Admin 客户端、拉取一次 topic 列表，返回 名称 -> 检查结果 的映射
+func (s *Service) CheckTopicNamesAvailable(ctx context.Context, clusterID int64, topicNames []string) (map[string]*TopicNameCheckResult, error) {
+	// 获取集群配置
+	cluster, err := s.clusterRepo.FindByID(ctx, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster: %w", err)
+	}
+
+	// 解密认证配置
+	var authConfigJSON string
+	if cluster.AuthConfig != "" {
+		decrypted, err := s.encryptionSvc.DecryptString(cluster.AuthConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt auth config: %w", err)
+		}
+		authConfigJSON = decrypted
+	}
+
+	// 创建 Kafka Admin 客户端（支持 Kerberos）
+	adminClient, err := kafka.NewAdminClientWithKerberos(cluster, authConfigJSON, s.kerberosBaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kafka admin client: %w", err)
+	}
+	defer adminClient.Close()
+
+	topicDetails, err := adminClient.ListTopics()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list topics from kafka: %w", err)
+	}
+
+	normalized := make(map[string]string, len(topicNames))
+	results := make(map[string]*TopicNameCheckResult, len(topicNames))
+	for _, name := range topicNames {
+		results[name] = &TopicNameCheckResult{}
+		norm := normalizeTopicMetricName(name)
+		// 批量内互为 '.' 与 '_' 差异的名称同样产生指标冲突
+		if first, ok := normalized[norm]; ok {
+			results[name].ConflictWith = first
+			continue
+		}
+		normalized[norm] = name
+	}
+	for existing := range topicDetails {
+		norm := normalizeTopicMetricName(existing)
+		if target, ok := normalized[norm]; ok {
+			if existing == target {
+				results[target].Exists = true
+			} else if results[target].ConflictWith == "" {
+				// 同一归一化名但原名不同：'.' 与 '_' 差异冲突
+				results[target].ConflictWith = existing
+			}
+		}
+	}
+	return results, nil
+}
+
 // CheckTopicNameAvailable 查询 Kafka 集群实际 topic 列表，校验名称是否可用
 func (s *Service) CheckTopicNameAvailable(ctx context.Context, clusterID int64, topicName string) (*TopicNameCheckResult, error) {
 	// 获取集群配置

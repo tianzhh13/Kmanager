@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Tabs, Drawer, Modal, Input, Select, message } from 'antd'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
-import { ticketService, Ticket, TicketStatus, TicketType, TicketExecuteResult, expandACLPreview, PermissionGrantForm, TopicCreateForm } from '../services/ticket'
+import { ticketService, Ticket, TicketStatus, TicketType, TicketExecuteResult, expandACLPreview, PermissionGrantForm, TopicCreateForm, TopicCreateItem } from '../services/ticket'
 import { clusterAPI, ClusterOption } from '../services/cluster'
 import { StatCard, LabelTag, LabelColor } from '../components/bento'
 import { useAppSelector } from '../store/hooks'
@@ -200,6 +200,36 @@ const TicketCenter: React.FC = () => {
   const renderDetailForm = () => {
     if (!detail || !detailForm) return null
     if (detail.type === 'topic_create') {
+      // 批量导入工单：items 里是全部申请的 topic
+      const items = (detailForm as { items?: TopicCreateItem[] }).items
+      if (items?.length) {
+        return (
+          <table className="bento-table">
+            <thead>
+              <tr>
+                <th style={{ width: 48 }}>#</th>
+                <th>Topic 名称</th>
+                <th style={{ width: 56 }}>分区</th>
+                <th style={{ width: 56 }}>副本</th>
+                <th style={{ width: 72 }}>保留天数</th>
+                <th>业务说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it, i) => (
+                <tr key={i}>
+                  <td>{i + 1}</td>
+                  <td style={{ wordBreak: 'break-all' }}><code>{it.topic_name}</code></td>
+                  <td>{it.partitions}</td>
+                  <td>{it.replication_factor}</td>
+                  <td>{it.retention_days > 0 ? `${it.retention_days} 天` : '默认'}</td>
+                  <td style={{ wordBreak: 'break-word' }}>{it.business_desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
       const form = detailForm as TopicCreateForm
       return (
         <table className="bento-table">
@@ -263,14 +293,16 @@ const TicketCenter: React.FC = () => {
         </div>
       )
     }
-    if (detail.status === 'succeeded' && detail.result) {
+    if ((detail.status === 'succeeded' || detail.status === 'failed') && detail.result) {
       try {
         const result = JSON.parse(detail.result) as TicketExecuteResult
         if (!result.created?.length && !result.skipped?.length) return null
         return (
           <div className="bento-card" style={{ marginBottom: 16 }}>
             <div className="bento-card-inner">
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>执行结果</div>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                {detail.status === 'succeeded' ? '执行结果' : '部分执行结果（失败项可重试，已创建的自动跳过）'}
+              </div>
               {result.created?.map((item, i) => (
                 <div key={i} style={{ fontSize: 13, color: 'var(--text-secondary)' }}>✓ 已创建：{item}</div>
               ))}

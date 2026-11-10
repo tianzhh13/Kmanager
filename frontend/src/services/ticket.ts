@@ -32,13 +32,27 @@ export interface Ticket {
   updated_at: string
 }
 
-// 申请 Topic 表单
+// 批量申请 Topic 时的单个条目
+export interface TopicCreateItem {
+  topic_name: string
+  partitions: number
+  replication_factor: number
+  retention_days: number
+  business_desc: string
+}
+
+// 申请 Topic 表单（单个申请）
 export interface TopicCreateForm {
   topic_name: string
   partitions: number
   replication_factor: number
   retention_days: number
   business_desc: string
+}
+
+// 申请 Topic 表单（批量导入：全部行合并为一张工单）
+export interface TopicBatchCreateForm {
+  items: TopicCreateItem[]
 }
 
 // 申请权限表单
@@ -99,7 +113,7 @@ export const ticketService = {
     return response.data
   },
 
-  submit: async (data: { type: TicketType; cluster_id: number; form: TopicCreateForm | PermissionGrantForm }): Promise<Ticket> => {
+  submit: async (data: { type: TicketType; cluster_id: number; form: TopicCreateForm | TopicBatchCreateForm | PermissionGrantForm }): Promise<Ticket> => {
     const response = await api.post('/tickets', data)
     return response.data
   },

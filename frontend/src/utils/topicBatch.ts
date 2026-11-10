@@ -130,6 +130,28 @@ export function parseTopicBatchCSV(text: string): ParseTopicBatchResult {
   return { rows }
 }
 
+// 读取 CSV 文件文本：自动识别编码（UTF-8 BOM → 严格 UTF-8 → GBK 兜底）。
+// Excel 在中文 Windows 下"另存为 CSV"默认是 ANSI/GBK 编码，直接 file.text() 按 UTF-8 解码会乱码
+export async function readCSVFileAsText(file: File): Promise<string> {
+  const buf = await file.arrayBuffer()
+  const bytes = new Uint8Array(buf)
+  // 带 UTF-8 BOM 的文件（Excel "CSV UTF-8" / 平台模板下载）直接按 UTF-8 解码
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return new TextDecoder('utf-8').decode(buf)
+  }
+  // 纯 ASCII 或合法 UTF-8：严格模式解码成功即采用（GBK 中文的字节序列几乎不可能是合法 UTF-8）
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf)
+  } catch {
+    // 非法 UTF-8：按 GBK 解码（中文 Windows Excel 默认编码），不支持时退回替换模式
+    try {
+      return new TextDecoder('gbk').decode(buf)
+    } catch {
+      return new TextDecoder('utf-8').decode(buf)
+    }
+  }
+}
+
 // 下载 CSV 模板（UTF-8 BOM）
 export function downloadTopicTemplate() {
   const blob = new Blob([TOPIC_CSV_TEMPLATE], { type: 'text/csv;charset=utf-8' })

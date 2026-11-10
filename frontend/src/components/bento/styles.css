@@ -302,6 +302,34 @@
 }
 
 /* --- Custom Row (replaces Ant Table) --- */
+
+/* 原生 table.bento-table：详情/预览等处的轻量只读表格。
+   默认左对齐、长文本换行；需要居中的单元格用内联 style 覆盖 */
+table.bento-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+table.bento-table th,
+table.bento-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+table.bento-table th {
+  font-weight: 600;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+table.bento-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
 .bento-table-header {
   display: grid;
   gap: 12px;

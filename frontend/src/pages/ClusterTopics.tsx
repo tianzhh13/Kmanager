@@ -6,7 +6,7 @@ import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchTopics, createTopic, deleteTopic } from '../store/slices/topicSlice'
 import { clusterAPI } from '../services/cluster'
 import { topicService } from '../services/topic'
-import { MAX_TOPIC_BATCH_ROWS, TopicBatchRow, parseTopicBatchCSV, downloadTopicTemplate } from '../utils/topicBatch'
+import { MAX_TOPIC_BATCH_ROWS, TopicBatchRow, parseTopicBatchCSV, downloadTopicTemplate, readCSVFileAsText } from '../utils/topicBatch'
 import { StatCard, LabelTag, SearchBar } from '../components/bento'
 
 // 批量导入提交结果（每行一个 Topic）
@@ -118,7 +118,7 @@ const ClusterTopics: React.FC = () => {
   // ============ 批量导入（与工单申请同一 CSV 模板） ============
   const handleBatchCSVFile = async (file: File) => {
     setBatchResults(null)
-    const text = await file.text()
+    const text = await readCSVFileAsText(file)
     const { rows, error } = parseTopicBatchCSV(text)
     if (error) {
       message.error(error)

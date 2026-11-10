@@ -71,50 +71,91 @@ func (e *executor) Execute(ctx context.Context, ticket *models.Ticket, applicant
 	return resultJSON, encryptedCredential, err
 }
 
-// executeTopicCreate 执行申请 Topic 工单
+// executeTopicCreate 执行申请 Topic 工单（单个 / 批量共用：逐个创建，幂等可重试）
 func (e *executor) executeTopicCreate(ctx context.Context, ticket *models.Ticket, applicantUsername string) (string, error) {
 	form, err := ParseTopicCreateForm(ticket.Form)
 	if err != nil {
 		return "", err
 	}
 
+	items := form.Items
+	if !form.IsBatch() {
+		items = []TopicCreateItem{{
+			TopicName:         form.TopicName,
+			Partitions:        form.Partitions,
+			ReplicationFactor: form.ReplicationFactor,
+			RetentionDays:     form.RetentionDays,
+			BusinessDesc:      form.BusinessDesc,
+		}}
+	}
+
 	result := &executeResult{}
+	var failed []string
 
 	// 提交与执行之间集群可能有变化，执行前再查一次 Kafka 实际 topic 列表
 	// （已存在 → 幂等跳过；存在仅 '.' 与 '_' 差异的同名冲突 → 失败，防止 Kafka 指标命名冲突）
-	if check, checkErr := e.topicSvc.CheckTopicNameAvailable(ctx, ticket.ClusterID, form.TopicName); checkErr == nil {
-		if check.Exists {
-			result.addSkipped(fmt.Sprintf("topic %s 已存在，跳过创建", form.TopicName))
-			return result.toJSON(), nil
+	// 批量工单一次拉取列表完成全部名称预检，避免逐个建立 Admin 客户端
+	precheck := make(map[string]*topic.TopicNameCheckResult, len(items))
+	if len(items) == 1 {
+		if check, checkErr := e.topicSvc.CheckTopicNameAvailable(ctx, ticket.ClusterID, items[0].TopicName); checkErr == nil {
+			precheck[items[0].TopicName] = check
 		}
-		if check.ConflictWith != "" {
-			return "", fmt.Errorf("topic 名称 %s 与既有 topic %s 仅存在 '.' 与 '_' 的差异（Kafka 指标命名冲突）", form.TopicName, check.ConflictWith)
+	} else {
+		checks, checkErr := e.topicSvc.CheckTopicNamesAvailable(ctx, ticket.ClusterID, form.TopicNames())
+		if checkErr == nil {
+			precheck = checks
 		}
 	}
 
-	// 申请人信息由平台自动写入 topic 描述
+	for i := range items {
+		item := &items[i]
+		if check, ok := precheck[item.TopicName]; ok {
+			if check.Exists {
+				result.addSkipped(fmt.Sprintf("topic %s 已存在，跳过创建", item.TopicName))
+				continue
+			}
+			if check.ConflictWith != "" {
+				failed = append(failed, fmt.Sprintf("%s（与 %s 命名冲突）", item.TopicName, check.ConflictWith))
+				continue
+			}
+		}
+
+		if err := e.createTopic(ctx, ticket, applicantUsername, item, result); err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", item.TopicName, err))
+		}
+	}
+
+	// 批量允许部分成功：失败项记入错误信息，工单标记失败后可直接重试（已创建的自动跳过）
+	if len(failed) > 0 {
+		return result.toJSON(), fmt.Errorf("%d/%d 个 topic 创建失败: %s", len(failed), len(items), strings.Join(failed, "；"))
+	}
+	return result.toJSON(), nil
+}
+
+// createTopic 创建单个 topic（幂等：已存在则跳过），申请人信息由平台自动写入 topic 描述
+func (e *executor) createTopic(ctx context.Context, ticket *models.Ticket, applicantUsername string, item *TopicCreateItem, result *executeResult) error {
 	config := make(map[string]string)
-	if form.RetentionDays > 0 {
-		config["retention.ms"] = fmt.Sprintf("%d", form.RetentionDays*24*int64(time.Hour)/int64(time.Millisecond))
+	if item.RetentionDays > 0 {
+		config["retention.ms"] = fmt.Sprintf("%d", item.RetentionDays*24*int64(time.Hour)/int64(time.Millisecond))
 	}
 
-	err = e.topicSvc.CreateTopic(ctx, &topic.CreateTopicRequest{
+	err := e.topicSvc.CreateTopic(ctx, &topic.CreateTopicRequest{
 		ClusterID:         ticket.ClusterID,
-		TopicName:         form.TopicName,
-		Description:       BuildTopicDescription(applicantUsername, ticket.AppliedAt, form.BusinessDesc),
-		Partitions:        form.Partitions,
-		ReplicationFactor: form.ReplicationFactor,
+		TopicName:         item.TopicName,
+		Description:       BuildTopicDescription(applicantUsername, ticket.AppliedAt, item.BusinessDesc),
+		Partitions:        item.Partitions,
+		ReplicationFactor: item.ReplicationFactor,
 		Config:            config,
 	})
 	if err != nil {
 		if errors.Is(err, topic.ErrTopicAlreadyExists) {
-			result.addSkipped(fmt.Sprintf("topic %s 已存在，跳过创建", form.TopicName))
-			return result.toJSON(), nil
+			result.addSkipped(fmt.Sprintf("topic %s 已存在，跳过创建", item.TopicName))
+			return nil
 		}
-		return "", err
+		return err
 	}
-	result.addCreated(fmt.Sprintf("topic %s（%d 分区 %d 副本）", form.TopicName, form.Partitions, form.ReplicationFactor))
-	return result.toJSON(), nil
+	result.addCreated(fmt.Sprintf("topic %s（%d 分区 %d 副本）", item.TopicName, item.Partitions, item.ReplicationFactor))
+	return nil
 }
 
 // executePermissionGrant 执行申请权限工单
